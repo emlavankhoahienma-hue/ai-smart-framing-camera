@@ -160,7 +160,7 @@ public struct CameraMainView: View {
                                         .padding(.horizontal, 9)
                                         .padding(.vertical, 4.5)
                                         .background(StudioGlassCapsule(tintOpacity: 0.52, borderOpacity: 0.14))
-                                        .padding(.top, 12)
+                                        .padding(.top, (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 72 : 12)
                                         .padding(.trailing, 12)
                                     }
                                     Spacer()
@@ -182,7 +182,7 @@ public struct CameraMainView: View {
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 6)
                                     .background(StudioGlassCapsule(tintOpacity: 0.54, borderOpacity: 0.14))
-                                    .padding(.top, 14)
+                                    .padding(.top, (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 74 : 14)
                                     Spacer()
                                 }
                                 .transition(.scale(scale: 0.92).combined(with: .opacity))
@@ -261,15 +261,22 @@ public struct CameraMainView: View {
                         // Expanded Pro RGB + Luma Scope HUD (Top Trailing khi chạm vào Histogram hoặc bật trong Cài đặt)
                         .overlay(alignment: .topTrailing) {
                             if viewModel.showHistogramInViewfinder && viewModel.isHistogramBarExpanded && !viewModel.isCameraHibernating {
+                                let proTopOffset: CGFloat = (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 64 : 0
+                                let horizonOffset: CGFloat = viewModel.isHorizonLockEnabled ? 34 : 0
                                 ProHistogramExpandedHUDView(viewModel: viewModel)
-                                    .padding(.top, viewModel.isHorizonLockEnabled ? layout.viewfinderTopInset + 34 : layout.viewfinderTopInset)
+                                    .padding(.top, layout.viewfinderTopInset + proTopOffset + horizonOffset)
                                     .padding(.trailing, 10)
                                     .transition(.scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity))
                             }
                         }
-                        // Top Viewfinder Overlays (Video Timer / AI Status)
+                        // Top Viewfinder Overlays (Pro Photo Telemetry / Video Timer / AI Status)
                         .overlay(alignment: .top) {
                             VStack(spacing: 6) {
+                                if viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo && !viewModel.isCameraHibernating {
+                                    ProPhotoTelemetryHUDView(viewModel: viewModel)
+                                        .transition(.move(edge: .top).combined(with: .opacity))
+                                }
+
                                 if viewModel.isRecordingVideo {
                                     videoRecordingHUD
                                         .transition(.opacity.combined(with: .scale(scale: 0.94)))
@@ -279,11 +286,17 @@ public struct CameraMainView: View {
                             }
                             .padding(.top, layout.viewfinderTopInset)
                         }
-                        // Bottom In-Viewfinder Smoked Glass Zoom Capsule
+                        // Bottom In-Viewfinder Smoked Glass Zoom Capsule / Pro Photo Manual Deck
                         .overlay(alignment: .bottom) {
                             if !viewModel.isWindowedZoomActive {
-                                ViewfinderZoomSelectorPill(viewModel: viewModel)
-                                    .padding(.bottom, layout.viewfinderBottomInset)
+                                if viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo && !viewModel.isCameraHibernating {
+                                    ProPhotoManualDeckView(viewModel: viewModel)
+                                        .padding(.bottom, max(6, layout.viewfinderBottomInset - 2))
+                                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                                } else {
+                                    ViewfinderZoomSelectorPill(viewModel: viewModel)
+                                        .padding(.bottom, layout.viewfinderBottomInset)
+                                }
                             }
                         }
                         .padding(.horizontal, 6)
@@ -487,6 +500,16 @@ struct TopCameraBar: View {
         ZStack {
             // Center: Quiet Tabular Exposure / Mode Telemetry Pill
             HStack(spacing: 5) {
+                if viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo {
+                    Text("PRO")
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(AlignTheme.studioAccent)
+
+                    Rectangle()
+                        .fill(Color.white.opacity(0.18))
+                        .frame(width: 0.7, height: 10)
+                }
+
                 HStack(spacing: 3.5) {
                     Text("ISO")
                         .font(.system(size: 9.5, weight: .medium, design: .monospaced))
@@ -496,7 +519,7 @@ struct TopCameraBar: View {
                         .foregroundColor(AlignTheme.studioInkPrimary)
                 }
 
-                if viewModel.isUltraSharpEnabled && !viewModel.captureMode.isVideo {
+                if viewModel.isUltraSharpEnabled && !viewModel.captureMode.isVideo && !viewModel.isProPhotoModeEnabled {
                     Rectangle()
                         .fill(Color.white.opacity(0.18))
                         .frame(width: 0.7, height: 10)

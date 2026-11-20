@@ -113,46 +113,63 @@ public struct CustomAppIconView: View {
     }
 }
 
-// MARK: - Sliding Segmented Mode Switcher (ẢNH / VIDEO)
+// MARK: - Sliding Segmented Mode Switcher (ẢNH / PRO / VIDEO)
 struct CameraModeSegmentedSwitcher: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var modeAnimationNamespace
 
-    private struct ModeItem: Identifiable {
-        let mode: CameraCaptureMode
-        let title: String
-        var id: String { title }
+    private enum SwitcherMode: String, CaseIterable, Identifiable {
+        case photo = "ẢNH"
+        case proPhoto = "PRO"
+        case video = "VIDEO"
+
+        var id: String { rawValue }
     }
 
-    private let modes: [ModeItem] = [
-        ModeItem(mode: .photo, title: "ẢNH"),
-        ModeItem(mode: .video, title: "VIDEO")
-    ]
+    private var activeSwitcherMode: SwitcherMode {
+        if viewModel.captureMode.isVideo { return .video }
+        return viewModel.isProPhotoModeEnabled ? .proPhoto : .photo
+    }
 
     var body: some View {
+        let proAvailability = viewModel.featureAvailability(.proPhoto)
         HStack(spacing: 4) {
-            ForEach(modes) { item in
-                let isSelected = (viewModel.captureMode == item.mode) || (item.mode == .video && viewModel.captureMode == .proVideo)
+            ForEach(SwitcherMode.allCases) { item in
+                let isSelected = (activeSwitcherMode == item)
+                let isProTab = (item == .proPhoto)
+                let isDisabledPro = isProTab && !proAvailability.isAvailable
+
                 Button(action: {
                     let generator = UISelectionFeedbackGenerator()
                     generator.prepare()
                     generator.selectionChanged()
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
-                        viewModel.selectCaptureMode(item.mode)
+                        switch item {
+                        case .photo:
+                            viewModel.selectCaptureMode(.photo)
+                        case .proPhoto:
+                            viewModel.selectProPhotoMode()
+                        case .video:
+                            viewModel.selectCaptureMode(.video)
+                        }
                     }
                 }) {
-                    Text(item.title)
-                        .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium, design: .rounded))
-                        .foregroundColor(isSelected ? AlignTheme.studioInkPrimary : AlignTheme.studioInkSecondary)
-                        .frame(width: 78, height: 32)
+                    Text(item.rawValue)
+                        .font(.system(size: 11.2, weight: isSelected ? .semibold : .medium, design: .rounded))
+                        .foregroundColor(
+                            isSelected
+                                ? (isProTab ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary)
+                                : (isDisabledPro ? AlignTheme.studioInkSecondary.opacity(0.45) : AlignTheme.studioInkSecondary)
+                        )
+                        .frame(width: 60, height: 32)
                         .background(
                             ZStack {
                                 if isSelected {
                                     Capsule()
-                                        .fill(Color.white.opacity(0.14))
+                                        .fill(isProTab ? AlignTheme.studioAccentSoft : Color.white.opacity(0.14))
                                         .overlay(
                                             Capsule()
-                                                .stroke(Color.white.opacity(0.12), lineWidth: 0.6)
+                                                .stroke(isProTab ? AlignTheme.studioAccentBorder : Color.white.opacity(0.12), lineWidth: 0.65)
                                         )
                                         .matchedGeometryEffect(id: "active_mode_pill", in: modeAnimationNamespace)
                                 }
@@ -160,7 +177,7 @@ struct CameraModeSegmentedSwitcher: View {
                         )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel("Chế độ \(item.title)")
+                .accessibilityLabel("Chế độ \(item.rawValue)")
             }
         }
         .padding(3)

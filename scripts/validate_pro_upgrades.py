@@ -254,6 +254,55 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         preview = source("Views/CapturedPhotoPreviewView.swift")
         self.assertIn("private func zoomRegionMiniMap(viewportSize: CGSize)", preview)
 
+    def test_12_pro_photo_manual_controls_and_telemetry(self):
+        service = source("Services/ProPhotoManualControlsService.swift")
+        for token in [
+            "CameraService.shared.scheduleDeviceConfiguration",
+            "format.minISO",
+            "format.maxISO",
+            "format.minExposureDuration",
+            "format.maxExposureDuration",
+            "camera.exposureTargetOffset",
+            "camera.maxWhiteBalanceGain",
+            "camera.grayWorldDeviceWhiteBalanceGains",
+            "clampedWhiteBalanceGains(",
+            "camera.isLockingFocusWithCustomLensPositionSupported",
+            "camera.isAutoFocusRangeRestrictionSupported",
+            "camera.isLowLightBoostSupported",
+            "camera.isGeometricDistortionCorrectionSupported",
+            "camera.setTorchModeOn(level:",
+            "func resetToFullAuto()",
+        ]:
+            self.assertIn(token, service)
+
+        overlay = source("Views/ProPhotoControlsOverlayView.swift")
+        self.assertIn("public struct ProPhotoTelemetryHUDView: View", overlay)
+        self.assertIn("public struct ProPhotoManualDeckView: View", overlay)
+        self.assertIn("ProPrecisionRulerDial", overlay)
+        self.assertIn("AlignTheme.studioAccent", overlay)
+        self.assertNotIn("electricCyan", overlay)
+        self.assertNotIn("iridescentRainbow", overlay)
+
+        gate = source("Models/CameraFeatureGate.swift")
+        self.assertIn("case proPhoto", gate)
+
+        controls = source("Views/CameraControlsView.swift")
+        self.assertIn('case proPhoto = "PRO"', controls)
+        self.assertIn("viewModel.selectProPhotoMode()", controls)
+
+        main_view = source("Views/CameraMainView.swift")
+        self.assertIn("ProPhotoTelemetryHUDView(viewModel: viewModel)", main_view)
+        self.assertIn("ProPhotoManualDeckView(viewModel: viewModel)", main_view)
+
+        vm = source("ViewModels/CameraViewModel.swift")
+        self.assertIn("public let proPhotoService = ProPhotoManualControlsService.shared", vm)
+        self.assertIn("public func selectProPhotoMode()", vm)
+
+        pbx = PBXPROJ.read_text(encoding="utf-8")
+        for filename in ["ProPhotoManualControlsService.swift", "ProPhotoControlsOverlayView.swift"]:
+            self.assertIn(f"/* {filename} */", pbx)
+            self.assertIn(f"/* {filename} in Sources */", pbx)
+
 
 if __name__ == "__main__":
     unittest.main()

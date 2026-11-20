@@ -39,6 +39,10 @@ def geometry(name, width, height, safe_top, safe_bottom):
     assert histogram + 184 + 12 <= width - 2 * horizontal + 1e-9
     # Three zoom buttons, two viewfinder side buttons and 44 pt touch regions.
     assert 3 * 44 + 2 * 44 + 2 * 8 + 2 * max(8, min(14, preview_width * .04)) <= preview_width
+    # Three-tab mode switcher (ẢNH | PRO | VIDEO, 60pt each) + two 44pt side buttons must fit without crowding.
+    row2_horizontal = 16 if compact else 22
+    mode_switcher_width = 3 * 60 + 2 * 4 + 6
+    assert mode_switcher_width + 2 * 44 + 2 * row2_horizontal <= width
     assert deck >= 80 + (6 if compact else 10) + 50 + 6 + (2 if compact else 4) + (4 if compact else 6)
     for px, py in ((0, 0), (.5, .5), (1, 1), (.2, .8), (.9, .1)):
         aspect = 4 / 3
@@ -62,7 +66,7 @@ assert 'CameraPreviewView(viewModel: viewModel)' in MAIN
 assert 'ARFramingOverlayView(viewModel: viewModel)' in MAIN
 assert 'TrackingGeometry.screenPoint' in OVERLAY
 assert 'TrackingGeometry.bufferPoint' in OVERLAY
-assert '.frame(width: 78, height: 32)' in CONTROLS
+assert '.frame(width: 60, height: 32)' in CONTROLS
 report = {'scope': 'calculated point-space layouts and projection round trips, not device rendering',
           'screens': [geometry(*screen) for screen in SCREENS], 'passed': len(SCREENS)}
 (ROOT / 'validation/responsive-layout-report.json').write_text(

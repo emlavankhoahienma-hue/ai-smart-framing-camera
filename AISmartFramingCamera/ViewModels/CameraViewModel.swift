@@ -347,6 +347,9 @@ public final class CameraViewModel: ObservableObject {
         didSet {
             UserDefaults.standard.set(captureMode.rawValue, forKey: "captureMode")
             windowedZoomAspectRatio = captureMode.isVideo ? .ratio16_9 : .ratio3_4
+            if captureMode.isVideo && isProPhotoModeEnabled {
+                isProPhotoModeEnabled = false
+            }
             if oldValue == .proVideo && captureMode != .proVideo {
                 proVideoService.resetToFullAuto()
             } else if captureMode == .proVideo {
@@ -415,6 +418,7 @@ public final class CameraViewModel: ObservableObject {
     @Published public private(set) var recordingState: CameraRecordingState = .idle
     private var wantsVideoRecording = false
     private var pendingCaptureMode: CameraCaptureMode?
+    private var pendingProPhotoAfterModeSwitch = false
     private var modeTransitionGeneration: UInt64 = 0
     private var isModeTransitionInFlight = false
     @Published private var isSwitchingCamera = false
@@ -454,6 +458,23 @@ public final class CameraViewModel: ObservableObject {
     public let proVideoService = ProVideoManualControlsService.shared
     @Published public var selectedProTab: ProVideoParameterTab = .iso
     @Published public var isShowingProControlsDrawer: Bool = true
+
+    // Pro Photo Manual Controls Service & State (Apple AVFoundation Hardware-Safe)
+    public let proPhotoService = ProPhotoManualControlsService.shared
+    @Published public var isProPhotoModeEnabled: Bool = false {
+        didSet {
+            guard isProPhotoModeEnabled != oldValue else { return }
+            if isProPhotoModeEnabled {
+                isShowingFilmDrawer = false
+                proPhotoService.activate(displayZoom: displayZoom)
+            } else {
+                isProPhotoPanelExpanded = false
+                proPhotoService.deactivateAndResetToAuto()
+            }
+        }
+    }
+    @Published public var selectedProPhotoTab: ProPhotoParameterTab = .shutter
+    @Published public var isProPhotoPanelExpanded: Bool = false
 
     // Camera Parameters
     @Published public var currentZoom: CGFloat = 1.0
@@ -633,6 +654,9 @@ public final class CameraViewModel: ObservableObject {
             self.manualZoomSettledAt = CACurrentMediaTime()
             self.zoomVerified = actualDeviceZoom != nil
             self.alignmentGate.reset()
+            if self.isProPhotoModeEnabled {
+                self.proPhotoService.handleHardwareLensChanged(displayZoom: self.displayZoom, isFront: self.isFrontCamera)
+            }
         }
         haptics.triggerSelectionChange()
     }
@@ -672,6 +696,9 @@ public final class CameraViewModel: ObservableObject {
             self.manualZoomSettledAt = CACurrentMediaTime()
             self.zoomVerified = actualDeviceZoom != nil
             self.alignmentGate.reset()
+            if self.isProPhotoModeEnabled {
+                self.proPhotoService.handleHardwareLensChanged(displayZoom: self.displayZoom, isFront: self.isFrontCamera)
+            }
         }
     }
 
@@ -1460,11 +1487,15 @@ public final class CameraViewModel: ObservableObject {
                 cancelUltraSharpCapture()
             }
             // 2. Giải phóng bộ nhớ đồ họa tạm
+            proPhotoService.setPollingPaused(true)
             frameProcessor.clearBuffers()
             updateFrameProcessingConfiguration()
             CameraLogger.info("Camera chuyển sang chế độ ngủ đông (Standby: 0% CPU/AI)", category: .general)
         } else {
             // Waking up
+            if isProPhotoModeEnabled {
+                proPhotoService.setPollingPaused(false)
+            }
             updateFrameProcessingConfiguration()
             CameraLogger.info("Camera thức dậy, khôi phục pipeline 60fps tức thì", category: .general)
             Task { @MainActor [weak self] in
@@ -1943,6 +1974,8 @@ public final class CameraViewModel: ObservableObject {
         isShowingSettings = false
         isUltraSharpEnabled = true
         isHistogramBarExpanded = false
+        isProPhotoModeEnabled = false
+        isProPhotoPanelExpanded = false
         viewfinderGridStyle = .off
         captureMode = .photo
         selectedZoomPreset = 1.0
@@ -2017,6 +2050,12 @@ public final class CameraViewModel: ObservableObject {
             captureMode = .video
             isUltraSharpEnabled = false
             windowedZoomAspectRatio = .ratio16_9
+        case "main_pro_photo":
+            captureMode = .photo
+            isProPhotoModeEnabled = true
+            selectedProPhotoTab = .shutter
+            isProPhotoPanelExpanded = true
+            proPhotoService.applySnapshotPreviewState()
         case "settings_capture", "settings_ai", "settings_advanced":
             isShowingSettings = true
         default:
@@ -2350,6 +2389,14 @@ public final class CameraViewModel: ObservableObject {
                 shutterDuration: stats.exposureDurationSeconds,
                 lensPosition: stats.lensPosition
             )
+            if self.isProPhotoModeEnabled {
+                self.proPhotoService.updateLiveMeasurements(
+                    iso: stats.iso,
+                    shutterDuration: stats.exposureDurationSeconds,
+                    lensPosition: stats.lensPosition,
+                    displayZoom: self.displayZoom
+                )
+            }
         }
 
         cameraService.onAudioLevelsUpdated = { [weak self] left, right in
@@ -2360,6 +2407,9 @@ public final class CameraViewModel: ObservableObject {
         cameraService.onDualCameraStateChanged = { [weak self] isActive in
             guard let self = self else { return }
             self.isDualCameraActive = isActive
+            if isActive && self.isProPhotoModeEnabled {
+                self.isProPhotoModeEnabled = false
+            }
             self.isCameraReady = true
             self.updateFrameProcessingConfiguration()
             let dualLayer = isActive ? self.cameraService.multiCamPrimaryPreviewLayer : nil
@@ -2396,7 +2446,32 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    public func selectCaptureMode(_ mode: CameraCaptureMode) {
+    public func selectProPhotoMode() {
+        attemptFeature(.proPhoto) {
+            if captureMode == .photo && pendingCaptureMode == nil {
+                pendingProPhotoAfterModeSwitch = false
+                if !isProPhotoModeEnabled {
+                    isProPhotoModeEnabled = true
+                }
+                return
+            }
+            pendingProPhotoAfterModeSwitch = true
+            selectCaptureMode(.photo, keepProPhoto: true)
+        }
+    }
+
+    public func selectCaptureMode(_ mode: CameraCaptureMode, keepProPhoto: Bool = false) {
+        if !keepProPhoto {
+            pendingProPhotoAfterModeSwitch = false
+            if isProPhotoModeEnabled {
+                isProPhotoModeEnabled = false
+            }
+        } else if mode.isVideo {
+            pendingProPhotoAfterModeSwitch = false
+            if isProPhotoModeEnabled {
+                isProPhotoModeEnabled = false
+            }
+        }
         guard mode != captureMode || pendingCaptureMode != nil else { return }
         modeTransitionGeneration &+= 1
         let generation = modeTransitionGeneration
@@ -2428,7 +2503,12 @@ public final class CameraViewModel: ObservableObject {
                     self.captureMode = mode
                     self.activeSunExposureBias = 0.0
                     self.setExposure(0.0)
+                    if mode == .photo && self.pendingProPhotoAfterModeSwitch {
+                        self.pendingProPhotoAfterModeSwitch = false
+                        self.isProPhotoModeEnabled = true
+                    }
                 } else {
+                    self.pendingProPhotoAfterModeSwitch = false
                     self.saveErrorMessage = "Không thể chuyển chế độ camera. Vui lòng thử lại."
                 }
                 self.presentPendingMediaPreviewIfPossible()
@@ -2439,7 +2519,7 @@ public final class CameraViewModel: ObservableObject {
     private func applyPendingCaptureModeIfPossible() {
         guard isCameraReady, !isShutterPressing, recordingState == .idle, !wantsVideoRecording,
               !isModeTransitionInFlight, let mode = pendingCaptureMode else { return }
-        selectCaptureMode(mode)
+        selectCaptureMode(mode, keepProPhoto: pendingProPhotoAfterModeSwitch)
     }
 
     public var canSwitchCamera: Bool {
@@ -2467,6 +2547,12 @@ public final class CameraViewModel: ObservableObject {
                 if success {
                     self.currentCameraPosition = self.cameraService.currentCameraPosition
                     self.proVideoService.syncHardwareCapabilities()
+                    if self.isProPhotoModeEnabled {
+                        self.proPhotoService.handleHardwareLensChanged(
+                            displayZoom: self.displayZoom,
+                            isFront: self.isFrontCamera
+                        )
+                    }
                     SpatialTrackingEngine.shared.updateCameraFieldOfView(self.cameraService.effectiveVideoFieldOfView)
                     self.haptics.triggerSelectionChange()
                 }

@@ -18,6 +18,7 @@ public enum CameraFeature: String, CaseIterable, Sendable {
     case videoQualityAndCodec
     case filmColor
     case focusPeaking
+    case proPhoto
 }
 
 /// Trạng thái khả dụng của một tính năng: cho phép bật hay bị khóa kèm điều kiện rõ ràng
@@ -256,6 +257,15 @@ public enum CameraFeatureGate {
         case .focusPeaking:
             if ctx.isDualCameraActive {
                 return .disabled(shortHint: "Tắt Dual Cam", detailReason: "Tắt Dual Cam để bật Focus Peaking")
+            }
+            return .available
+
+        case .proPhoto:
+            if ctx.isRecordingVideo {
+                return .disabled(shortHint: "Đang quay", detailReason: "Dừng quay video để chuyển sang chế độ Chụp ảnh Pro")
+            }
+            if ctx.isDualCameraActive {
+                return .disabled(shortHint: "Tắt Dual Cam", detailReason: "Tắt Dual Cam để dùng chế độ Chụp ảnh Pro")
             }
             return .available
         }
