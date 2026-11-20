@@ -41,6 +41,9 @@ public struct ProPhotoTelemetryHUDView: View {
     }
 
     private var liveKelvinDisplay: String {
+        if pro.isAutoWB && !pro.isHardwareCustomWBSupported {
+            return pro.isWhiteBalanceLocked ? "AWB-L" : "AWB"
+        }
         let k = pro.isAutoWB ? pro.measuredLiveKelvin : pro.currentKelvin
         return "\(Int((k / 50.0).rounded() * 50))K"
     }
@@ -311,13 +314,13 @@ public struct ProPhotoManualDeckView: View {
     }
 }
 
-// MARK: - 6-Column Smoked Glass Pro Parameter Bar
+// MARK: - 7-Column Smoked Glass Pro Parameter Bar (EV · SS · ISO · WB · MF · MÀU · PRO)
 private struct ProPhotoParameterBar: View {
     @ObservedObject var viewModel: CameraViewModel
     @ObservedObject var pro: ProPhotoManualControlsService
 
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 2) {
             ForEach(ProPhotoParameterTab.allCases) { tab in
                 let isSelected = viewModel.isProPhotoPanelExpanded && viewModel.selectedProPhotoTab == tab
                 let isManual = isTabOverridden(tab)
@@ -334,9 +337,9 @@ private struct ProPhotoParameterBar: View {
                     }
                 }) {
                     VStack(spacing: 2.5) {
-                        HStack(spacing: 2.5) {
+                        HStack(spacing: 2) {
                             Text(tab.rawValue)
-                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                .font(.system(size: 8.2, weight: .bold, design: .monospaced))
                                 .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
 
                             if isManual {
@@ -347,10 +350,10 @@ private struct ProPhotoParameterBar: View {
                         }
 
                         Text(valueText(for: tab))
-                            .font(.system(size: 10.5, weight: isManual || isSelected ? .bold : .medium, design: .monospaced))
+                            .font(.system(size: 9.8, weight: isManual || isSelected ? .bold : .medium, design: .monospaced))
                             .foregroundColor(isManual || isSelected ? AlignTheme.studioInkPrimary : AlignTheme.studioInkPrimary.opacity(0.78))
                             .lineLimit(1)
-                            .minimumScaleFactor(0.72)
+                            .minimumScaleFactor(0.68)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 40)
@@ -378,8 +381,9 @@ private struct ProPhotoParameterBar: View {
         case .ev: return abs(pro.currentEVBias) >= 0.05
         case .shutter: return !pro.isAutoShutter
         case .iso: return !pro.isAutoISO
-        case .wb: return !pro.isAutoWB
+        case .wb: return !pro.isAutoWB || pro.isWhiteBalanceLocked
         case .focus: return !pro.isAutoFocus || pro.isFocusLocked || pro.afRangeMode != .full
+        case .film: return viewModel.isFilmSimulationActive || !viewModel.filmTuning.isIdentity
         case .hardware: return viewModel.selectedPhotoFormat == .dng || viewModel.isFocusPeakingEnabled || pro.torchLevel >= 0.05
         }
     }
@@ -395,6 +399,9 @@ private struct ProPhotoParameterBar: View {
             let iso = pro.isAutoISO ? pro.measuredLiveISO : pro.currentISO
             return "\(Int(round(iso)))"
         case .wb:
+            if pro.isAutoWB && !pro.isHardwareCustomWBSupported {
+                return pro.isWhiteBalanceLocked ? "AWB-L" : "AWB"
+            }
             let k = pro.isAutoWB ? pro.measuredLiveKelvin : pro.currentKelvin
             return ProPhotoManualControlsService.formatKelvinShort(k)
         case .focus:
@@ -403,6 +410,11 @@ private struct ProPhotoParameterBar: View {
                 return pro.afRangeMode == .full ? "AF" : pro.afRangeMode.shortLabel
             }
             return pro.currentLensPosition >= 0.96 ? "∞" : String(format: "%.2f", pro.currentLensPosition)
+        case .film:
+            if viewModel.isFilmSimulationActive {
+                return viewModel.selectedFilmPreset.shortTitle
+            }
+            return viewModel.filmTuning.isIdentity ? "GỐC" : "TÙY"
         case .hardware:
             switch viewModel.selectedPhotoFormat {
             case .dng: return "RAW"
@@ -413,10 +425,118 @@ private struct ProPhotoParameterBar: View {
     }
 }
 
+/// Các trục tinh chỉnh công thức giả lập phim (dùng chung cho cả Chế độ Pro và Ngăn kéo Màu Phim).
+public enum FilmTuningAxis: String, CaseIterable, Identifiable, Sendable {
+    case intensity = "Cường độ"
+    case contrast = "Tương phản"
+    case saturation = "Bão hòa"
+    case warmth = "Độ ấm"
+    case highlights = "Vùng sáng"
+    case shadows = "Vùng tối"
+    case grain = "Hạt phim"
+    case vignette = "Viền tối"
+
+    public var id: String { rawValue }
+
+    public var isBipolar: Bool {
+        switch self {
+        case .intensity, .grain, .vignette: return false
+        default: return true
+        }
+    }
+
+    public func normalizedValue(intensity: Double, tuning: FilmSimulationTuning) -> Double {
+        switch self {
+        case .intensity: return max(0, min(1, (intensity - 0.1) / 0.9))
+        case .contrast: return max(0, min(1, (Double(tuning.contrast) + 0.35) / 0.70))
+        case .saturation: return max(0, min(1, (Double(tuning.saturation) + 0.50) / 1.00))
+        case .warmth: return max(0, min(1, (Double(tuning.warmth) + 0.50) / 1.00))
+        case .highlights: return max(0, min(1, (Double(tuning.highlights) + 0.40) / 0.80))
+        case .shadows: return max(0, min(1, (Double(tuning.shadows) + 0.40) / 0.80))
+        case .grain: return max(0, min(1, Double(tuning.grain)))
+        case .vignette: return max(0, min(1, Double(tuning.vignette)))
+        }
+    }
+
+    public func applyNormalized(_ norm: Double, to viewModel: CameraViewModel) {
+        let t = max(0.0, min(1.0, norm))
+        switch self {
+        case .intensity:
+            let val = 0.1 + t * 0.9
+            viewModel.filmSimulationIntensity = (val * 20.0).rounded() / 20.0
+        case .contrast:
+            let v = Float(-0.35 + t * 0.70)
+            viewModel.filmTuning.contrast = abs(v) < 0.015 ? 0 : v
+        case .saturation:
+            let v = Float(-0.50 + t * 1.00)
+            viewModel.filmTuning.saturation = abs(v) < 0.02 ? 0 : v
+        case .warmth:
+            let v = Float(-0.50 + t * 1.00)
+            viewModel.filmTuning.warmth = abs(v) < 0.02 ? 0 : v
+        case .highlights:
+            let v = Float(-0.40 + t * 0.80)
+            viewModel.filmTuning.highlights = abs(v) < 0.015 ? 0 : v
+        case .shadows:
+            let v = Float(-0.40 + t * 0.80)
+            viewModel.filmTuning.shadows = abs(v) < 0.015 ? 0 : v
+        case .grain:
+            viewModel.filmTuning.grain = t < 0.02 ? 0 : Float(t)
+        case .vignette:
+            viewModel.filmTuning.vignette = t < 0.02 ? 0 : Float(t)
+        }
+    }
+
+    public func displayValue(intensity: Double, tuning: FilmSimulationTuning) -> String {
+        switch self {
+        case .intensity:
+            return "\(Int(round(intensity * 100)))%"
+        case .contrast:
+            let p = Int(round(tuning.contrast * 100))
+            return p == 0 ? "0" : String(format: "%+d", p)
+        case .saturation:
+            let p = Int(round(tuning.saturation * 100))
+            return p == 0 ? "0" : String(format: "%+d", p)
+        case .warmth:
+            let p = Int(round(tuning.warmth * 100))
+            return p == 0 ? "0" : String(format: "%+d", p)
+        case .highlights:
+            let p = Int(round(tuning.highlights * 100))
+            return p == 0 ? "0" : String(format: "%+d", p)
+        case .shadows:
+            let p = Int(round(tuning.shadows * 100))
+            return p == 0 ? "0" : String(format: "%+d", p)
+        case .grain:
+            return "\(Int(round(tuning.grain * 100)))%"
+        case .vignette:
+            return "\(Int(round(tuning.vignette * 100)))%"
+        }
+    }
+
+    public func isModified(intensity: Double, tuning: FilmSimulationTuning, isFilmActive: Bool) -> Bool {
+        switch self {
+        case .intensity: return isFilmActive && abs(intensity - 1.0) >= 0.04
+        case .contrast: return abs(tuning.contrast) >= 0.01
+        case .saturation: return abs(tuning.saturation) >= 0.01
+        case .warmth: return abs(tuning.warmth) >= 0.01
+        case .highlights: return abs(tuning.highlights) >= 0.01
+        case .shadows: return abs(tuning.shadows) >= 0.01
+        case .grain: return tuning.grain >= 0.01
+        case .vignette: return tuning.vignette >= 0.01
+        }
+    }
+}
+
 // MARK: - Collapsible Precision Adjustment Drawer
 private struct ProPhotoAdjustmentDrawer: View {
     @ObservedObject var viewModel: CameraViewModel
     @ObservedObject var pro: ProPhotoManualControlsService
+    @State private var filmSubMode: FilmSubMode = .preset
+    @State private var selectedTuningAxis: FilmTuningAxis = .contrast
+
+    private enum FilmSubMode: String, CaseIterable {
+        case preset = "Preset"
+        case tune = "Tinh chỉnh"
+    }
 
     private struct FocusStopPreset: Identifiable {
         let label: String
@@ -495,6 +615,8 @@ private struct ProPhotoAdjustmentDrawer: View {
                 wbPanel
             case .focus:
                 focusPanel
+            case .film:
+                filmPanel
             case .hardware:
                 hardwarePanel
             }
@@ -515,6 +637,9 @@ private struct ProPhotoAdjustmentDrawer: View {
             let iso = pro.isAutoISO ? pro.measuredLiveISO : pro.currentISO
             return "ISO \(Int(round(iso)))"
         case .wb:
+            if pro.isAutoWB && !pro.isHardwareCustomWBSupported {
+                return pro.isWhiteBalanceLocked ? "AWB-L" : "AWB"
+            }
             let k = pro.isAutoWB ? pro.measuredLiveKelvin : pro.currentKelvin
             let t = pro.isAutoWB ? pro.measuredLiveTint : pro.currentTint
             let tintStr = Int(round(t)) == 0 ? "0" : String(format: "%+d", Int(round(t)))
@@ -524,6 +649,11 @@ private struct ProPhotoAdjustmentDrawer: View {
                 return pro.isFocusLocked ? "AF-L" : "AF · \(pro.afRangeMode.shortLabel)"
             }
             return pro.currentLensPosition >= 0.96 ? "∞" : String(format: "%.2f", pro.currentLensPosition)
+        case .film:
+            if viewModel.isFilmSimulationActive {
+                return "\(viewModel.selectedFilmPreset.displayName) · \(Int(round(viewModel.filmSimulationIntensity * 100)))%"
+            }
+            return viewModel.filmTuning.isIdentity ? "Tự nhiên" : "Tùy chỉnh"
         case .hardware:
             return "\(pro.activeLensDisplayName) · \(pro.maxPhotoMegapixels)MP"
         }
@@ -538,9 +668,12 @@ private struct ProPhotoAdjustmentDrawer: View {
         case .iso:
             return ("AUTO", pro.isAutoISO, { pro.setAutoISO(!pro.isAutoISO) })
         case .wb:
-            return ("AWB", pro.isAutoWB, { pro.setAutoWB(!pro.isAutoWB) })
+            return ("AWB", pro.isAutoWB && !pro.isWhiteBalanceLocked, { pro.setAutoWB(!pro.isAutoWB) })
         case .focus:
             return ("AF", pro.isAutoFocus, { pro.setAutoFocus(!pro.isAutoFocus) })
+        case .film:
+            let hasAnyColor = viewModel.isFilmSimulationActive || !viewModel.filmTuning.isIdentity
+            return ("GỐC", !hasAnyColor, { viewModel.resetToNaturalColor() })
         case .hardware:
             return nil
         }
@@ -670,73 +803,93 @@ private struct ProPhotoAdjustmentDrawer: View {
         }
     }
 
-    // MARK: - 4. White Balance (Kelvin + Tint + Gray World) Panel
+    // MARK: - 4. White Balance (Kelvin + Tint + Khóa AWB / Gray World — an toàn 100% mọi dòng iPhone)
     private var wbPanel: some View {
         VStack(spacing: 7) {
-            if !pro.isManualWBSupported {
-                unsupportedNotice("Camera hiện tại không hỗ trợ khóa cân bằng trắng.")
-            } else {
-                let kSpan = Double(pro.maxKelvin - pro.minKelvin)
-                let activeK = Double(pro.isAutoWB ? pro.measuredLiveKelvin : pro.currentKelvin)
-                let kNorm = max(0, min(1, (activeK - Double(pro.minKelvin)) / max(1, kSpan)))
+            let kSpan = Double(pro.maxKelvin - pro.minKelvin)
+            let activeK = Double(pro.isAutoWB ? (pro.isHardwareCustomWBSupported ? pro.measuredLiveKelvin : 5500) : pro.currentKelvin)
+            let kNorm = max(0, min(1, (activeK - Double(pro.minKelvin)) / max(1, kSpan)))
+
+            // Thước Kelvin chuẩn máy ảnh: Trái 2500K (Lạnh xanh) → Giữa 5500K → Phải 9500K (Ấm vàng)
+            ProPrecisionRulerDial(
+                normalizedValue: kNorm,
+                tickCount: 35,
+                majorEvery: 7,
+                centerHighlight: false,
+                accentHairline: LinearGradient(
+                    colors: [
+                        Color(red: 0.52, green: 0.74, blue: 0.98).opacity(0.72),
+                        Color.white.opacity(0.36),
+                        Color(red: 0.96, green: 0.68, blue: 0.34).opacity(0.72)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ),
+                onChanged: { newNorm in
+                    let rawK = Double(pro.minKelvin) + newNorm * kSpan
+                    let stepped = (rawK / 50.0).rounded() * 50.0
+                    pro.setManualWhiteBalance(kelvin: Float(stepped))
+                }
+            )
+
+            // Thước Sắc độ Tint (-50 Xanh lá ↔ 0 ↔ +50 Hồng tím) thuần Canvas 60 FPS (tránh lỗi Slider)
+            HStack(spacing: 8) {
+                Text("Sắc độ")
+                    .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                    .foregroundColor(AlignTheme.studioInkSecondary)
+                    .frame(width: 38, alignment: .leading)
+
+                let activeTint = Double(pro.isAutoWB ? (pro.isHardwareCustomWBSupported ? pro.measuredLiveTint : 0) : pro.currentTint)
+                let tintSpan = max(1.0, Double(pro.maxTint - pro.minTint))
+                let tintNorm = max(0, min(1, (activeTint - Double(pro.minTint)) / tintSpan))
 
                 ProPrecisionRulerDial(
-                    normalizedValue: kNorm,
-                    tickCount: 35,
-                    majorEvery: 7,
-                    centerHighlight: false,
+                    normalizedValue: tintNorm,
+                    tickCount: 21,
+                    majorEvery: 5,
+                    centerHighlight: true,
                     accentHairline: LinearGradient(
                         colors: [
-                            Color(red: 0.94, green: 0.68, blue: 0.36).opacity(0.65),
-                            Color.white.opacity(0.35),
-                            Color(red: 0.56, green: 0.76, blue: 0.98).opacity(0.65)
+                            Color(red: 0.38, green: 0.84, blue: 0.56).opacity(0.60),
+                            Color.white.opacity(0.28),
+                            Color(red: 0.90, green: 0.44, blue: 0.76).opacity(0.60)
                         ],
                         startPoint: .leading,
                         endPoint: .trailing
                     ),
                     onChanged: { newNorm in
-                        let rawK = Double(pro.minKelvin) + newNorm * kSpan
-                        let stepped = (rawK / 50.0).rounded() * 50.0
-                        pro.setManualWhiteBalance(kelvin: Float(stepped))
+                        let rawT = Double(pro.minTint) + newNorm * tintSpan
+                        let rounded = rawT.rounded()
+                        pro.setManualTint(abs(rounded) <= 1 ? 0 : Float(rounded))
                     }
                 )
+                .frame(height: 24)
 
-                // Thanh chỉnh sắc độ Tint (-50 xanh lá ↔ +50 hồng tím) nhỏ gọn
-                HStack(spacing: 8) {
-                    Text("Sắc độ")
-                        .font(.system(size: 9.5, weight: .medium, design: .rounded))
-                        .foregroundColor(AlignTheme.studioInkSecondary)
-                        .frame(width: 40, alignment: .leading)
-
-                    Slider(
-                        value: Binding(
-                            get: { Double(pro.isAutoWB ? pro.measuredLiveTint : pro.currentTint) },
-                            set: { pro.setManualTint(Float($0.rounded())) }
-                        ),
-                        in: Double(pro.minTint)...Double(pro.maxTint)
-                    )
-                    .tint(AlignTheme.studioAccent)
-                    .frame(height: 20)
-
-                    Button(action: {
-                        HapticFeedbackService.shared.triggerLight()
+                Button(action: {
+                    HapticFeedbackService.shared.triggerLight()
+                    if pro.isHardwareCustomWBSupported {
                         pro.applyGrayWorldNeutralWB()
-                    }) {
-                        Text("Xám")
-                            .font(.system(size: 9.5, weight: .bold, design: .rounded))
-                            .foregroundColor(AlignTheme.studioInkPrimary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3.5)
-                            .background(
-                                Capsule()
-                                    .fill(Color.white.opacity(0.11))
-                                    .overlay(Capsule().stroke(Color.white.opacity(0.16), lineWidth: 0.6))
-                            )
+                    } else {
+                        pro.toggleWhiteBalanceLock()
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Cân bằng trắng tự động theo chuẩn xám Gray World")
+                }) {
+                    let isLockActive = !pro.isHardwareCustomWBSupported && pro.isWhiteBalanceLocked
+                    Text(pro.isHardwareCustomWBSupported ? "Xám" : (isLockActive ? "AWB-L" : "Khóa AWB"))
+                        .font(.system(size: 9.0, weight: .bold, design: .rounded))
+                        .foregroundColor(isLockActive ? .black : AlignTheme.studioInkPrimary)
+                        .padding(.horizontal, 7.5)
+                        .padding(.vertical, 3.8)
+                        .background(
+                            Capsule()
+                                .fill(isLockActive ? AlignTheme.studioAccent : Color.white.opacity(0.11))
+                                .overlay(Capsule().stroke(isLockActive ? AlignTheme.studioAccent : Color.white.opacity(0.16), lineWidth: 0.6))
+                        )
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(pro.isHardwareCustomWBSupported ? "Cân bằng trắng chuẩn xám Gray World" : "Khóa cân bằng trắng AWB phần cứng")
+            }
 
+            HStack(spacing: 5) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 5) {
                         ForEach(ProPhotoManualControlsService.standardWBPresets) { preset in
@@ -746,6 +899,194 @@ private struct ProPhotoAdjustmentDrawer: View {
                                 isActive: isActive,
                                 action: { pro.setManualWhiteBalance(kelvin: preset.kelvin, tint: 0) }
                             )
+                        }
+                    }
+                }
+            }
+
+            if !pro.isHardwareCustomWBSupported {
+                Text(viewModel.selectedPhotoFormat == .dng
+                     ? "Ống kính đa tiêu cự: Khóa AWB phần cứng; Kelvin/Tint GPU áp dụng cho JPG/HEIF (RAW giữ cảm biến gốc)."
+                     : "Ống kính đa tiêu cự: Khóa AWB phần cứng · Chỉnh Kelvin/Tint GPU theo thời gian thực.")
+                    .font(.system(size: 8.8, weight: .regular))
+                    .foregroundColor(AlignTheme.studioInkTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+        }
+    }
+
+    // MARK: - 5B. Film Simulation & Recipe Fine-Tuning Panel (62 Presets + 8 Trục Tinh Chỉnh GPU)
+    private var filmPanel: some View {
+        VStack(spacing: 7) {
+            if viewModel.selectedPhotoFormat == .dng {
+                HStack(spacing: 8) {
+                    Text("File RAW DNG giữ màu cảm biến nguyên bản.")
+                        .font(.system(size: 10.5, weight: .regular))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
+                        .lineLimit(2)
+                    Spacer()
+                    presetChip(label: "Đổi HEIF", isActive: true) {
+                        viewModel.selectedPhotoFormat = .heif
+                    }
+                }
+                .padding(.vertical, 4)
+            } else {
+                // Chuyển nhanh giữa Chọn Preset và Tinh chỉnh công thức
+                HStack(spacing: 6) {
+                    HStack(spacing: 3) {
+                        ForEach(FilmSubMode.allCases, id: \.self) { mode in
+                            let active = filmSubMode == mode
+                            Button(action: {
+                                HapticFeedbackService.shared.triggerSelectionChange()
+                                withAnimation(.easeInOut(duration: 0.18)) {
+                                    filmSubMode = mode
+                                    if mode == .tune && selectedTuningAxis == .intensity && !viewModel.isFilmSimulationActive {
+                                        selectedTuningAxis = .contrast
+                                    }
+                                }
+                            }) {
+                                Text(mode.rawValue)
+                                    .font(.system(size: 9.5, weight: active ? .bold : .medium, design: .rounded))
+                                    .foregroundColor(active ? .black : AlignTheme.studioInkSecondary)
+                                    .padding(.horizontal, 9)
+                                    .padding(.vertical, 4)
+                                    .background(
+                                        Capsule()
+                                            .fill(active ? AlignTheme.studioAccent : Color.clear)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(2)
+                    .background(
+                        Capsule()
+                            .fill(Color.white.opacity(0.08))
+                    )
+
+                    Spacer()
+
+                    if filmSubMode == .tune && !viewModel.filmTuning.isIdentity {
+                        Button(action: {
+                            viewModel.resetFilmTuning()
+                        }) {
+                            Text("Đặt lại")
+                                .font(.system(size: 9.2, weight: .semibold, design: .rounded))
+                                .foregroundColor(AlignTheme.studioInkPrimary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.white.opacity(0.10))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    } else if filmSubMode == .preset && viewModel.isFilmSimulationActive {
+                        Text("\(Int(round(viewModel.filmSimulationIntensity * 100)))%")
+                            .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(AlignTheme.studioAccent)
+                    }
+                }
+
+                if filmSubMode == .preset {
+                    // Dải chọn nhóm máy phim
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 5) {
+                            ForEach(FilmPresetCategory.allCases) { category in
+                                let isSelected = viewModel.selectedFilmCategory == category
+                                presetChip(
+                                    label: category.displayName,
+                                    isActive: isSelected,
+                                    action: { viewModel.selectFilmCategory(category) }
+                                )
+                            }
+                        }
+                    }
+
+                    // Dải chọn từng Preset màu phim
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 5) {
+                            presetChip(
+                                label: "Tắt màu",
+                                isActive: !viewModel.isFilmSimulationActive,
+                                action: { viewModel.disableFilmSimulation() }
+                            )
+
+                            ForEach(viewModel.selectedFilmCategory.presets) { preset in
+                                let isSelected = viewModel.isFilmSimulationActive && viewModel.selectedFilmPreset == preset
+                                presetChip(
+                                    label: preset.shortTitle,
+                                    isActive: isSelected,
+                                    action: { viewModel.selectPreset(preset) }
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // Tinh chỉnh 8 trục giả lập thời gian thực bằng thước xúc giác 60 FPS
+                    let availableAxes: [FilmTuningAxis] = viewModel.isFilmSimulationActive
+                        ? FilmTuningAxis.allCases
+                        : FilmTuningAxis.allCases.filter { $0 != .intensity }
+                    let currentAxis = availableAxes.contains(selectedTuningAxis) ? selectedTuningAxis : .contrast
+
+                    HStack(spacing: 6) {
+                        Text(currentAxis.rawValue)
+                            .font(.system(size: 10.0, weight: .semibold, design: .rounded))
+                            .foregroundColor(AlignTheme.studioInkSecondary)
+                        Spacer()
+                        Text(currentAxis.displayValue(intensity: viewModel.filmSimulationIntensity, tuning: viewModel.filmTuning))
+                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(AlignTheme.studioAccent)
+                    }
+
+                    ProPrecisionRulerDial(
+                        normalizedValue: currentAxis.normalizedValue(intensity: viewModel.filmSimulationIntensity, tuning: viewModel.filmTuning),
+                        tickCount: 31,
+                        majorEvery: 5,
+                        centerHighlight: currentAxis.isBipolar,
+                        onChanged: { newNorm in
+                            currentAxis.applyNormalized(newNorm, to: viewModel)
+                        }
+                    )
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 5) {
+                            ForEach(availableAxes) { axis in
+                                let isSelected = (axis == currentAxis)
+                                let isEdited = axis.isModified(
+                                    intensity: viewModel.filmSimulationIntensity,
+                                    tuning: viewModel.filmTuning,
+                                    isFilmActive: viewModel.isFilmSimulationActive
+                                )
+                                Button(action: {
+                                    HapticFeedbackService.shared.triggerSelectionChange()
+                                    selectedTuningAxis = axis
+                                }) {
+                                    HStack(spacing: 3.5) {
+                                        if isEdited {
+                                            Circle()
+                                                .fill(isSelected ? .black : AlignTheme.studioAccent)
+                                                .frame(width: 4, height: 4)
+                                        }
+                                        Text(axis.rawValue)
+                                            .font(.system(size: 9.5, weight: isSelected ? .bold : .medium, design: .rounded))
+                                    }
+                                    .foregroundColor(isSelected ? .black : AlignTheme.studioInkPrimary.opacity(0.84))
+                                    .padding(.horizontal, 8.5)
+                                    .padding(.vertical, 4.5)
+                                    .background(
+                                        Capsule()
+                                            .fill(isSelected ? AlignTheme.studioAccent : Color.white.opacity(0.08))
+                                            .overlay(
+                                                Capsule()
+                                                    .stroke(isSelected ? AlignTheme.studioAccent : Color.white.opacity(0.11), lineWidth: 0.6)
+                                            )
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
                     }
                 }
@@ -1011,7 +1352,7 @@ private struct ProPhotoAdjustmentDrawer: View {
 }
 
 // MARK: - Precision Tactile Tick-Mark Ruler Dial (Leica / Halide Style)
-private struct ProPrecisionRulerDial: View {
+struct ProPrecisionRulerDial: View {
     let normalizedValue: Double
     let tickCount: Int
     let majorEvery: Int

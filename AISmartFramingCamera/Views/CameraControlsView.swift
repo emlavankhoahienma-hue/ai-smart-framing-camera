@@ -786,9 +786,11 @@ public struct CameraCardView: View {
     }
 }
 
-// MARK: - Film Preset Drawer (Smoked Frosted Glass Storyboard)
+// MARK: - Film Preset Drawer (Smoked Frosted Glass Storyboard + Live Recipe Tuning)
 public struct FilmPresetDrawer: View {
     @ObservedObject var viewModel: CameraViewModel
+    @State private var isShowingFilmTuning: Bool = false
+    @State private var selectedAxis: FilmTuningAxis = .contrast
 
     public init(viewModel: CameraViewModel) {
         self.viewModel = viewModel
@@ -800,6 +802,10 @@ public struct FilmPresetDrawer: View {
             if viewModel.isFilmSimulationActive {
                 intensitySliderBar
             }
+            if isShowingFilmTuning {
+                filmTuningBar
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
             filmstripTrack
         }
         .padding(.vertical, 10)
@@ -809,15 +815,16 @@ public struct FilmPresetDrawer: View {
         .gesture(dismissDragGesture)
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
+        .animation(.spring(response: 0.25, dampingFraction: 0.84), value: isShowingFilmTuning)
     }
 
     // MARK: - Subviews
 
     @ViewBuilder
     private var intensitySliderBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Text("CƯỜNG ĐỘ")
-                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                .font(.system(size: 9.2, weight: .semibold, design: .monospaced))
                 .foregroundColor(AlignTheme.studioInkSecondary)
                 .fixedSize()
 
@@ -831,9 +838,9 @@ public struct FilmPresetDrawer: View {
                 }
             }) {
                 Text("\(Int(round(viewModel.filmSimulationIntensity * 100)))%")
-                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 9.2, weight: .semibold, design: .monospaced))
                     .foregroundColor(AlignTheme.studioAccent)
-                    .padding(.horizontal, 8)
+                    .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(
                         Capsule()
@@ -843,9 +850,129 @@ public struct FilmPresetDrawer: View {
             }
             .buttonStyle(PlainButtonStyle())
             .accessibilityLabel("Đặt lại cường độ 100%")
+
+            Button(action: {
+                HapticFeedbackService.shared.triggerSelectionChange()
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.84)) {
+                    isShowingFilmTuning.toggle()
+                }
+            }) {
+                HStack(spacing: 3.5) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 9.0, weight: .semibold))
+                    Text("Chỉnh")
+                        .font(.system(size: 9.2, weight: .semibold, design: .rounded))
+                    if !viewModel.filmTuning.isIdentity {
+                        Circle()
+                            .fill(isShowingFilmTuning ? .black : AlignTheme.studioAccent)
+                            .frame(width: 4, height: 4)
+                    }
+                }
+                .foregroundColor(isShowingFilmTuning ? .black : AlignTheme.studioInkPrimary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3.5)
+                .background(
+                    Capsule()
+                        .fill(isShowingFilmTuning ? AlignTheme.studioAccent : Color.white.opacity(0.10))
+                )
+                .fixedSize()
+            }
+            .buttonStyle(PlainButtonStyle())
+            .accessibilityLabel("Tinh chỉnh thông số màu giả lập")
         }
         .padding(.horizontal, 12)
         .transition(.opacity)
+    }
+
+    @ViewBuilder
+    private var filmTuningBar: some View {
+        let axes = FilmTuningAxis.allCases.filter { $0 != .intensity }
+        let activeAxis = axes.contains(selectedAxis) ? selectedAxis : .contrast
+
+        VStack(spacing: 6) {
+            HStack(spacing: 6) {
+                Text(activeAxis.rawValue.uppercased())
+                    .font(.system(size: 9.0, weight: .bold, design: .monospaced))
+                    .foregroundColor(AlignTheme.studioInkSecondary)
+
+                Text(activeAxis.displayValue(intensity: viewModel.filmSimulationIntensity, tuning: viewModel.filmTuning))
+                    .font(.system(size: 10.0, weight: .bold, design: .monospaced))
+                    .foregroundColor(AlignTheme.studioAccent)
+
+                Spacer()
+
+                if !viewModel.filmTuning.isIdentity {
+                    Button(action: {
+                        viewModel.resetFilmTuning()
+                    }) {
+                        Text("Đặt lại")
+                            .font(.system(size: 9.0, weight: .semibold, design: .rounded))
+                            .foregroundColor(AlignTheme.studioInkPrimary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2.5)
+                            .background(Capsule().fill(Color.white.opacity(0.10)))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+
+            ProPrecisionRulerDial(
+                normalizedValue: activeAxis.normalizedValue(intensity: viewModel.filmSimulationIntensity, tuning: viewModel.filmTuning),
+                tickCount: 31,
+                majorEvery: 5,
+                centerHighlight: activeAxis.isBipolar,
+                onChanged: { newNorm in
+                    activeAxis.applyNormalized(newNorm, to: viewModel)
+                }
+            )
+            .frame(height: 26)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) {
+                    ForEach(axes) { axis in
+                        let isSelected = (axis == activeAxis)
+                        let isEdited = axis.isModified(
+                            intensity: viewModel.filmSimulationIntensity,
+                            tuning: viewModel.filmTuning,
+                            isFilmActive: viewModel.isFilmSimulationActive
+                        )
+                        Button(action: {
+                            HapticFeedbackService.shared.triggerSelectionChange()
+                            selectedAxis = axis
+                        }) {
+                            HStack(spacing: 3) {
+                                if isEdited {
+                                    Circle()
+                                        .fill(isSelected ? .black : AlignTheme.studioAccent)
+                                        .frame(width: 4, height: 4)
+                                }
+                                Text(axis.rawValue)
+                                    .font(.system(size: 9.2, weight: isSelected ? .bold : .medium, design: .rounded))
+                            }
+                            .foregroundColor(isSelected ? .black : AlignTheme.studioInkPrimary.opacity(0.84))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(isSelected ? AlignTheme.studioAccent : Color.white.opacity(0.08))
+                            )
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.black.opacity(0.24))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 0.6)
+                )
+        )
+        .padding(.horizontal, 10)
     }
 
     @ViewBuilder

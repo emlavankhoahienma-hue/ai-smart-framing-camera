@@ -54,7 +54,9 @@ public struct CameraPreviewView: UIViewRepresentable {
             focusPeakingColor: viewModel.focusPeakingColor,
             focusPeakingSensitivity: Float(viewModel.focusPeakingSensitivity),
             preset: viewModel.selectedFilmPreset,
-            intensity: Float(viewModel.filmSimulationIntensity)
+            intensity: Float(viewModel.filmSimulationIntensity),
+            softwareWB: viewModel.activeProSoftwareWB,
+            filmTuning: viewModel.filmTuning
         )
     }
 
@@ -152,6 +154,8 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private var focusPeakingSensitivity: Float = 0.5
     private var currentPreset: FilmPreset = .standard
     private var currentIntensity: Float = 1.0
+    private var currentSoftwareWB: ProPhotoSoftwareWBGrade = .inactive
+    private var currentFilmTuning: FilmSimulationTuning = .neutral
 
     // Frame cache to avoid redundant filter graphs on idle or identical frames
     private var lastProcessedBuffer: CVPixelBuffer? = nil
@@ -159,6 +163,8 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private var lastFilteredCI: CIImage? = nil
     private var lastPreset: FilmPreset = .standard
     private var lastIntensity: Float = 1.0
+    private var lastSoftwareWB: ProPhotoSoftwareWBGrade = .inactive
+    private var lastFilmTuning: FilmSimulationTuning = .neutral
     private var lastFilterActive: Bool = false
     private var lastVideoAspectFit: Bool = false
     private var lastDrawableSize: CGSize = .zero
@@ -178,20 +184,24 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         super.init()
     }
 
-    func updateState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool, isSimulatedUltraWide: Bool = false, simulatedFactor: CGFloat = 0.5, isHorizonLock: Bool = false, isFocusPeaking: Bool = false, focusPeakingColor: FocusPeakingColor = .green, focusPeakingSensitivity: Float = 0.5, preset: FilmPreset, intensity: Float) {
+    func updateState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool, isSimulatedUltraWide: Bool = false, simulatedFactor: CGFloat = 0.5, isHorizonLock: Bool = false, isFocusPeaking: Bool = false, focusPeakingColor: FocusPeakingColor = .green, focusPeakingSensitivity: Float = 0.5, preset: FilmPreset, intensity: Float, softwareWB: ProPhotoSoftwareWBGrade = .inactive, filmTuning: FilmSimulationTuning = .neutral) {
         stateLock.lock()
-        self.isFilmFilterActive = isActive && (preset != .standard)
+        let hasRealFilm = isActive && (preset != .standard && preset != .proColorGrade)
+        let hasColorPass = hasRealFilm || !softwareWB.isIdentity || !filmTuning.isIdentity
+        self.isFilmFilterActive = hasColorPass
         self.isFocusPeaking = isFocusPeaking
         self.focusPeakingColor = focusPeakingColor
         self.focusPeakingSensitivity = focusPeakingSensitivity
-        self.isRenderingActive = self.isFilmFilterActive || isSimulatedUltraWide || isHorizonLock || isFocusPeaking
+        self.isRenderingActive = hasColorPass || isSimulatedUltraWide || isHorizonLock || isFocusPeaking
         self.isDualCameraMode = isDualCamera
         self.isVideoAspectFit = isVideoMode
         self.isSimulatedUltraWide = isSimulatedUltraWide
         self.simulatedFactor = simulatedFactor
         self.isHorizonLock = isHorizonLock
-        self.currentPreset = preset
+        self.currentPreset = hasRealFilm ? preset : .proColorGrade
         self.currentIntensity = intensity
+        self.currentSoftwareWB = softwareWB
+        self.currentFilmTuning = filmTuning
         stateLock.unlock()
     }
 
@@ -210,6 +220,8 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         let peakingSens = focusPeakingSensitivity
         let preset = currentPreset
         let intensity = currentIntensity
+        let softwareWB = currentSoftwareWB
+        let filmTuning = currentFilmTuning
         stateLock.unlock()
 
         guard shouldRender else { return }
@@ -225,6 +237,8 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
            videoAspectFit == lastVideoAspectFit,
            effectivePreset == lastPreset,
            abs(intensity - lastIntensity) < 0.005,
+           softwareWB == lastSoftwareWB,
+           filmTuning == lastFilmTuning,
            view.drawableSize == lastDrawableSize,
            lastFilteredCI != nil,
            lastPresentedOnce {
@@ -249,6 +263,8 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
            videoAspectFit == lastVideoAspectFit,
            effectivePreset == lastPreset,
            abs(intensity - lastIntensity) < 0.005,
+           softwareWB == lastSoftwareWB,
+           filmTuning == lastFilmTuning,
            drawableSize == lastDrawableSize,
            let cached = lastFilteredCI {
             finalImageToRender = cached
@@ -336,6 +352,8 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
             lastVideoAspectFit = videoAspectFit
             lastPreset = effectivePreset
             lastIntensity = intensity
+            lastSoftwareWB = softwareWB
+            lastFilmTuning = filmTuning
             lastDrawableSize = drawableSize
             lastPeakingActive = isPeaking
             lastPeakingColor = peakingColor
@@ -484,10 +502,13 @@ public class PreviewContainerView: UIView {
         focusPeakingColor: FocusPeakingColor = .green,
         focusPeakingSensitivity: Float = 0.5,
         preset: FilmPreset,
-        intensity: Float
+        intensity: Float,
+        softwareWB: ProPhotoSoftwareWBGrade = .inactive,
+        filmTuning: FilmSimulationTuning = .neutral
     ) {
-        // Kich hoat MTKView khi bat bo loc mau, simulated 0.5x, Horizon Lock 360 do, hoac Focus Peaking 60 FPS
-        let shouldRender = (isActive && preset != .standard) || isSimulatedUltraWide || isHorizonLock || isFocusPeaking
+        // Kich hoat MTKView khi bat bo loc mau, GPU WB Pro, tinh chinh gia lap phim, simulated 0.5x, Horizon Lock 360 do, hoac Focus Peaking 60 FPS
+        let hasColorPass = (isActive && preset != .standard && preset != .proColorGrade) || !softwareWB.isIdentity || !filmTuning.isIdentity
+        let shouldRender = hasColorPass || isSimulatedUltraWide || isHorizonLock || isFocusPeaking
         metalRenderer?.updateState(
             isActive: isActive,
             isDualCamera: isDualCamera,
@@ -499,7 +520,9 @@ public class PreviewContainerView: UIView {
             focusPeakingColor: focusPeakingColor,
             focusPeakingSensitivity: focusPeakingSensitivity,
             preset: preset,
-            intensity: intensity
+            intensity: intensity,
+            softwareWB: softwareWB,
+            filmTuning: filmTuning
         )
 
         if isDualCamera {

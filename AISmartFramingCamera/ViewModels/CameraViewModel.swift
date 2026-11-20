@@ -292,8 +292,9 @@ public final class CameraViewModel: ObservableObject {
         didSet {
             if !isFilmSimulationActive {
                 isColorAppliedByAI = false
-                if selectedFilmPreset != .standard {
-                    selectedFilmPreset = .standard
+                let targetPreset: FilmPreset = (!activeProSoftwareWB.isIdentity || !filmTuning.isIdentity) ? .proColorGrade : .standard
+                if selectedFilmPreset != targetPreset {
+                    selectedFilmPreset = targetPreset
                 }
                 currentAIColorParams = nil
                 geminiColorRecipe = nil
@@ -303,13 +304,45 @@ public final class CameraViewModel: ObservableObject {
     @Published public var selectedFilmPreset: FilmPreset = .standard
     private var isColorAppliedByAI: Bool = false
 
+    /// Tham số tinh chỉnh giả lập phim theo thời gian thực (Tương phản, Bão hòa, Độ ấm, Sáng/Tối, Hạt phim, Viền tối).
+    @Published public var filmTuning: FilmSimulationTuning = .neutral {
+        didSet {
+            FilmFilterEngine.shared.activeFilmTuning = filmTuning
+            syncProColorPassthroughPreset()
+        }
+    }
+
+    /// Cân bằng trắng GPU chủ động khi ống kính đa tiêu cự ảo không hỗ trợ custom device gains phần cứng.
+    @Published public var activeProSoftwareWB: ProPhotoSoftwareWBGrade = .inactive {
+        didSet {
+            syncProColorPassthroughPreset()
+        }
+    }
+
+    private func syncProColorPassthroughPreset() {
+        guard !isFilmSimulationActive else { return }
+        let needsPassthrough = !activeProSoftwareWB.isIdentity || !filmTuning.isIdentity
+        let desired: FilmPreset = needsPassthrough ? .proColorGrade : .standard
+        if selectedFilmPreset != desired {
+            selectedFilmPreset = desired
+        }
+    }
+
+    public func resetFilmTuning() {
+        haptics.triggerSelectionChange()
+        withAnimation(.easeInOut(duration: 0.2)) {
+            filmTuning = .neutral
+        }
+    }
+
     /// Reset sạch về màu tự nhiên của cảm biến (không áp bất kỳ bộ lọc phim/AI nào)
     public func resetToNaturalColor() {
         haptics.triggerSelectionChange()
         withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
             isColorAppliedByAI = false
+            filmTuning = .neutral
             isFilmSimulationActive = false
-            selectedFilmPreset = .standard
+            selectedFilmPreset = activeProSoftwareWB.isIdentity ? .standard : .proColorGrade
             isAIFullColorEnabled = false
             currentAIColorParams = nil
             geminiColorRecipe = nil
@@ -466,10 +499,16 @@ public final class CameraViewModel: ObservableObject {
             guard isProPhotoModeEnabled != oldValue else { return }
             if isProPhotoModeEnabled {
                 isShowingFilmDrawer = false
+                proPhotoService.onSoftwareWhiteBalanceChanged = { [weak self] grade in
+                    Task { @MainActor [weak self] in
+                        self?.activeProSoftwareWB = grade
+                    }
+                }
                 proPhotoService.activate(displayZoom: displayZoom)
             } else {
                 isProPhotoPanelExpanded = false
                 proPhotoService.deactivateAndResetToAuto()
+                activeProSoftwareWB = .inactive
             }
         }
     }
@@ -2422,7 +2461,9 @@ public final class CameraViewModel: ObservableObject {
                 isActive: self.isFilmSimulationActive,
                 isDualCamera: isActive,
                 preset: self.selectedFilmPreset,
-                intensity: Float(self.filmSimulationIntensity)
+                intensity: Float(self.filmSimulationIntensity),
+                softwareWB: self.activeProSoftwareWB,
+                filmTuning: self.filmTuning
             )
         }
     }

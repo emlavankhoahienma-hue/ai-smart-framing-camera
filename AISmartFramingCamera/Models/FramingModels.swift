@@ -704,6 +704,8 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
     // 11. Original (2 tones)
     case standard = "Original Clean"
     case studioNatural = "Studio Natural"
+    /// Passthrough nội bộ để ghi nhận cân bằng trắng GPU Pro / tinh chỉnh màu vào ảnh chụp JPG/HEIF khi không chọn preset màu phim.
+    case proColorGrade = "Pro Color"
 
     // Legacy Compatibility Cases
     case cinemaTealOrange = "Teal & Orange"
@@ -742,7 +744,7 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
             return .dv
         case .polaroid600, .sx70TimeZero, .instaxMini, .instaxWide, .instaxSquare, .polaroidSpectra:
             return .instant
-        case .standard, .studioNatural, .leicaMonochrom, .monochromeNoir, .nordicCold, .neonCyberpunk, .aiFullAuto:
+        case .standard, .studioNatural, .proColorGrade, .leicaMonochrom, .monochromeNoir, .nordicCold, .neonCyberpunk, .aiFullAuto:
             return .original
         }
     }
@@ -822,7 +824,7 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
         case .instaxSquare: return "Instax Square"
         case .polaroidSpectra: return "Spectra"
 
-        case .standard: return "Tu nhien"
+        case .standard, .proColorGrade: return "Tu nhien"
         case .studioNatural: return "Studio Natural"
 
         case .cinemaTealOrange: return "Dien anh Teal"
@@ -915,6 +917,7 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
         case .polaroidSpectra: return "SPECTRA"
 
         case .standard: return "RAW"
+        case .proColorGrade: return "PRO"
         case .studioNatural: return "STUDIO"
 
         case .cinemaTealOrange: return "TEAL"
@@ -1081,7 +1084,7 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
         case .instaxSquare: return "Fujifilm Instax SQ lai ky thuat so, sac net, tuong phan cao"
         case .polaroidSpectra: return "Polaroid Spectra khung hinh rong, mau dam tham"
 
-        case .standard: return "Mau thuc te trung thuc, dai sang toi da"
+        case .standard, .proColorGrade: return "Mau thuc te trung thuc, dai sang toi da"
         case .studioNatural: return "Toi uu dai tuong phan tu nhien nhe nhang"
 
         case .cinemaTealOrange: return "Tuong phan dien anh Hollywood, teal doi lap da am"
@@ -1126,7 +1129,7 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
              .cam1998Street, .grPositive, .grHighBW, .grFFilm, .grStreetSnap, .thetaDoc,
              .sureShot35, .canonF1, .cinemaTealOrange, .sunsetGlow, .tokyoAiry,
              .leicaMonochrom, .monochromeNoir, .vintageWarm, .streetClassic, .nordicCold,
-             .neonCyberpunk, .standard, .studioNatural, .aiFullAuto:
+             .neonCyberpunk, .standard, .studioNatural, .proColorGrade, .aiFullAuto:
             return .creativeProfile
         }
     }
@@ -1249,7 +1252,7 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
         case .cam1998, .toyK, .colorPlus200: return 1.08
         case .nokia3310: return 1.10
         case .kodakPortra400: return 1.03
-        case .standard: return 1.0
+        case .standard, .proColorGrade: return 1.0
         default: return 1.04
         }
     }
@@ -1285,7 +1288,7 @@ public enum FilmPreset: String, CaseIterable, Identifiable, Sendable {
             return Color(red: 1.0, green: 0.92, blue: 0.78)
         case .miniDV43, .hi8Analog, .vhscHome:
             return Color(red: 0.95, green: 0.80, blue: 0.48)
-        case .standard:
+        case .standard, .proColorGrade:
             return nil
         default:
             return nil

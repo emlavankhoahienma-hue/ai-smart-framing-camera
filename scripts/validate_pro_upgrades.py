@@ -264,8 +264,12 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             "format.maxExposureDuration",
             "camera.exposureTargetOffset",
             "camera.maxWhiteBalanceGain",
+            "camera.isLockingWhiteBalanceWithCustomDeviceGainsSupported",
+            "!camera.isVirtualDevice",
+            "AVCaptureDevice.currentWhiteBalanceGains",
             "camera.grayWorldDeviceWhiteBalanceGains",
             "clampedWhiteBalanceGains(",
+            "areGainsStrictlyValid(",
             "camera.isLockingFocusWithCustomLensPositionSupported",
             "camera.isAutoFocusRangeRestrictionSupported",
             "camera.isLowLightBoostSupported",
@@ -275,10 +279,26 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         ]:
             self.assertIn(token, service)
 
+        pro_video = source("Services/ProVideoManualControlsService.swift")
+        self.assertIn("camera.isLockingWhiteBalanceWithCustomDeviceGainsSupported", pro_video)
+        self.assertIn("!camera.isVirtualDevice", pro_video)
+
+        film_engine = source("Services/FilmFilterEngine.swift")
+        for token in [
+            "public struct FilmSimulationTuning:",
+            "public struct ProPhotoSoftwareWBGrade:",
+            "applySoftwareWhiteBalance(",
+            "applyFilmTuning(",
+            "case .standard, .aiFullAuto, .proColorGrade:",
+        ]:
+            self.assertIn(token, film_engine)
+
         overlay = source("Views/ProPhotoControlsOverlayView.swift")
         self.assertIn("public struct ProPhotoTelemetryHUDView: View", overlay)
         self.assertIn("public struct ProPhotoManualDeckView: View", overlay)
         self.assertIn("ProPrecisionRulerDial", overlay)
+        self.assertIn("enum FilmTuningAxis", overlay)
+        self.assertIn("private var filmPanel: some View", overlay)
         self.assertIn("AlignTheme.studioAccent", overlay)
         self.assertNotIn("electricCyan", overlay)
         self.assertNotIn("iridescentRainbow", overlay)
@@ -289,6 +309,7 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         controls = source("Views/CameraControlsView.swift")
         self.assertIn('case proPhoto = "PRO"', controls)
         self.assertIn("viewModel.selectProPhotoMode()", controls)
+        self.assertIn("private var filmTuningBar: some View", controls)
 
         main_view = source("Views/CameraMainView.swift")
         self.assertIn("ProPhotoTelemetryHUDView(viewModel: viewModel)", main_view)
@@ -297,6 +318,8 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         vm = source("ViewModels/CameraViewModel.swift")
         self.assertIn("public let proPhotoService = ProPhotoManualControlsService.shared", vm)
         self.assertIn("public func selectProPhotoMode()", vm)
+        self.assertIn("public var filmTuning: FilmSimulationTuning = .neutral", vm)
+        self.assertIn("public var activeProSoftwareWB: ProPhotoSoftwareWBGrade = .inactive", vm)
 
         pbx = PBXPROJ.read_text(encoding="utf-8")
         for filename in ["ProPhotoManualControlsService.swift", "ProPhotoControlsOverlayView.swift"]:

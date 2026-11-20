@@ -254,19 +254,33 @@ public final class ProVideoManualControlsService: ObservableObject {
         let tint = currentTint
 
         pendingWBWorkItem = CameraService.shared.scheduleDeviceConfiguration(after: 0.02) { camera in
+            guard !camera.isVirtualDevice,
+                  camera.isLockingWhiteBalanceWithCustomDeviceGainsSupported,
+                  camera.isWhiteBalanceModeSupported(.locked),
+                  camera.maxWhiteBalanceGain.isFinite,
+                  camera.maxWhiteBalanceGain >= 1.01 else {
+                if camera.isWhiteBalanceModeSupported(.locked) {
+                    do {
+                        try camera.lockForConfiguration()
+                        defer { camera.unlockForConfiguration() }
+                        camera.setWhiteBalanceModeLocked(with: AVCaptureDevice.currentWhiteBalanceGains, completionHandler: nil)
+                    } catch {
+                        CameraLogger.error("ProVideo: Lỗi khóa AWB an toàn", error: error, category: .capture)
+                    }
+                }
+                return
+            }
             let values = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(temperature: kelvin, tint: tint)
             var gains = camera.deviceWhiteBalanceGains(for: values)
-            let maxGain = max(1, Self.finite(camera.maxWhiteBalanceGain, fallback: 1))
-            gains.redGain = Self.clamp(gains.redGain, lower: 1, upper: maxGain, fallback: 1)
-            gains.greenGain = Self.clamp(gains.greenGain, lower: 1, upper: maxGain, fallback: 1)
-            gains.blueGain = Self.clamp(gains.blueGain, lower: 1, upper: maxGain, fallback: 1)
+            let maxGain = max(1.001, Self.finite(camera.maxWhiteBalanceGain, fallback: 1.001) - 0.001)
+            gains.redGain = Self.clamp(gains.redGain, lower: 1.001, upper: maxGain, fallback: 1.001)
+            gains.greenGain = Self.clamp(gains.greenGain, lower: 1.001, upper: maxGain, fallback: 1.001)
+            gains.blueGain = Self.clamp(gains.blueGain, lower: 1.001, upper: maxGain, fallback: 1.001)
 
             do {
                 try camera.lockForConfiguration()
                 defer { camera.unlockForConfiguration() }
-                if camera.isWhiteBalanceModeSupported(.locked) {
-                    camera.setWhiteBalanceModeLocked(with: gains, completionHandler: nil)
-                }
+                camera.setWhiteBalanceModeLocked(with: gains, completionHandler: nil)
             } catch {
                 CameraLogger.error("ProVideo: Lỗi khóa white balance", error: error, category: .capture)
             }

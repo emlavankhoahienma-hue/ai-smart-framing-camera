@@ -9,6 +9,7 @@ public enum ProPhotoParameterTab: String, CaseIterable, Identifiable, Sendable {
     case iso = "ISO"
     case wb = "WB"
     case focus = "MF"
+    case film = "MÀU"
     case hardware = "PRO"
 
     public var id: String { rawValue }
@@ -20,6 +21,7 @@ public enum ProPhotoParameterTab: String, CaseIterable, Identifiable, Sendable {
         case .iso: return "Độ nhạy ISO"
         case .wb: return "Cân bằng trắng"
         case .focus: return "Lấy nét"
+        case .film: return "Giả lập phim"
         case .hardware: return "Tùy chọn Pro"
         }
     }
@@ -31,6 +33,7 @@ public enum ProPhotoParameterTab: String, CaseIterable, Identifiable, Sendable {
         case .iso: return "camera.aperture"
         case .wb: return "thermometer.medium"
         case .focus: return "scope"
+        case .film: return "camera.filters"
         case .hardware: return "slider.horizontal.3"
         }
     }
@@ -135,12 +138,19 @@ public final class ProPhotoManualControlsService: ObservableObject {
     @Published public var isExposureLocked: Bool = false
     @Published public private(set) var isExposureLockSupported: Bool = true
 
-    // MARK: - Cân bằng trắng (Kelvin & Tint)
+    // MARK: - Cân bằng trắng (Kelvin & Tint — tự động chọn phần cứng ISP hoặc GPU an toàn cho Virtual Multi-Camera)
 
     @Published public var isAutoWB: Bool = true
     @Published public var currentKelvin: Float = 5500
     @Published public var currentTint: Float = 0
     @Published public private(set) var isManualWBSupported: Bool = true
+    /// `true` trên ống kính vật lý đơn hỗ trợ `isLockingWhiteBalanceWithCustomDeviceGainsSupported`;
+    /// `false` trên Virtual Multi-Camera (builtInTripleCamera / DualWide) -> dùng Khóa AWB phần cứng + GPU Kelvin/Tint để không bao giờ văng app.
+    @Published public private(set) var isHardwareCustomWBSupported: Bool = false
+    @Published public private(set) var isWhiteBalanceLockSupported: Bool = true
+    @Published public var isWhiteBalanceLocked: Bool = false
+    @Published public private(set) var softwareWhiteBalanceGrade: ProPhotoSoftwareWBGrade = .inactive
+    public var onSoftwareWhiteBalanceChanged: ((ProPhotoSoftwareWBGrade) -> Void)?
     public let minKelvin: Float = 2500
     public let maxKelvin: Float = 9500
     public let minTint: Float = -50
@@ -241,6 +251,7 @@ public final class ProPhotoManualControlsService: ObservableObject {
             || !isAutoShutter
             || abs(currentEVBias) >= 0.05
             || !isAutoWB
+            || isWhiteBalanceLocked
             || !isAutoFocus
             || isExposureLocked
             || isFocusLocked
@@ -395,7 +406,8 @@ public final class ProPhotoManualControlsService: ObservableObject {
             let aperture = (camera.lensAperture.isFinite && camera.lensAperture > 0) ? camera.lensAperture : 1.8
             let supportsCustomExp = camera.isExposureModeSupported(.custom)
             let supportsExpLock = camera.isExposureModeSupported(.locked)
-            let supportsWB = camera.isWhiteBalanceModeSupported(.locked)
+            let supportsCustomWB = Self.supportsSafeHardwareCustomWB(camera)
+            let supportsWBLock = camera.isWhiteBalanceModeSupported(.locked)
             let supportsMF = camera.isLockingFocusWithCustomLensPositionSupported
             let supportsFocusLock = camera.isFocusModeSupported(.locked)
             let supportsAFRange = camera.isAutoFocusRangeRestrictionSupported
@@ -416,7 +428,7 @@ public final class ProPhotoManualControlsService: ObservableObject {
             let liveBias = Self.clamp(camera.exposureTargetBias, lower: safeMinEV, upper: safeMaxEV, fallback: 0.0)
             let liveLens = Self.clamp(camera.lensPosition, lower: 0.0, upper: 1.0, fallback: 0.5)
 
-            let wbTT = Self.readSafeTemperatureAndTint(from: camera)
+            let wbTT = supportsCustomWB ? Self.readSafeTemperatureAndTint(from: camera) : nil
             let maxMP = Self.computeMaxMegapixels(for: format)
             let eqFocal = Self.computeEquivalentFocalLengthMM(camera: camera, displayZoom: zoomSnapshot)
             let lensName = Self.lensDisplayName(for: camera, displayZoom: zoomSnapshot)
@@ -432,7 +444,9 @@ public final class ProPhotoManualControlsService: ObservableObject {
                 self.hardwareLensAperture = aperture
                 self.isCustomExposureSupported = supportsCustomExp
                 self.isExposureLockSupported = supportsExpLock
-                self.isManualWBSupported = supportsWB
+                self.isHardwareCustomWBSupported = supportsCustomWB
+                self.isWhiteBalanceLockSupported = supportsWBLock
+                self.isManualWBSupported = true
                 self.isManualFocusSupported = supportsMF
                 self.isFocusLockSupported = supportsFocusLock
                 self.isAFRangeSupported = supportsAFRange
@@ -471,9 +485,12 @@ public final class ProPhotoManualControlsService: ObservableObject {
                     self.isAutoFocus = true
                     self.currentLensPosition = liveLens
                 }
-                if self.isAutoWB || !supportsWB, let wbTT {
+                if self.isAutoWB, let wbTT {
                     self.currentKelvin = wbTT.kelvin
                     self.currentTint = wbTT.tint
+                } else if self.isAutoWB && !supportsCustomWB {
+                    self.currentKelvin = 5500
+                    self.currentTint = 0
                 }
                 if !supportsCustomExp {
                     self.isAutoISO = true
@@ -563,7 +580,8 @@ public final class ProPhotoManualControlsService: ObservableObject {
             let liveDur = (liveDurRaw.isFinite && liveDurRaw > 0) ? liveDurRaw : (1.0 / 125.0)
             let liveBias = Self.clamp(camera.exposureTargetBias, lower: -3.0, upper: 3.0, fallback: 0.0)
             let liveLens = Self.clamp(camera.lensPosition, lower: 0, upper: 1, fallback: 0.5)
-            let wbTT = Self.readSafeTemperatureAndTint(from: camera)
+            let supportsCustomWB = Self.supportsSafeHardwareCustomWB(camera)
+            let wbTT = supportsCustomWB ? Self.readSafeTemperatureAndTint(from: camera) : nil
 
             // Vòng hồi tiếp bán tự động chuẩn thực tế (S = ưu tiên tốc độ tự chỉnh ISO; ISO = ưu tiên ISO tự chỉnh tốc độ)
             if canAdjustSemiAuto && (wantShutterPriority || wantISOPriority) && camera.isExposureModeSupported(.custom) && abs(offset) >= 0.14 {
@@ -643,8 +661,11 @@ public final class ProPhotoManualControlsService: ObservableObject {
                     }
                 }
 
-                if canSyncWBTruth && wbMode == .continuousAutoWhiteBalance && !self.isAutoWB {
+                if canSyncWBTruth && self.isHardwareCustomWBSupported && wbMode == .continuousAutoWhiteBalance && !self.isAutoWB {
                     self.isAutoWB = true
+                }
+                if canSyncWBTruth && wbMode == .continuousAutoWhiteBalance && self.isWhiteBalanceLocked {
+                    self.isWhiteBalanceLocked = false
                 }
             }
         }
@@ -828,22 +849,41 @@ public final class ProPhotoManualControlsService: ObservableObject {
         }
     }
 
-    // MARK: - Cân bằng trắng (Kelvin, Tint & Gray World Neutral)
+    // MARK: - Cân bằng trắng (Kelvin, Tint, Khóa AWB & Gray World Neutral — tuyệt đối chống văng trên Virtual Multi-Camera)
+
+    private func publishSoftwareWB(_ grade: ProPhotoSoftwareWBGrade) {
+        softwareWhiteBalanceGrade = grade
+        FilmFilterEngine.shared.activeSoftwareWhiteBalance = grade
+        onSoftwareWhiteBalanceChanged?(grade)
+    }
 
     public func setAutoWB(_ auto: Bool) {
         lastUserWBWriteAt = Date().timeIntervalSince1970
         isAutoWB = auto
         if auto {
+            isWhiteBalanceLocked = false
+            currentKelvin = isHardwareCustomWBSupported ? measuredLiveKelvin : 5500
+            currentTint = isHardwareCustomWBSupported ? measuredLiveTint : 0
+            publishSoftwareWB(.inactive)
             restoreContinuousAutoWhiteBalance()
         } else {
-            currentKelvin = Self.clamp(measuredLiveKelvin, lower: minKelvin, upper: maxKelvin, fallback: 5500)
-            currentTint = Self.clamp(measuredLiveTint, lower: minTint, upper: maxTint, fallback: 0)
+            currentKelvin = Self.clamp(
+                isHardwareCustomWBSupported ? measuredLiveKelvin : currentKelvin,
+                lower: minKelvin,
+                upper: maxKelvin,
+                fallback: 5500
+            )
+            currentTint = Self.clamp(
+                isHardwareCustomWBSupported ? measuredLiveTint : currentTint,
+                lower: minTint,
+                upper: maxTint,
+                fallback: 0
+            )
             applyWhiteBalance()
         }
     }
 
     public func setManualWhiteBalance(kelvin: Float, tint: Float? = nil) {
-        guard isManualWBSupported else { return }
         lastUserWBWriteAt = Date().timeIntervalSince1970
         currentKelvin = Self.clamp(kelvin, lower: minKelvin, upper: maxKelvin, fallback: currentKelvin)
         if let tint {
@@ -854,24 +894,82 @@ public final class ProPhotoManualControlsService: ObservableObject {
     }
 
     public func setManualTint(_ tint: Float) {
-        guard isManualWBSupported else { return }
         lastUserWBWriteAt = Date().timeIntervalSince1970
         currentTint = Self.clamp(tint, lower: minTint, upper: maxTint, fallback: currentTint)
         isAutoWB = false
         applyWhiteBalance()
     }
 
-    /// Cân bằng trắng 1 chạm theo chuẩn Gray World của cảm biến Apple ISP.
-    public func applyGrayWorldNeutralWB() {
-        guard isManualWBSupported else { return }
+    /// Khóa / Mở khóa AWB phần cứng an toàn trên mọi dòng iPhone (kể cả Triple/DualWide Camera).
+    public func toggleWhiteBalanceLock() {
+        guard isWhiteBalanceLockSupported else { return }
         lastUserWBWriteAt = Date().timeIntervalSince1970
-        isAutoWB = false
+        let nextLocked = !isWhiteBalanceLocked
+        isWhiteBalanceLocked = nextLocked
+        if !nextLocked && isAutoWB {
+            restoreContinuousAutoWhiteBalance()
+            return
+        }
+        if nextLocked {
+            CameraService.shared.scheduleDeviceConfiguration { camera in
+                guard camera.isWhiteBalanceModeSupported(.locked) else { return }
+                do {
+                    try camera.lockForConfiguration()
+                    defer { camera.unlockForConfiguration() }
+                    camera.setWhiteBalanceModeLocked(with: AVCaptureDevice.currentWhiteBalanceGains, completionHandler: nil)
+                } catch {
+                    CameraLogger.error("ProPhoto: Lỗi khóa AWB-L", error: error, category: .capture)
+                }
+            }
+        }
+    }
+
+    /// Cân bằng trắng 1 chạm: dùng Gray World phần cứng nếu ống kính hỗ trợ custom gain,
+    /// hoặc khóa AWB trung tính chuẩn Apple (`currentWhiteBalanceGains`) + đặt lệch GPU về 5500K/0 trên Virtual Multi-Camera.
+    public func applyGrayWorldNeutralWB() {
+        lastUserWBWriteAt = Date().timeIntervalSince1970
         pendingWBWorkItem?.cancel()
 
+        if !isHardwareCustomWBSupported {
+            isAutoWB = false
+            isWhiteBalanceLocked = true
+            currentKelvin = 5500
+            currentTint = 0
+            publishSoftwareWB(.inactive)
+            pendingWBWorkItem = CameraService.shared.scheduleDeviceConfiguration { camera in
+                guard camera.isWhiteBalanceModeSupported(.locked) else { return }
+                do {
+                    try camera.lockForConfiguration()
+                    defer { camera.unlockForConfiguration() }
+                    camera.setWhiteBalanceModeLocked(with: AVCaptureDevice.currentWhiteBalanceGains, completionHandler: nil)
+                } catch {
+                    CameraLogger.error("ProPhoto: Lỗi khóa AWB trung tính", error: error, category: .capture)
+                }
+            }
+            return
+        }
+
+        isAutoWB = false
         pendingWBWorkItem = CameraService.shared.scheduleDeviceConfiguration { [weak self] camera in
-            guard camera.isWhiteBalanceModeSupported(.locked) else { return }
+            guard Self.supportsSafeHardwareCustomWB(camera) else {
+                if camera.isWhiteBalanceModeSupported(.locked) {
+                    try? camera.lockForConfiguration()
+                    camera.setWhiteBalanceModeLocked(with: AVCaptureDevice.currentWhiteBalanceGains, completionHandler: nil)
+                    camera.unlockForConfiguration()
+                }
+                DispatchQueue.main.async {
+                    self?.isHardwareCustomWBSupported = false
+                    self?.isWhiteBalanceLocked = true
+                    self?.currentKelvin = 5500
+                    self?.currentTint = 0
+                    self?.publishSoftwareWB(.inactive)
+                }
+                return
+            }
+
             let rawGray = camera.grayWorldDeviceWhiteBalanceGains
             let safeGains = Self.clampedWhiteBalanceGains(rawGray, maxGain: camera.maxWhiteBalanceGain)
+            guard Self.areGainsStrictlyValid(safeGains, maxGain: camera.maxWhiteBalanceGain) else { return }
             let tt = camera.temperatureAndTintValues(for: safeGains)
             let resolvedK = Self.clamp(tt.temperature, lower: 2500, upper: 9500, fallback: 5500)
             let resolvedT = Self.clamp(tt.tint, lower: -50, upper: 50, fallback: 0)
@@ -885,6 +983,7 @@ public final class ProPhotoManualControlsService: ObservableObject {
                     self?.currentTint = resolvedT
                     self?.measuredLiveKelvin = resolvedK
                     self?.measuredLiveTint = resolvedT
+                    self?.publishSoftwareWB(.inactive)
                 }
             } catch {
                 CameraLogger.error("ProPhoto: Lỗi Gray World WB", error: error, category: .capture)
@@ -895,17 +994,56 @@ public final class ProPhotoManualControlsService: ObservableObject {
     private func applyWhiteBalance() {
         pendingWBWorkItem?.cancel()
         guard !isAutoWB else {
+            publishSoftwareWB(.inactive)
             restoreContinuousAutoWhiteBalance()
             return
         }
-        let kelvin = currentKelvin
-        let tint = currentTint
+        let kelvin = Self.clamp(currentKelvin, lower: minKelvin, upper: maxKelvin, fallback: 5500)
+        let tint = Self.clamp(currentTint, lower: minTint, upper: maxTint, fallback: 0)
 
-        pendingWBWorkItem = CameraService.shared.scheduleDeviceConfiguration(after: 0.015) { camera in
-            guard camera.isWhiteBalanceModeSupported(.locked) else { return }
+        // Đường an toàn cho Virtual Multi-Camera (builtInTripleCamera / DualWide):
+        // Khóa AWB hiện tại bằng `currentWhiteBalanceGains` (Apple cho phép 100%) + chỉnh Kelvin/Tint theo thời gian thực trên GPU.
+        if !isHardwareCustomWBSupported {
+            publishSoftwareWB(ProPhotoSoftwareWBGrade(isActive: true, kelvin: kelvin, tint: tint))
+            let shouldLockCurrentAWB = !isWhiteBalanceLocked && isWhiteBalanceLockSupported
+            if shouldLockCurrentAWB {
+                isWhiteBalanceLocked = true
+                pendingWBWorkItem = CameraService.shared.scheduleDeviceConfiguration(after: 0.02) { camera in
+                    guard camera.isWhiteBalanceModeSupported(.locked), camera.whiteBalanceMode != .locked else { return }
+                    do {
+                        try camera.lockForConfiguration()
+                        defer { camera.unlockForConfiguration() }
+                        camera.setWhiteBalanceModeLocked(with: AVCaptureDevice.currentWhiteBalanceGains, completionHandler: nil)
+                    } catch {
+                        CameraLogger.error("ProPhoto: Lỗi khóa AWB nền cho GPU WB", error: error, category: .capture)
+                    }
+                }
+            }
+            return
+        }
+
+        // Đường phần cứng ISP (chỉ chạy trên ống kính vật lý đơn có `isLockingWhiteBalanceWithCustomDeviceGainsSupported == true`)
+        publishSoftwareWB(.inactive)
+        pendingWBWorkItem = CameraService.shared.scheduleDeviceConfiguration(after: 0.015) { [weak self] camera in
+            guard Self.supportsSafeHardwareCustomWB(camera) else {
+                // Tự động hạ cánh an toàn sang GPU WB nếu ống kính chuyển sang Virtual Multi-Camera
+                if camera.isWhiteBalanceModeSupported(.locked), camera.whiteBalanceMode != .locked {
+                    try? camera.lockForConfiguration()
+                    camera.setWhiteBalanceModeLocked(with: AVCaptureDevice.currentWhiteBalanceGains, completionHandler: nil)
+                    camera.unlockForConfiguration()
+                }
+                DispatchQueue.main.async {
+                    self?.isHardwareCustomWBSupported = false
+                    self?.isWhiteBalanceLocked = true
+                    self?.publishSoftwareWB(ProPhotoSoftwareWBGrade(isActive: true, kelvin: kelvin, tint: tint))
+                }
+                return
+            }
+
             let values = AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(temperature: kelvin, tint: tint)
             let rawGains = camera.deviceWhiteBalanceGains(for: values)
             let safeGains = Self.clampedWhiteBalanceGains(rawGains, maxGain: camera.maxWhiteBalanceGain)
+            guard Self.areGainsStrictlyValid(safeGains, maxGain: camera.maxWhiteBalanceGain) else { return }
 
             do {
                 try camera.lockForConfiguration()
@@ -1116,6 +1254,10 @@ public final class ProPhotoManualControlsService: ObservableObject {
         currentEVBias = 0.0
         isExposureLocked = false
         isAutoWB = true
+        isWhiteBalanceLocked = false
+        currentKelvin = 5500
+        currentTint = 0
+        publishSoftwareWB(.inactive)
         isAutoFocus = true
         isFocusLocked = false
         afRangeMode = .full
@@ -1162,21 +1304,39 @@ public final class ProPhotoManualControlsService: ObservableObject {
         return req
     }
 
+    private static func supportsSafeHardwareCustomWB(_ camera: AVCaptureDevice) -> Bool {
+        !camera.isVirtualDevice
+            && camera.isLockingWhiteBalanceWithCustomDeviceGainsSupported
+            && camera.isWhiteBalanceModeSupported(.locked)
+            && camera.maxWhiteBalanceGain.isFinite
+            && camera.maxWhiteBalanceGain >= 1.01
+    }
+
+    private static func areGainsStrictlyValid(
+        _ gains: AVCaptureDevice.WhiteBalanceGains,
+        maxGain: Float
+    ) -> Bool {
+        guard maxGain.isFinite, maxGain >= 1.0 else { return false }
+        let values = [gains.redGain, gains.greenGain, gains.blueGain]
+        return values.allSatisfy { $0.isFinite && $0 >= 1.0 && $0 <= maxGain }
+    }
+
     private static func clampedWhiteBalanceGains(
         _ raw: AVCaptureDevice.WhiteBalanceGains,
         maxGain: Float
     ) -> AVCaptureDevice.WhiteBalanceGains {
-        let safeMax = max(1.0, Self.finite(maxGain, fallback: 1.0))
+        let safeUpper = max(1.001, Self.finite(maxGain, fallback: 1.001) - 0.001)
         return AVCaptureDevice.WhiteBalanceGains(
-            redGain: Self.clamp(raw.redGain, lower: 1.0, upper: safeMax, fallback: 1.0),
-            greenGain: Self.clamp(raw.greenGain, lower: 1.0, upper: safeMax, fallback: 1.0),
-            blueGain: Self.clamp(raw.blueGain, lower: 1.0, upper: safeMax, fallback: 1.0)
+            redGain: Self.clamp(raw.redGain, lower: 1.001, upper: safeUpper, fallback: 1.001),
+            greenGain: Self.clamp(raw.greenGain, lower: 1.001, upper: safeUpper, fallback: 1.001),
+            blueGain: Self.clamp(raw.blueGain, lower: 1.001, upper: safeUpper, fallback: 1.001)
         )
     }
 
     private static func readSafeTemperatureAndTint(from camera: AVCaptureDevice) -> (kelvin: Float, tint: Float)? {
-        guard camera.maxWhiteBalanceGain.isFinite, camera.maxWhiteBalanceGain >= 1.0 else { return nil }
+        guard supportsSafeHardwareCustomWB(camera) else { return nil }
         let gains = clampedWhiteBalanceGains(camera.deviceWhiteBalanceGains, maxGain: camera.maxWhiteBalanceGain)
+        guard areGainsStrictlyValid(gains, maxGain: camera.maxWhiteBalanceGain) else { return nil }
         let tt = camera.temperatureAndTintValues(for: gains)
         guard tt.temperature.isFinite, tt.tint.isFinite else { return nil }
         return (
