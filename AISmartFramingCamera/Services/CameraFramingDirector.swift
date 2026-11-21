@@ -1174,11 +1174,19 @@ enum CameraFramingDirector {
                 }
             }
 
-            // 5) Earned Keep-Natural stability (never passive when real framing gain exists)
+            // 5) Earned Keep-Natural stability + Breathing Negative-Space guard for tight zooms
             let shift = hypot(Double(cand.aim.x) - 0.5, Double(cand.aim.y) - 0.5)
             let keepBonus = cand.isBaseline
                 ? (rawAlreadyStrong ? 0.042 : -0.055)
                 : (-0.022 * max(0.0, shift - 0.26))
+
+            let projFill = Double(projHero.width * projHero.height)
+            let breathingPen: Double = (!cand.isBaseline && cand.zoom > safeZoom * 1.05 &&
+                                        projFill > 0.62 &&
+                                        role != .portrait && role != .environmentalPortrait &&
+                                        role != .group && role != .architecture)
+                ? 0.08 * min(1.0, (projFill - 0.62) / 0.28)
+                : 0.0
 
             let neuralWeight = neuralField.hasLearnedScores ? 0.44 : 0.0
             let totalScore = neuralWeight * normGAIC +
@@ -1186,7 +1194,7 @@ enum CameraFramingDirector {
                 0.18 * clutterScore +
                 0.20 * scaleScore +
                 0.22 * styleFit +
-                optBonus + keepBonus - zoomPen
+                optBonus + keepBonus - zoomPen - breathingPen
 
             if totalScore > bestScore {
                 bestScore = totalScore
@@ -1661,7 +1669,12 @@ enum CameraFramingDirector {
         let p82 = sortedSD[Int(Double(n - 1) * 0.82)]
         let p95 = sortedSD[Int(Double(n - 1) * 0.95)]
         guard p95 - p20 >= 0.12 else { return [] }
-        let thresh = max(0.45, p82 + 0.28 * (p95 - p82))
+        // Dual-threshold hysteresis heat-island growing: only high-energy cores (>= seedThresh)
+        // can spawn a cluster, then connected silhouette pixels grow smoothly down to growThresh
+        // without pulling in disconnected background clutter.
+        let seedThresh = max(0.45, p82 + 0.28 * (p95 - p82))
+        let growThresh = min(seedThresh - 0.04, max(0.28, p82 - 0.12 * (p95 - p82)))
+        let maxClusterPixels = Int(Double(n) * 0.66)
 
         var visited = [Bool](repeating: false, count: n)
         var clusters: [SharpCluster] = []
@@ -1669,7 +1682,7 @@ enum CameraFramingDirector {
         for sy in 0..<s {
             for sx in 0..<s {
                 let start = sy * s + sx
-                if visited[start] || sharpDepth[start] < thresh { continue }
+                if visited[start] || sharpDepth[start] < seedThresh { continue }
                 visited[start] = true
                 var queue = [start]
                 var head = 0
@@ -1688,11 +1701,12 @@ enum CameraFramingDirector {
                     sumS += edgeNorm[cur]
                     sumC += distinctMap[cur]
                     pix += 1
+                    if pix >= maxClusterPixels { break }
                     for (dx, dy) in dirs {
                         let nx = cx + dx, ny = cy + dy
                         if nx >= 0, nx < s, ny >= 0, ny < s {
                             let ni = ny * s + nx
-                            if !visited[ni] && sharpDepth[ni] >= thresh {
+                            if !visited[ni] && sharpDepth[ni] >= growThresh {
                                 visited[ni] = true
                                 queue.append(ni)
                             }

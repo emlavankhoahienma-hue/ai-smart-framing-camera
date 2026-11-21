@@ -424,6 +424,26 @@ public enum DetectedSceneType: String, CaseIterable, Sendable {
         }
     }
 
+    /// Bộ 3 công thức màu ứng viên theo bối cảnh để Apple Vision Aesthetics (iOS 18+)
+    /// tự chấm điểm thẩm mỹ trên chính ảnh hiện tại thay vì gán cứng 1-1.
+    public var candidateFilmPresets: [FilmPreset] {
+        switch self {
+        case .portrait: return [.fujiPro400H, .kodakPortra400, .astia100F]
+        case .pet: return [.kodakPortra400, .fujiPro400H, .gold200]
+        case .landscape: return [.velvia50, .fujiX, .classicChrome]
+        case .sunset: return [.gold200, .kodakPortra400, .gCcdGold]
+        case .architecture: return [.classicChrome, .grPositive, .classicNeg]
+        case .sky: return [.velvia50, .blueSKCool, .fujiX]
+        case .water: return [.blueSKCool, .velvia50, .classicChrome]
+        case .foliage: return [.fujiPro400H, .velvia50, .classicNeg]
+        case .night: return [.cinestill800T, .vision3500D, .grHighBW]
+        case .food: return [.ektar100, .powershotG, .gold200]
+        case .macro: return [.fujiPro400H, .astia100F, .ektar100]
+        case .street: return [.grStreetSnap, .classicChrome, .grPositive]
+        case .general: return [.fujiPro400H, .classicChrome, .kodakPortra400]
+        }
+    }
+
     /// AI Full Color Mode — tham số màu tối ưu hoàn toàn bởi AI
     public var aiFullColorParameters: AIColorParameters {
         switch self {

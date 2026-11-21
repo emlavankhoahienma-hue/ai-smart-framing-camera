@@ -744,6 +744,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         guard !cancellation.isCancelled,
               let output = analyzeCapturedFrame(pixelBuffer: pixelBuffer, orientation: frame.orientation,
                                                  cancellation: cancellation) else { return nil }
+        let tAfterDetect = ProcessInfo.processInfo.systemUptime
         // Choose identity intelligently using spatial SigLIP semantics, pixel clutter/roof/VP maps, and filtered detectors.
         guard let raster = output.compositionRaster else {
             let basicHero = output.allCandidates.first ?? NeuralSubjectCandidate(
@@ -764,6 +765,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             detectedScene: output.detectedScene,
             cancellation: cancellation
         )
+        let tAfterSigLIP = ProcessInfo.processInfo.systemUptime
         // 2) IMMEDIATELY unload SigLIP (~350-450MB) and DepthAnythingV2 (~180MB) BEFORE
         //    OpenWorldPhotoYOLOE + ForegroundInstanceMask so peak memory stays strictly single-model!
         autoreleasepool {
@@ -783,6 +785,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             cancellation: cancellation,
             preferSequential: lowMem
         )
+        let tAfterOpenWorld = ProcessInfo.processInfo.systemUptime
         let directorDetections: [DirectorDetection] = {
             var list: [DirectorDetection] = output.allCandidates.map { c in
                 let domain = CameraFramingDirector.classifyDomain(
@@ -1059,6 +1062,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
         progress("Đang đánh giá bố cục bằng mô hình trên máy…")
         let orientedCI = CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation)
+        let tBeforeSearch = ProcessInfo.processInfo.systemUptime
         let search = CompositionAestheticSearch(renderer: renderer)
         let searchResult = search.run(proposals: initialProposals,
             image: orientedCI,
@@ -1076,6 +1080,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             renderer.clearCaches()
             return nil
         }
+        let tAfterSearch = ProcessInfo.processInfo.systemUptime
 
         // Solve true 3D physical camera pan/tilt + smart optical zoom using Free-Form Neural-Guided Director:
         // fuses OpenWorld YOLOE + DepthAnythingV2 + iOS 17 Foreground Mask + SigLIP clutter avoidance +
@@ -1092,6 +1097,23 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             pose: pose,
             currentZoom: CGFloat(frame.displayZoom),
             allowedZooms: allowedZooms
+        )
+        let tAfterDirector = ProcessInfo.processInfo.systemUptime
+        CameraLogger.info(
+            String(
+                format: "LocalAI timings [lowMem=%d]: detect=%.0fms siglip=%.0fms openWorld=%.0fms proposals=%.0fms search=%.0fms director=%.0fms total=%.0fms (hero=%@, style=%@)",
+                lowMem ? 1 : 0,
+                (tAfterDetect - started) * 1000.0,
+                (tAfterSigLIP - tAfterDetect) * 1000.0,
+                (tAfterOpenWorld - tAfterSigLIP) * 1000.0,
+                (tBeforeSearch - tAfterOpenWorld) * 1000.0,
+                (tAfterSearch - tBeforeSearch) * 1000.0,
+                (tAfterDirector - tAfterSearch) * 1000.0,
+                (tAfterDirector - started) * 1000.0,
+                directorDecision.heroLabel,
+                directorDecision.compositionStyle.rawValue
+            ),
+            category: .ai
         )
         let directorPreviewCorners: [CGPoint] = {
             let relZoom = max(1.0, Double(directorDecision.recommendedZoom) / max(0.5, frame.displayZoom))

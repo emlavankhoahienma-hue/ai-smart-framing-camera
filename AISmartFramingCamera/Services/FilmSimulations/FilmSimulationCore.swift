@@ -461,12 +461,21 @@ public enum FilmSimulationCore {
         return blend.outputImage?.cropped(to: original.extent) ?? filtered
     }
 
-    // MARK: - 10. Hardware-Accelerated 3D Color Cube (CIColorCube 3D LUT)
+    // MARK: - 10. Hardware-Accelerated 3D Color Cube (Display P3 -> sRGB accurate LUT)
+    private static let lutSRGBColorSpace: CGColorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+
     public static func applyColorCube(
         _ input: CIImage,
         cubeData: Data,
         dimension: Int = 32
     ) -> CIImage {
+        if let filter = CIFilter(name: "CIColorCubeWithColorSpace") {
+            filter.setValue(input, forKey: kCIInputImageKey)
+            filter.setValue(dimension, forKey: "inputCubeDimension")
+            filter.setValue(cubeData, forKey: "inputCubeData")
+            filter.setValue(lutSRGBColorSpace, forKey: "inputColorSpace")
+            if let out = filter.outputImage { return out }
+        }
         guard let filter = CIFilter(name: "CIColorCube") else { return input }
         filter.setValue(input, forKey: kCIInputImageKey)
         filter.setValue(dimension, forKey: "inputCubeDimension")

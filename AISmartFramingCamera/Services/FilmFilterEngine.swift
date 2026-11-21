@@ -4,6 +4,7 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import UIKit
 import CoreGraphics
+import Vision
 
 /// Bộ tham số tinh chỉnh công thức giả lập phim theo thời gian thực (CoreImage GPU hợp nhất 1 pass).
 public struct FilmSimulationTuning: Equatable, Sendable, Codable {
@@ -75,9 +76,16 @@ public struct ProPhotoSoftwareWBGrade: Equatable, Sendable {
     }
 }
 
+/// Kết quả xếp hạng công thức màu phim bằng Apple Vision Aesthetics (iOS 18+).
+public struct FilmFilterRankingResult: Sendable {
+    public let preset: FilmPreset
+    public let aestheticDelta: Double
+    public let evaluatedCount: Int
+}
+
 /// Bo xu ly mau quang hoc va gia lap chat phim chuyen nghiep.
 /// Tich hop kien truc module hoa cho 62 tone mau gia lap may anh co dien, may quay bang tu va phong thu.
-public final class FilmFilterEngine {
+public final class FilmFilterEngine: @unchecked Sendable {
     public static let shared = FilmFilterEngine()
 
     private let context: CIContext
@@ -219,9 +227,15 @@ public final class FilmFilterEngine {
         )
     }
 
-    public func applyPreset(to inputImage: CIImage, preset: FilmPreset, intensity: Float = 1.0, isRealtimePreview: Bool = false) -> CIImage? {
-        let wb = activeSoftwareWhiteBalance
-        let tuning = activeFilmTuning
+    public func applyPreset(
+        to inputImage: CIImage,
+        preset: FilmPreset,
+        intensity: Float = 1.0,
+        isRealtimePreview: Bool = false,
+        applyUserGrade: Bool = true
+    ) -> CIImage? {
+        let wb = applyUserGrade ? activeSoftwareWhiteBalance : .inactive
+        let tuning = applyUserGrade ? activeFilmTuning : .neutral
         let hasPreset = preset != .standard && preset != .aiFullAuto && preset != .proColorGrade && intensity > 0.001
         guard hasPreset || !wb.isIdentity || !tuning.isIdentity else { return inputImage }
 
@@ -421,5 +435,81 @@ public final class FilmFilterEngine {
         }
 
         return output
+    }
+
+    // MARK: - iOS 18+ Apple Vision Aesthetic Film Filter Ranking (0 MB extra RAM, graceful iOS 17 fallback)
+
+    /// Chấm điểm thẩm mỹ trực tiếp tối đa 3 công thức màu ứng viên so với ảnh gốc bằng
+    /// `VNCalculateImageAestheticsScoresRequest` trên thumbnail <= 288px. Trả về `nil` trên iOS 17
+    /// hoặc khi máy nóng / Low Power Mode để tự động rơi về `scene.recommendedFilter`.
+    public func rankBestFilmPreset(for previewImage: CGImage, scene: DetectedSceneType) -> FilmFilterRankingResult? {
+        let thermal = ProcessInfo.processInfo.thermalState
+        guard thermal == .nominal || thermal == .fair,
+              !ProcessInfo.processInfo.isLowPowerModeEnabled else {
+            return nil
+        }
+        guard #available(iOS 18.0, *) else { return nil }
+
+        let candidates = Array(scene.candidateFilmPresets.prefix(3))
+        guard !candidates.isEmpty else { return nil }
+
+        let rawCI = CIImage(cgImage: previewImage)
+        let maxDim = max(rawCI.extent.width, rawCI.extent.height)
+        guard maxDim > 16 else { return nil }
+        let scale = min(1.0, 288.0 / maxDim)
+        let smallCI = scale < 0.99
+            ? rawCI.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            : rawCI
+        let colorSpace = previewImage.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+
+        func evaluateAesthetic(_ ci: CIImage) -> (score: Double, isUtility: Bool)? {
+            autoreleasepool {
+                guard let cg = context.createCGImage(ci, from: ci.extent, format: .RGBA8, colorSpace: colorSpace) else {
+                    return nil
+                }
+                let request = VNCalculateImageAestheticsScoresRequest()
+                let handler = VNImageRequestHandler(cgImage: cg, orientation: .up, options: [:])
+                do {
+                    try handler.perform([request])
+                    guard let obs = request.results?.first, obs.overallScore.isFinite else { return nil }
+                    return (Double(obs.overallScore), obs.isUtility)
+                } catch {
+                    return nil
+                }
+            }
+        }
+
+        defer { context.clearCaches() }
+
+        guard let baseEval = evaluateAesthetic(smallCI) else { return nil }
+        var evaluatedCount = 1
+        var bestPreset: FilmPreset?
+        var bestScore = baseEval.score
+
+        for preset in candidates {
+            guard !Task.isCancelled else { return nil }
+            let renderedCI: CIImage = autoreleasepool {
+                applyPreset(
+                    to: smallCI,
+                    preset: preset,
+                    intensity: 1.0,
+                    isRealtimePreview: true,
+                    applyUserGrade: false
+                ) ?? smallCI
+            }
+            guard let candEval = evaluateAesthetic(renderedCI) else { continue }
+            evaluatedCount += 1
+            // Không chọn preset nếu nó khiến Vision đánh dấu ảnh bị tụt thành utility
+            if candEval.isUtility && !baseEval.isUtility { continue }
+            if candEval.score > bestScore {
+                bestScore = candEval.score
+                bestPreset = preset
+            }
+        }
+
+        guard let winner = bestPreset else { return nil }
+        let delta = bestScore - baseEval.score
+        guard delta >= 0.015 else { return nil }
+        return FilmFilterRankingResult(preset: winner, aestheticDelta: delta, evaluatedCount: evaluatedCount)
     }
 }

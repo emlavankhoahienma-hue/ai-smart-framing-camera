@@ -233,7 +233,11 @@ public final class CameraViewModel: ObservableObject {
     @Published private(set) var localAnalysisSummary = ""
     private var localAnalysisRequestID = UUID()
     private var localAnalysisCompletedAt: TimeInterval?
+    private struct SendableCGImage: @unchecked Sendable {
+        let value: CGImage
+    }
     private var localAnalysisTask: Task<Void, Never>?
+    private var aiFilterRankingTask: Task<Void, Never>?
     private var localAnalysisCancellation: CompositionAnalysisCancellation?
     private var localEvidenceCandidates: [NeuralSubjectCandidate] = [] {
         didSet {
@@ -277,6 +281,8 @@ public final class CameraViewModel: ObservableObject {
             localAnalysisCancellation = nil
             localAnalysisTask?.cancel()
             localAnalysisTask = nil
+            aiFilterRankingTask?.cancel()
+            aiFilterRankingTask = nil
             localCompositionChoices = []
             activeCompositionPreviewID = nil
             selectedCompositionPreviewID = nil
@@ -3531,6 +3537,32 @@ public final class CameraViewModel: ObservableObject {
             isFilmSimulationActive = (localPreset != .standard)
             isColorAppliedByAI = true
             currentAIColorParams = output.detectedScene.aiFullColorParameters
+        }
+        // iOS 18+ Apple Vision Aesthetic AI Filter Ranking (chạy ngầm sau khi đã chốt target -> 0ms trễ, tự rơi về localPreset ở iOS 17)
+        aiFilterRankingTask?.cancel()
+        if let framedPreview = analysis.choices.first?.preview {
+            let previewBox = SendableCGImage(value: framedPreview)
+            let rankingScene = output.detectedScene
+            let rankingGeneration = aiSessionGeneration
+            aiFilterRankingTask = Task { [weak self] in
+                let ranked = await Task.detached(priority: .utility) {
+                    FilmFilterEngine.shared.rankBestFilmPreset(for: previewBox.value, scene: rankingScene)
+                }.value
+                guard let self, !Task.isCancelled,
+                      self.aiSessionGeneration == rankingGeneration,
+                      !self.isCameraHibernating,
+                      let ranked else { return }
+                self.aiRecommendedPreset = ranked.preset
+                self.aiPresetMatchReason = String(
+                    format: "%@ — Apple Vision AI chọn (+%.2f thẩm mỹ)",
+                    ranked.preset.displayName,
+                    ranked.aestheticDelta
+                )
+                if self.isAIFullColorEnabled && self.isColorAppliedByAI && self.selectedFilmPreset == localPreset {
+                    self.selectedFilmPreset = ranked.preset
+                    self.isFilmSimulationActive = (ranked.preset != .standard)
+                }
+            }
         }
         localCompositionChoices = analysis.choices
         localEvidenceCandidates = !analysis.choices.isEmpty ? analysis.choices.map(\.candidate) :

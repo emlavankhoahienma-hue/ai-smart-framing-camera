@@ -446,6 +446,45 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         self.assertIn("INPUT_SIZE = 512", export_script)
         self.assertIn("EXPECTED_ANCHORS =", export_script)
 
+    def test_16_hysteresis_clusters_vision_filter_ranker_and_bundle_hygiene(self):
+        # 1. Hysteresis dual-threshold foreground clusters & breathing room guard
+        director = source("Services/CameraFramingDirector.swift")
+        self.assertIn("let seedThresh =", director)
+        self.assertIn("let growThresh =", director)
+        self.assertIn("let breathingPen:", director)
+
+        # 2. Display P3 sRGB-accurate 3D LUT application
+        film_core = source("Services/FilmSimulations/FilmSimulationCore.swift")
+        self.assertIn("CIColorCubeWithColorSpace", film_core)
+        self.assertIn("CGColorSpace.sRGB", film_core)
+
+        # 3. Real iOS 18+ Apple Vision Aesthetic AI Filter Ranking (0ms delay, iOS 17 fallback)
+        models = source("Models/FramingModels.swift")
+        self.assertIn("public var candidateFilmPresets: [FilmPreset]", models)
+
+        film_engine = source("Services/FilmFilterEngine.swift")
+        self.assertIn("public struct FilmFilterRankingResult: Sendable", film_engine)
+        self.assertIn("public func rankBestFilmPreset(", film_engine)
+        self.assertIn("VNCalculateImageAestheticsScoresRequest", film_engine)
+        self.assertIn("candEval.isUtility", film_engine)
+
+        vm = source("ViewModels/CameraViewModel.swift")
+        self.assertIn("private var aiFilterRankingTask: Task<Void, Never>?", vm)
+        self.assertIn("FilmFilterEngine.shared.rankBestFilmPreset(", vm)
+
+        # 4. Per-stage Local AI timing telemetry
+        neural = source("Services/NeuralSubjectIntelligenceEngine.swift")
+        self.assertIn("LocalAI timings [lowMem=%d]:", neural)
+
+        # 5. ATS security hardening & non-duplicated LUT/Noise packaging
+        plist = source("Info.plist")
+        self.assertIn("<key>NSAllowsLocalNetworking</key>", plist)
+        self.assertNotIn("<key>NSAllowsArbitraryLoads</key>", plist)
+
+        ci_yml = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ios-build.yml").read_text(encoding="utf-8")
+        self.assertIn("cp AISmartFramingCamera/Resources/LUTs/*.bin Payload/AISmartFramingCamera.app/LUTs/", ci_yml)
+        self.assertNotIn("cp -r AISmartFramingCamera/Resources/LUTs/* Payload/AISmartFramingCamera.app/", ci_yml)
+
 
 if __name__ == "__main__":
     unittest.main()
