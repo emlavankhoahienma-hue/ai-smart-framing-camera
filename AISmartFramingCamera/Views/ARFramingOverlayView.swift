@@ -832,19 +832,9 @@ struct FocusSquareWithSunSlider: View {
     }
 }
 
-// MARK: - Virtual Horizon & Overhead Dual-Axis Leveler (Thước Cân Bằng Chân Trời & Phẳng 2 Trục)
+// MARK: - Virtual Horizon & Overhead Dual-Axis Leveler (Thước Cân Bằng Tối Giản)
 struct HorizonLevelerView: View {
     @ObservedObject var leveler: HorizonLevelerService
-
-    private var activeColor: Color {
-        leveler.isLevel ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.92)
-    }
-
-    private var angleLabel: String {
-        if leveler.isLevel { return "0°" }
-        let rounded = (leveler.cardinalDeviationDegrees * 10.0).rounded() / 10.0
-        return String(format: "%+.1f°", rounded)
-    }
 
     var body: some View {
         ZStack {
@@ -860,70 +850,33 @@ struct HorizonLevelerView: View {
         .animation(.easeInOut(duration: 0.14), value: leveler.isLevel)
     }
 
-    // MARK: - Chế độ cân chân trời 360° (Portrait 0°, Landscape ±90°, Upside-down 180°)
+    // MARK: - Thanh cân bằng trắng tối giản 360° (không hiển thị số độ)
     private var horizonBarLevel: some View {
         let deviation = leveler.cardinalDeviationDegrees
         let cardinalRotation = -leveler.nearestCardinalDegrees
-        let barHeight: CGFloat = leveler.isLevel ? 2.2 : 1.5
+        let barHeight: CGFloat = leveler.isLevel ? 2.0 : 1.5
 
         return ZStack {
-            // Hai vạch chuẩn cố định trái/phải gắn theo trục ngang/dọc gần nhất (luôn nhìn thấy rõ để căn thẳng)
-            HStack(spacing: 86) {
+            // Hai vạch chuẩn trắng cố định trái/phải
+            HStack(spacing: 84) {
                 Capsule()
-                    .fill(activeColor.opacity(leveler.isLevel ? 1.0 : 0.72))
+                    .fill(Color.white.opacity(leveler.isLevel ? 1.0 : 0.72))
                     .frame(width: 16, height: barHeight)
                     .shadow(color: Color.black.opacity(0.65), radius: 2, y: 0.5)
 
                 Capsule()
-                    .fill(activeColor.opacity(leveler.isLevel ? 1.0 : 0.72))
+                    .fill(Color.white.opacity(leveler.isLevel ? 1.0 : 0.72))
                     .frame(width: 16, height: barHeight)
                     .shadow(color: Color.black.opacity(0.65), radius: 2, y: 0.5)
             }
             .rotationEffect(.degrees(cardinalRotation))
 
-            // Thanh cân bằng động xoay thực theo trọng lực (liền mạch khi đạt chuẩn 0°)
-            Group {
-                if leveler.isLevel {
-                    Capsule()
-                        .fill(AlignTheme.studioAccent)
-                        .frame(width: 82, height: 2.2)
-                        .shadow(color: Color.black.opacity(0.70), radius: 2.5, y: 0.5)
-                } else {
-                    HStack(spacing: 10) {
-                        Capsule()
-                            .fill(AlignTheme.studioInkPrimary.opacity(0.92))
-                            .frame(width: 34, height: 1.5)
-                            .shadow(color: Color.black.opacity(0.70), radius: 2, y: 0.5)
-
-                        Circle()
-                            .stroke(AlignTheme.studioInkPrimary.opacity(0.85), lineWidth: 1.1)
-                            .frame(width: 5, height: 5)
-                            .shadow(color: Color.black.opacity(0.70), radius: 1.5)
-
-                        Capsule()
-                            .fill(AlignTheme.studioInkPrimary.opacity(0.92))
-                            .frame(width: 34, height: 1.5)
-                            .shadow(color: Color.black.opacity(0.70), radius: 2, y: 0.5)
-                    }
-                }
-            }
-            .rotationEffect(.degrees(cardinalRotation - deviation))
-
-            // Huy hiệu số đo góc nghiêng nhỏ gọn giúp nhận biết trực quan ngay khi xoay máy
-            Text(angleLabel)
-                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                .foregroundColor(leveler.isLevel ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.88))
-                .padding(.horizontal, 6.5)
-                .padding(.vertical, 2.2)
-                .background(
-                    Capsule()
-                        .fill(Color.black.opacity(0.46))
-                        .overlay(
-                            Capsule()
-                                .stroke(leveler.isLevel ? AlignTheme.studioAccentBorder : Color.white.opacity(0.14), lineWidth: 0.6)
-                        )
-                )
-                .offset(y: 22)
+            // Thanh cân bằng trắng động xoay thực theo trọng lực (liền mạch khi thẳng)
+            Capsule()
+                .fill(Color.white.opacity(leveler.isLevel ? 1.0 : 0.92))
+                .frame(width: leveler.isLevel ? 84 : 76, height: barHeight)
+                .shadow(color: Color.black.opacity(0.70), radius: leveler.isLevel ? 2.5 : 2.0, y: 0.5)
+                .rotationEffect(.degrees(cardinalRotation - deviation))
         }
     }
 
@@ -934,21 +887,10 @@ struct HorizonLevelerView: View {
         let dy = CGFloat(leveler.overheadOffsetY) * maxShift
 
         return ZStack {
-            // Vòng định vị tâm phẳng
-            Circle()
-                .stroke(
-                    leveler.isLevel ? AlignTheme.studioAccent.opacity(0.85) : Color.white.opacity(0.28),
-                    lineWidth: leveler.isLevel ? 1.5 : 1.0
-                )
-                .frame(width: 44, height: 44)
-                .shadow(color: Color.black.opacity(0.55), radius: 2)
+            crosshairMark(color: Color.white.opacity(leveler.isLevel ? 1.0 : 0.58), size: 18, thickness: leveler.isLevel ? 1.8 : 1.4)
 
-            // Tâm chữ thập cố định
-            crosshairMark(color: leveler.isLevel ? AlignTheme.studioAccent : Color.white.opacity(0.60), size: 18, thickness: 1.4)
-
-            // Tâm chữ thập di động theo độ nghiêng 2 trục X/Y (khớp khít vào tâm khi máy phẳng tuyệt đối)
             if !leveler.isLevel {
-                crosshairMark(color: AlignTheme.studioAccent, size: 16, thickness: 1.8)
+                crosshairMark(color: Color.white.opacity(0.95), size: 16, thickness: 1.6)
                     .offset(x: dx, y: dy)
             }
         }

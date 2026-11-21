@@ -98,10 +98,10 @@ def main() -> None:
 
     ow_manifest_path = bundle / "OpenWorldPhotoManifest.json"
     ow_manifest = json.loads(ow_manifest_path.read_text(encoding="utf-8"))
-    if ow_manifest.get("weightsSHA256") != "48f24206bc8680d60cbbfa296b0140da849669b9515058b72f5a945142df0654":
+    if ow_manifest.get("weightsSHA256") != "585f5ec9028fd358035da8d860c27c56be285a795cba2076fba536a4391c2c83":
         raise RuntimeError("Invalid OpenWorldPhotoYOLOE checkpoint provenance")
     ow_classes = json.loads((bundle / "OpenWorldPhotoClasses.json").read_text(encoding="utf-8"))
-    if len(ow_classes) < 90 or "flower" not in ow_classes or "sky" not in ow_classes or "building" not in ow_classes:
+    if len(ow_classes) < 120 or "flower" not in ow_classes or "sky" not in ow_classes or "building" not in ow_classes:
         raise RuntimeError("OpenWorldPhotoClasses.json missing core photographic categories")
     ow_parity = ow_manifest.get("parity") or {}
     if not ow_parity.get("checked") or ow_parity.get("scorePearsonCorr", 0) < 0.99:

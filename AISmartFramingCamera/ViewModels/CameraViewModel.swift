@@ -14,6 +14,7 @@ private struct CameraFrameProcessingConfiguration: Sendable {
     var isHibernating = false
     var isSettingsVisible = false
     var tracksSuggestions = false
+    var isAnalyzingLocalAI = false
     var isFocusPeakingEnabled = false
     var focusPeakingColor: FocusPeakingColor = .green
     var isRecordingVideo = false
@@ -139,11 +140,22 @@ private final class CameraFrameProcessor: @unchecked Sendable {
             SpatialTrackingEngine.shared.registerFrame(frame)
         }
 
+        let needsImmediateCapture = VisionFramingEngine.shared.captureNextFrameForGemini
+        // While one-shot Local AI is executing its 7 CoreML/Vision models, keep the 60 FPS
+        // preview buffer & spatial frame context fresh, and pause live Vision/YOLO + histogram
+        // work so Local AI gets 100% exclusive ANE/GPU bandwidth without viewfinder stutter or
+        // Live Photo Jetsam contention.
+        if snapshot.isAnalyzingLocalAI && !needsImmediateCapture {
+            stateLock.lock()
+            latestFrameContext = frame
+            stateLock.unlock()
+            return
+        }
+
         // CameraService invokes this method on its serial videoDataQueue. Processing
         // in place avoids an extra frame copy and never sends CMSampleBuffer across
         // another concurrency boundary.
         let now = CACurrentMediaTime()
-        let needsImmediateCapture = VisionFramingEngine.shared.captureNextFrameForGemini
         let visionInterval: CFTimeInterval
         if needsImmediateCapture {
             visionInterval = 0
@@ -223,10 +235,22 @@ public final class CameraViewModel: ObservableObject {
     private var localAnalysisCompletedAt: TimeInterval?
     private var localAnalysisTask: Task<Void, Never>?
     private var localAnalysisCancellation: CompositionAnalysisCancellation?
-    private var localEvidenceCandidates: [NeuralSubjectCandidate] = []
+    private var localEvidenceCandidates: [NeuralSubjectCandidate] = [] {
+        didSet {
+            if oldValue.isEmpty != localEvidenceCandidates.isEmpty {
+                updateFrameProcessingConfiguration()
+            }
+        }
+    }
     private var postZoomFaceCount = 0
     private var localAnalysisExpired = false
-    private var localAnalysisFinished = false
+    private var localAnalysisFinished = false {
+        didSet {
+            if oldValue != localAnalysisFinished {
+                updateFrameProcessingConfiguration()
+            }
+        }
+    }
     @Published public private(set) var localSuggestionRects: [CGRect] = []
     @Published public private(set) var localSelectionMessage: String? = nil
     @Published public private(set) var localAnalysisProgress = "Đang đọc ảnh và nhận diện chủ thể…"
@@ -398,6 +422,9 @@ public final class CameraViewModel: ObservableObject {
         didSet {
             UserDefaults.standard.set(isLivePhotoEnabled, forKey: "isLivePhotoEnabled")
             cameraService.setLivePhotoCaptureEnabled(isLivePhotoEnabled)
+            if isLivePhotoEnabled {
+                NeuralSubjectIntelligenceEngine.shared.releaseAllModelCaches()
+            }
         }
     }
     @Published public var selectedPhotoFormat: PhotoSaveFormat = .jpeg {
@@ -1718,7 +1745,13 @@ public final class CameraViewModel: ObservableObject {
     @Published public var pinTrackingBox: CGRect?
 
     private var stateBeforeCapture: AISessionState = .idle
-    private var isOneShotCaptured = false
+    private var isOneShotCaptured = false {
+        didSet {
+            if oldValue != isOneShotCaptured {
+                updateFrameProcessingConfiguration()
+            }
+        }
+    }
     private var lastFocusPoint: CGPoint = CGPoint(x: 0.5, y: 0.5)
     private var lastForcedResetTime: TimeInterval = 0
     private var lastSmartFocusExposureTime: TimeInterval = 0
@@ -1928,7 +1961,8 @@ public final class CameraViewModel: ObservableObject {
             CameraFrameProcessingConfiguration(
                 isHibernating: isCameraHibernating,
                 isSettingsVisible: isShowingSettings,
-                tracksSuggestions: aiSessionState == .analyzing,
+                tracksSuggestions: aiSessionState == .analyzing && localAnalysisFinished && !localEvidenceCandidates.isEmpty,
+                isAnalyzingLocalAI: aiSessionState == .analyzing && isOneShotCaptured && !localAnalysisFinished,
                 isFocusPeakingEnabled: isFocusPeakingEnabled,
                 focusPeakingColor: focusPeakingColor,
                 isRecordingVideo: isRecordingVideo,
@@ -2890,6 +2924,7 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.onFrameCapturedForAIWithSource = nil
         cloudTrackingSource = nil
         localTrackingSource = nil
+        localAnalysisFinished = false
         localEvidenceCandidates = []
         localCompositionChoices = []
         localSuggestionRects = []
@@ -2949,6 +2984,8 @@ public final class CameraViewModel: ObservableObject {
         visionEngine.onFrameCapturedForAIWithSource = nil
         cloudTrackingSource = nil
         localTrackingSource = nil
+        localAnalysisFinished = false
+        isOneShotCaptured = false
         isGeminiAnalyzing = false
         SpatialTrackingEngine.shared.suspend()
         initialTargetPoint = nil
@@ -3435,13 +3472,15 @@ public final class CameraViewModel: ObservableObject {
         let generation = aiSessionGeneration
         let requestID = localAnalysisRequestID
         let zooms = cameraService.availableDisplayZoomOptions
+        let livePhotoLowMemoryBudget = isLivePhotoEnabled
         localAnalysisTask = Task { [weak self] in
             let preferences = await CompositionPreferenceStore.shared.bonuses()
             guard !Task.isCancelled, !cancellation.isCancelled else { return }
             let result = await withTaskCancellationHandler {
                 await NeuralSubjectIntelligenceEngine.shared.analyzeCompositionAsync(
                     pixelBuffer: ownedSource.buffer, frame: ownedSource.frame, pose: ownedSource.pose,
-                    allowedZooms: zooms, preferences: preferences, requestID: requestID, cancellation: cancellation,
+                    allowedZooms: zooms, preferences: preferences, requestID: requestID,
+                    lowMemoryBudget: livePhotoLowMemoryBudget, cancellation: cancellation,
                     progress: { [weak self] message in
                         Task { @MainActor [weak self] in
                             guard let self, self.aiSessionGeneration == generation,

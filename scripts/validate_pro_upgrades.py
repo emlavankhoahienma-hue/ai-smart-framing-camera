@@ -401,6 +401,51 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         self.assertIn("NeuralSubjectIntelligenceEngine.shared.analyzeCompositionAsync(", vm)
         self.assertIn("if captureMode.isVideo { selectCaptureMode(.photo) }", vm)
 
+    def test_15_live_photo_oom_guard_yoloe26m_and_clean_white_leveler(self):
+        # 1. Pure minimalist white horizon balance bar (no numeric degree pill)
+        overlay = source("Views/ARFramingOverlayView.swift")
+        self.assertNotIn("private var angleLabel: String", overlay)
+        self.assertNotIn("Text(angleLabel)", overlay)
+        self.assertIn("private var horizonBarLevel: some View", overlay)
+        self.assertIn("private var overheadBubbleLevel: some View", overlay)
+
+        # 2. Live Photo + Local AI zero-contention & strict single-model-resident memory guards
+        vm = source("ViewModels/CameraViewModel.swift")
+        self.assertIn("var isAnalyzingLocalAI = false", vm)
+        self.assertIn("if snapshot.isAnalyzingLocalAI && !needsImmediateCapture", vm)
+        self.assertIn("tracksSuggestions: aiSessionState == .analyzing && localAnalysisFinished && !localEvidenceCandidates.isEmpty", vm)
+        self.assertIn("NeuralSubjectIntelligenceEngine.shared.releaseAllModelCaches()", vm)
+        self.assertIn("lowMemoryBudget: livePhotoLowMemoryBudget", vm)
+
+        neural = source("Services/NeuralSubjectIntelligenceEngine.swift")
+        self.assertIn("public func releaseAllModelCaches()", neural)
+        self.assertIn("preferSequential: lowMem", neural)
+        self.assertIn("lowMemoryBudget: lowMem", neural)
+
+        search = source("Services/CompositionAestheticSearch.swift")
+        self.assertIn("GAICCompositionModel.clearCache()", search)
+        self.assertIn("PhotographicCompositionModel.clearCache()", search)
+        self.assertIn("CharmPhotographicModel.clearCache()", search)
+
+        gaic = source("Services/GAICCompositionModel.swift")
+        self.assertIn("static func clearCache()", gaic)
+
+        # 3. Upgraded YOLOE-26m @ 512 + fast row-major decoder + giant-tie monument fix
+        ow = source("Services/OpenWorldSubjectDetector.swift")
+        self.assertIn("preferSequential: Bool = false", ow)
+        self.assertIn("private let defaultInputSide: Int = 512", ow)
+        self.assertIn("strictThresholdClasses", ow)
+        self.assertIn("var bestScores = [Float](repeating:", ow)
+
+        director = source("Services/CameraFramingDirector.swift")
+        self.assertIn("monumentDets", director)
+        self.assertIn("maskInstances.first(where: { !$0.isEdgeSliver })", director)
+
+        export_script = (Path(__file__).resolve().parent / "export_openworld_yoloe_coreml.py").read_text(encoding="utf-8")
+        self.assertIn('MODEL_NAME = "yoloe-26m-seg.pt"', export_script)
+        self.assertIn("INPUT_SIZE = 512", export_script)
+        self.assertIn("EXPECTED_ANCHORS =", export_script)
+
 
 if __name__ == "__main__":
     unittest.main()

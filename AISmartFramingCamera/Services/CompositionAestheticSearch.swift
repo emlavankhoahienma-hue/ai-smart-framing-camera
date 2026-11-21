@@ -31,10 +31,12 @@ final class CompositionAestheticSearch {
              gaicModelURL: URL? = nil,
              aestheticModelURL: URL? = nil, positionURL: URL? = nil, requiresModernModel: Bool = false,
              sceneHints: CompositionSceneHints = .neutral,
+             lowMemoryBudget: Bool = false,
              cancellation: CompositionAnalysisCancellation,
              progress: @Sendable (String) -> Void,
              refine: ([CompositionProposal]) -> [CompositionProposal]) -> Result? {
         guard !cancellation.isCancelled else { return nil }
+        let singleModelResidency = lowMemoryBudget || ProcessInfo.processInfo.physicalMemory < 7_500_000_000
         let resolvedGaicURL = gaicModelURL ?? GAICCompositionModel.defaultModelURL(near: modelURL)
         let sourceBaseZoom = max(0.5, Double(proposals.first(where: \.isUnchangedView)?.zoom ?? proposals.first?.zoom ?? 1.0))
         var workingProposals = proposals
@@ -55,6 +57,10 @@ final class CompositionAestheticSearch {
                 }
                 allGAICScoredProposals = workingProposals
                 progress("GAIC đã đánh giá \(workingProposals.count) khung hình đa tỷ lệ…")
+            }
+            // Free GAIC immediately before SAMP-Net loads so peak RAM stays flat under Live Photo.
+            if singleModelResidency {
+                GAICCompositionModel.clearCache()
             }
         }
         guard !cancellation.isCancelled else { return nil }
@@ -250,9 +256,10 @@ final class CompositionAestheticSearch {
             // scores if a request fails partway through the comparison without GAIC.
             for index in evaluated.indices { evaluated[index].proposal.score = evaluated[index].geometryScore }
         }
-        // Release SAMP-Net on < 6GB devices before loading Charm DINOv2-small to prevent Jetsam spikes.
+        // Release SAMP-Net before loading Charm DINOv2-small whenever single-model residency is active
+        // (< 8GB devices or Live Photo enabled) so MPS/ANE buffers never stack above Jetsam limits.
         specialist = nil
-        if !isHighMem {
+        if singleModelResidency {
             PhotographicCompositionModel.clearCache()
         }
         var allEvaluated = evaluated
@@ -328,7 +335,7 @@ final class CompositionAestheticSearch {
                 progress("Đang tổng hợp điểm bố cục từ GAIC & SAMP…")
             }
             modern = nil
-            if !isHighMem {
+            if singleModelResidency {
                 CharmPhotographicModel.clearCache()
             }
             for poolItem in pool {

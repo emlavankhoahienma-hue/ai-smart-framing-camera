@@ -167,13 +167,18 @@ enum CameraFramingDirector {
         if l == "human face" || l == "khuôn mặt" || l == "face" { return .face }
         if l == "person" || l == "người" || l.hasPrefix("nhóm") { return .human }
         let animals: Set<String> = [
-            "dog", "cat", "bird", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe",
-            "butterfly", "fish", "animal", "chó", "mèo", "chim", "ngựa", "thú cưng", "động vật"
+            "dog", "cat", "bird", "duck", "parrot", "horse", "sheep", "cow", "elephant", "bear",
+            "zebra", "giraffe", "deer", "rabbit", "snake", "lizard", "frog", "turtle",
+            "butterfly", "insect", "beetle", "fish", "animal",
+            "chó", "mèo", "chim", "vịt", "vẹt", "ngựa", "bò", "hươu", "thỏ", "rắn", "ếch", "rùa",
+            "bướm", "côn trùng", "bọ cánh cứng", "cá", "thú cưng", "động vật"
         ]
         if animals.contains(l) { return .animal }
         let pureFlowers: Set<String> = [
-            "flower", "blossom", "rose", "sunflower", "tulip", "bouquet", "leaf", "branch", "cactus",
-            "hoa", "bông hoa", "cành hoa", "lá cây", "hoa hồng", "hoa hướng dương"
+            "flower", "blossom", "rose", "sunflower", "tulip", "orchid", "bouquet",
+            "succulent", "cactus", "mushroom", "leaf", "branch",
+            "hoa", "bông hoa", "cụm hoa", "cành hoa", "lá cây", "hoa hồng", "hoa hướng dương",
+            "sen đá", "xương rồng", "nấm"
         ]
         if pureFlowers.contains(l) { return .pureFlower }
         let potted: Set<String> = ["potted plant", "green plant", "chậu cây", "cây xanh"]
@@ -181,32 +186,36 @@ enum CameraFramingDirector {
         let wideNature: Set<String> = [
             "sky", "cloud", "sunset", "sun", "moon", "mountain", "hill", "sea", "ocean", "beach",
             "river", "lake", "waterfall", "rainbow", "forest", "grass", "tree", "palm tree",
-            "bầu trời", "mây", "hoàng hôn", "mặt trời", "núi", "biển", "bãi biển", "sông", "hồ", "thác nước", "rừng", "cây"
+            "rock", "cliff", "fireworks",
+            "bầu trời", "mây", "hoàng hôn", "mặt trời", "núi", "biển", "bãi biển", "sông", "hồ",
+            "thác nước", "rừng", "cây", "vách đá", "tảng đá", "pháo hoa"
         ]
         if wideNature.contains(l) { return .wideNature }
         let arch: Set<String> = [
-            "building", "house", "skyscraper", "tower", "bridge", "temple", "church", "window",
-            "doorway", "balcony", "stairs", "street", "alley", "road", "street sign",
-            "tòa nhà", "ngôi nhà", "nhà cao tầng", "tháp", "cây cầu", "đền chùa", "nhà thờ", "đường phố", "con hẻm"
+            "building", "house", "skyscraper", "tower", "castle", "pagoda", "temple", "church", "cathedral",
+            "bridge", "arch", "fountain", "monument", "sculpture", "statue",
+            "window", "doorway", "balcony", "stairs", "street", "alley", "road", "street sign",
+            "tòa nhà", "ngôi nhà", "nhà cao tầng", "tháp", "lâu đài", "chùa", "cây cầu", "đền chùa",
+            "nhà thờ", "vòm cổng", "đài phun nước", "tượng đài", "điêu khắc", "bức tượng", "đường phố", "con hẻm"
         ]
         if arch.contains(l) { return .architecture }
         let food: Set<String> = [
-            "food", "dish", "cake", "dessert", "fruit", "pizza", "burger", "noodle", "bread",
-            "coffee", "cup", "tea", "drink", "glass", "wine glass", "bottle", "bowl", "plate",
+            "food", "dish", "cake", "ice cream", "dessert", "fruit", "pizza", "burger", "noodle", "bread",
+            "coffee", "cup", "mug", "tea", "cocktail", "drink", "glass", "wine glass", "bottle", "bowl", "plate", "teapot",
             "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "donut",
-            "món ăn", "đồ ăn", "bánh ngọt", "trái cây", "cà phê", "cốc nước", "trà", "ly rượu", "chai nước", "bát đĩa"
+            "món ăn", "đồ ăn", "bánh ngọt", "kem", "trái cây", "cà phê", "cốc nước", "trà", "ly rượu", "chai nước", "bát đĩa", "ấm trà"
         ]
         if food.contains(l) { return .food }
         let vehicle: Set<String> = [
-            "car", "motorcycle", "bicycle", "bus", "truck", "train", "boat", "airplane",
-            "ô tô", "xe máy", "xe đạp", "xe buýt", "tàu hỏa", "thuyền", "máy bay"
+            "car", "motorcycle", "scooter", "bicycle", "bus", "truck", "train", "boat", "airplane",
+            "ô tô", "xe máy", "xe tay ga", "xe đạp", "xe buýt", "tàu hỏa", "thuyền", "máy bay"
         ]
         if vehicle.contains(l) { return .vehicle }
         let bgSurface: Set<String> = ["table", "dining table", "bàn ăn"]
         if bgSurface.contains(l) { return .backgroundSurface }
         let furniture: Set<String> = [
-            "chair", "sofa", "couch", "lamp", "bed",
-            "ghế", "ghế sofa", "đèn", "giường", "bàn"
+            "chair", "sofa", "couch", "lamp", "chandelier", "bed",
+            "ghế", "ghế sofa", "đèn", "đèn chùm", "giường", "bàn"
         ]
         if furniture.contains(l) { return .furniture }
         if isGeneralCategory { return .wideNature }
@@ -216,35 +225,47 @@ enum CameraFramingDirector {
     static func localizedName(for label: String) -> String {
         let map: [String: String] = [
             "person": "Người", "human face": "Khuôn mặt",
-            "dog": "Chú chó", "cat": "Chú mèo", "bird": "Chim", "horse": "Ngựa",
-            "elephant": "Voi", "zebra": "Ngựa vằn", "giraffe": "Hươu cao cổ", "butterfly": "Bướm",
-            "fish": "Cá", "animal": "Động vật",
+            "dog": "Chú chó", "cat": "Chú mèo", "bird": "Chim", "duck": "Chú vịt", "parrot": "Chú vẹt",
+            "horse": "Ngựa", "cow": "Con bò", "elephant": "Voi", "zebra": "Ngựa vằn", "giraffe": "Hươu cao cổ",
+            "deer": "Chú hươu", "rabbit": "Chú thỏ", "snake": "Con rắn", "lizard": "Thằn lằn",
+            "frog": "Chú ếch", "turtle": "Con rùa", "butterfly": "Bướm", "insect": "Côn trùng",
+            "beetle": "Bọ cánh cứng", "fish": "Cá", "animal": "Động vật",
             "flower": "Bông hoa", "blossom": "Cụm hoa", "rose": "Hoa hồng",
             "sunflower": "Hoa hướng dương", "tulip": "Hoa tulip", "bouquet": "Bó hoa",
+            "succulent": "Sen đá", "mushroom": "Cây nấm",
             "leaf": "Chiếc lá", "green plant": "Cây xanh", "potted plant": "Chậu cây",
             "tree": "Tán cây", "palm tree": "Cây cọ", "branch": "Cành cây", "forest": "Khu rừng",
-            "grass": "Thảm cỏ", "cactus": "Xương rồng",
+            "grass": "Thảm cỏ", "cactus": "Xương rồng", "rock": "Tảng đá", "cliff": "Vách đá",
             "sky": "Bầu trời", "cloud": "Mây trời", "sunset": "Hoàng hôn", "sun": "Mặt trời",
             "moon": "Mặt trăng", "mountain": "Dãy núi", "hill": "Đồi núi", "sea": "Mặt biển",
             "ocean": "Đại dương", "beach": "Bãi biển", "river": "Dòng sông", "lake": "Mặt hồ",
-            "waterfall": "Thác nước", "rainbow": "Cầu vồng",
+            "waterfall": "Thác nước", "rainbow": "Cầu vồng", "fireworks": "Pháo hoa",
             "building": "Tòa nhà", "house": "Ngôi nhà", "skyscraper": "Nhà cao tầng",
-            "tower": "Tòa tháp", "bridge": "Cây cầu", "temple": "Ngôi chùa", "church": "Nhà thờ",
+            "tower": "Tòa tháp", "castle": "Lâu đài", "pagoda": "Ngôi chùa", "temple": "Đền chùa",
+            "church": "Nhà thờ", "cathedral": "Thánh đường", "bridge": "Cây cầu", "arch": "Vòm kiến trúc",
+            "fountain": "Đài phun nước", "monument": "Tượng đài", "sculpture": "Tác phẩm điêu khắc",
             "window": "Cửa sổ", "doorway": "Khung cửa", "balcony": "Ban công", "stairs": "Cầu thang",
             "street": "Đường phố", "alley": "Con hẻm", "road": "Con đường", "street sign": "Biển báo",
-            "food": "Món ăn", "dish": "Đĩa thức ăn", "cake": "Bánh ngọt", "dessert": "Tráng miệng",
-            "fruit": "Trái cây", "pizza": "Bánh pizza", "burger": "Burger", "noodle": "Mì/Phở",
-            "bread": "Bánh mì", "coffee": "Ly cà phê", "cup": "Chiếc cốc", "tea": "Ly trà",
-            "drink": "Đồ uống", "glass": "Ly thủy tinh", "bottle": "Chai nước", "bowl": "Bát",
-            "plate": "Đĩa", "sandwich": "Bánh mì kẹp",
-            "car": "Ô tô", "motorcycle": "Xe máy", "bicycle": "Xe đạp", "bus": "Xe buýt",
-            "train": "Tàu hỏa", "boat": "Con thuyền", "airplane": "Máy bay",
+            "food": "Món ăn", "dish": "Đĩa thức ăn", "cake": "Bánh ngọt", "ice cream": "Kem",
+            "dessert": "Tráng miệng", "fruit": "Trái cây", "pizza": "Bánh pizza", "burger": "Burger",
+            "noodle": "Mì/Phở", "bread": "Bánh mì", "coffee": "Ly cà phê", "cup": "Chiếc cốc",
+            "mug": "Cốc sứ", "tea": "Ly trà", "cocktail": "Ly cocktail", "drink": "Đồ uống",
+            "glass": "Ly thủy tinh", "bottle": "Chai nước", "bowl": "Bát", "plate": "Đĩa",
+            "teapot": "Ấm trà", "sandwich": "Bánh mì kẹp",
+            "car": "Ô tô", "motorcycle": "Xe máy", "scooter": "Xe tay ga", "bicycle": "Xe đạp",
+            "bus": "Xe buýt", "train": "Tàu hỏa", "boat": "Con thuyền", "airplane": "Máy bay",
+            "helmet": "Mũ bảo hiểm",
             "laptop": "Laptop", "monitor": "Màn hình", "tv": "Màn hình TV", "keyboard": "Bàn phím",
             "mouse": "Chuột máy tính", "smartphone": "Điện thoại", "camera": "Máy ảnh",
-            "watch": "Đồng hồ đeo tay", "eyeglasses": "Kính mắt", "book": "Cuốn sách",
-            "lamp": "Đèn bàn", "vase": "Bình hoa", "clock": "Đồng hồ", "chair": "Chiếc ghế",
-            "sofa": "Ghế sofa", "table": "Mặt bàn", "bag": "Túi xách", "backpack": "Ba lô",
-            "shoe": "Giày", "hat": "Mũ", "umbrella": "Chiếc ô", "statue": "Bức tượng", "guitar": "Đàn guitar",
+            "headphones": "Tai nghe", "speaker": "Loa", "watch": "Đồng hồ đeo tay",
+            "eyeglasses": "Kính mắt", "sunglasses": "Kính râm", "perfume": "Nước hoa", "ring": "Chiếc nhẫn",
+            "book": "Cuốn sách", "lamp": "Đèn bàn", "chandelier": "Đèn chùm", "candle": "Ngọn nến",
+            "lantern": "Đèn lồng", "vase": "Bình hoa", "clock": "Đồng hồ", "mirror": "Chiếc gương",
+            "chair": "Chiếc ghế", "sofa": "Ghế sofa", "table": "Mặt bàn", "bag": "Túi xách",
+            "handbag": "Túi cầm tay", "backpack": "Ba lô", "shoe": "Giày", "sneaker": "Giày thể thao",
+            "hat": "Mũ", "umbrella": "Chiếc ô", "statue": "Bức tượng", "toy": "Đồ chơi",
+            "figurine": "Mô hình", "guitar": "Đàn guitar", "barrel": "Thùng gỗ",
+            "box": "Chiếc hộp", "package": "Gói đồ",
         ]
         let key = label.lowercased()
         return map[key] ?? label
@@ -710,7 +731,7 @@ enum CameraFramingDirector {
                 heroLabel = f.det.label
                 heroLocalized = f.det.localizedLabel
                 heroConf = f.det.confidence
-            } else if let m0 = maskInstances.first, m0.det.area >= 0.04 {
+            } else if let m0 = maskInstances.first(where: { !$0.isEdgeSliver }), m0.det.area >= 0.04 {
                 role = siglipScene == "flower" ? .flower : .foliage
                 heroBox = m0.det.boundingBox
                 heroAnchor = m0.det.anchor ?? m0.det.center
@@ -1373,6 +1394,21 @@ enum CameraFramingDirector {
                     )
                     break
                 }
+            }
+        }
+        // 1b. Suppress giant COCO "tie" false positives on standalone vertical monuments/statues/towers
+        // when OpenWorldPhotoYOLOE explicitly recognizes architecture/monument on the same box.
+        let monumentDets = nonMasks.filter {
+            $0.confidence >= 0.35 && (
+                $0.domain == .architecture ||
+                ["monument", "statue", "sculpture", "tower", "tượng đài", "bức tượng", "điêu khắc"].contains($0.label.lowercased())
+            )
+        }
+        if !monumentDets.isEmpty {
+            nonMasks.removeAll { det in
+                let lbl = det.label.lowercased()
+                guard (lbl == "tie" || lbl == "cà vạt") && det.area >= 0.10 else { return false }
+                return monumentDets.contains { rectIoU(det.boundingBox, $0.boundingBox) >= 0.45 }
             }
         }
         // 2. Prioritize semantic detections over raw unlabeled masks when IoU > 0.55

@@ -1,11 +1,11 @@
-"""Export Open-World Photographic YOLOE-26s (101 classes) to Core ML FP16 for iOS 17+.
+"""Export Open-World Photographic YOLOE-26m (143 curated classes @ 512x512) to Core ML FP16 for iOS 17+.
 
-Bakes MobileCLIP2-B text embeddings for 101 photographic subjects (people, faces,
-animals, flowers, blossoms, leaves, trees, sky, clouds, sunset, mountains, sea,
-beach, rivers, buildings, skyscrapers, temples, bridges, coffee, dishes, cameras,
-watches, furniture, everyday objects) offline into standard Conv2d weights so
-on-device iPhone inference runs purely on Apple Neural Engine with zero text-encoder
-RAM overhead.
+Bakes MobileCLIP2-B text embeddings for 143 curated photographic subjects (people, faces,
+pets, wildlife, insects, flowers, blossoms, succulents, trees, sky, clouds, sunset, mountains,
+sea, beach, rivers, buildings, skyscrapers, castles, temples, cathedrals, bridges, monuments,
+sculptures, coffee, dishes, collectibles, accessories, tech, everyday objects) offline into
+standard Conv2d weights so on-device iPhone inference runs purely on Apple Neural Engine with
+zero text-encoder RAM overhead and 36% fewer anchors (5376 vs 8400) for faster decoding.
 """
 from __future__ import annotations
 
@@ -21,40 +21,46 @@ from PIL import Image
 from ultralytics import YOLOE
 
 
-MODEL_NAME = "yoloe-26s-seg.pt"
-WEIGHTS_SHA256 = "48f24206bc8680d60cbbfa296b0140da849669b9515058b72f5a945142df0654"
-INPUT_SIZE = 640
+MODEL_NAME = "yoloe-26m-seg.pt"
+WEIGHTS_SHA256 = "585f5ec9028fd358035da8d860c27c56be285a795cba2076fba536a4391c2c83"
+INPUT_SIZE = 512
+EXPECTED_ANCHORS = (INPUT_SIZE // 8) ** 2 + (INPUT_SIZE // 16) ** 2 + (INPUT_SIZE // 32) ** 2
 
-# 101 photographic open-vocabulary classes complementing 80-class COCO YOLO12s.
+# 143 curated photographic open-vocabulary classes complementing 80-class COCO YOLO12s.
 # Order is frozen into OpenWorldPhotoClasses.json and matched 1:1 by OpenWorldSubjectDetector.swift.
 OPENWORLD_CLASSES = [
-    # People & Portrait
+    # People & Portrait (2)
     "person", "human face",
-    # Animals & Wildlife
-    "dog", "cat", "bird", "horse", "elephant", "butterfly", "fish", "animal",
-    # Flora & Nature (non-COCO!)
-    "flower", "blossom", "rose", "sunflower", "tulip", "bouquet",
-    "leaf", "green plant", "potted plant", "tree", "palm tree", "branch", "forest", "grass", "cactus",
-    # Sky, Clouds & Landscapes (non-COCO!)
-    "sky", "cloud", "sunset", "sun", "moon", "mountain", "hill", "sea", "ocean",
+    # Animals, Pets & Wildlife (18)
+    "dog", "cat", "bird", "duck", "parrot", "horse", "cow", "elephant",
+    "deer", "rabbit", "snake", "frog", "turtle",
+    "butterfly", "insect", "beetle", "fish", "animal",
+    # Flora & Nature (18)
+    "flower", "blossom", "rose", "sunflower", "bouquet",
+    "succulent", "cactus", "mushroom", "leaf", "green plant", "potted plant",
+    "tree", "palm tree", "branch", "forest", "grass", "rock", "cliff",
+    # Sky, Water & Landscapes (13)
+    "sky", "cloud", "sunset", "sun", "mountain", "hill", "sea", "ocean",
     "beach", "river", "lake", "waterfall", "rainbow",
-    # Architecture & Street (non-COCO!)
-    "building", "house", "skyscraper", "tower", "bridge", "temple", "church",
+    # Architecture, Landmarks & Street (23)
+    "building", "house", "skyscraper", "tower", "castle", "pagoda", "temple", "church", "cathedral",
+    "bridge", "arch", "fountain", "monument", "sculpture", "statue",
     "window", "doorway", "balcony", "stairs", "street", "alley", "road", "street sign",
-    # Food & Drinks
-    "food", "dish", "cake", "dessert", "fruit", "pizza", "burger", "noodle", "bread",
-    "coffee", "cup", "tea", "drink", "glass", "bottle", "bowl", "plate",
-    # Vehicles
-    "car", "motorcycle", "bicycle", "bus", "train", "boat", "airplane",
-    # Everyday Objects & Products
-    "laptop", "monitor", "tv", "keyboard", "mouse", "smartphone", "camera", "watch", "eyeglasses",
-    "book", "lamp", "vase", "clock", "chair", "sofa", "table", "bag", "backpack",
-    "shoe", "hat", "umbrella", "statue", "guitar",
+    # Food & Drinks (21)
+    "food", "dish", "cake", "ice cream", "dessert", "fruit", "pizza", "burger", "noodle", "bread",
+    "coffee", "tea", "cocktail", "drink", "cup", "mug", "glass", "bottle", "bowl", "plate", "teapot",
+    # Vehicles & Gear (9)
+    "car", "motorcycle", "scooter", "bicycle", "bus", "train", "boat", "airplane", "helmet",
+    # Everyday Objects, Tech, Fashion & Collectibles (39)
+    "laptop", "monitor", "tv", "keyboard", "mouse", "smartphone", "camera", "headphones", "speaker",
+    "watch", "eyeglasses", "sunglasses", "perfume", "ring", "book", "lamp", "chandelier", "candle", "lantern",
+    "vase", "clock", "mirror", "chair", "sofa", "table", "bag", "handbag", "backpack",
+    "shoe", "sneaker", "hat", "umbrella", "toy", "figurine", "guitar", "barrel", "box", "package", "fireworks",
 ]
 
 
 class YOLOEOpenWorldDetWrapper(torch.nn.Module):
-    """Slices purely the [1, 4 + nc, 8400] detection tensor (cx, cy, w, h + nc class probs),
+    """Slices purely the [1, 4 + nc, anchors] detection tensor (cx, cy, w, h + nc class probs),
     eliminating mask prototypes/coefficients so ANE latency and IPA footprint stay minimal.
     """
 
@@ -105,7 +111,7 @@ def main() -> None:
         raise RuntimeError(f"Expected YOLOE checkpoint file at {ckpt_path}")
     digest = hashlib.sha256(ckpt_path.read_bytes()).hexdigest()
     if digest != WEIGHTS_SHA256:
-        raise RuntimeError(f"YOLOE-26s weight SHA256 mismatch: {digest} != {WEIGHTS_SHA256}")
+        raise RuntimeError(f"YOLOE-26m weight SHA256 mismatch: {digest} != {WEIGHTS_SHA256}")
 
     nc = len(OPENWORLD_CLASSES)
     text_pe = model.get_text_pe(OPENWORLD_CLASSES)
@@ -118,7 +124,7 @@ def main() -> None:
     example = torch.zeros(1, 3, INPUT_SIZE, INPUT_SIZE, dtype=torch.float32)
     with torch.no_grad():
         eager_sample = wrapper(example)
-        if tuple(eager_sample.shape) != (1, 4 + nc, 8400):
+        if tuple(eager_sample.shape) != (1, 4 + nc, EXPECTED_ANCHORS):
             raise RuntimeError(f"Unexpected YOLOE detection shape: {tuple(eager_sample.shape)}")
         traced = torch.jit.trace(wrapper, example, strict=False)
         traced_sample = traced(example)
@@ -179,7 +185,7 @@ def main() -> None:
                 "weightsSHA256": WEIGHTS_SHA256,
                 "inputSize": INPUT_SIZE,
                 "classCount": nc,
-                "outputShape": [1, 4 + nc, 8400],
+                "outputShape": [1, 4 + nc, EXPECTED_ANCHORS],
                 "parity": {
                     "checked": True,
                     "scoreMaxAbsDiff": round(score_max_diff, 5),

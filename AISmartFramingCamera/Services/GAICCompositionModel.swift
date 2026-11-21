@@ -40,7 +40,7 @@ final class GAICCompositionModel {
         }
 
         func getOrLoad(url: URL) -> GAICCompositionModel? {
-            let keepCached = ProcessInfo.processInfo.physicalMemory >= 5_200_000_000
+            let keepCached = ProcessInfo.processInfo.physicalMemory >= 7_500_000_000
             return lock.withLock {
                 if keepCached, cachedURL == url, let existing = cachedInstance {
                     return existing
@@ -57,6 +57,10 @@ final class GAICCompositionModel {
 
     static func cachedOrLoad(url: URL) -> GAICCompositionModel? {
         ModelCache.shared.getOrLoad(url: url)
+    }
+
+    static func clearCache() {
+        ModelCache.shared.clear()
     }
 
     private let model: MLModel

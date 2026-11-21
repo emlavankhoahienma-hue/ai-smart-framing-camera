@@ -672,6 +672,21 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     private let renderer = CompositionImageRenderer()
     public init() {}
 
+    /// Releases cached on-device Core ML models and CoreImage scratch buffers so
+    /// high-memory camera pipelines (Live Photo ring buffer, RAW capture) stay safely
+    /// below iOS Jetsam limits without weakening AI model accuracy.
+    public func releaseAllModelCaches() {
+        autoreleasepool {
+            SemanticCropRanker.shared.releaseModelNow()
+            OpenWorldSubjectDetector.shared.releaseCachedModel()
+            GAICCompositionModel.clearCache()
+            PhotographicCompositionModel.clearCache()
+            CharmPhotographicModel.clearCache()
+            renderer.releaseDepthModel()
+            renderer.clearCaches()
+        }
+    }
+
     private struct SendablePixelBuffer: @unchecked Sendable {
         let value: CVPixelBuffer
     }
@@ -681,6 +696,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     func analyzeCompositionAsync(pixelBuffer: CVPixelBuffer, frame: TrackingFrameContext,
                                  pose: simd_quatd, allowedZooms: [CGFloat],
                                  preferences: [String: Double], requestID: UUID,
+                                 lowMemoryBudget: Bool = false,
                                  cancellation: CompositionAnalysisCancellation,
                                  progress: @escaping @Sendable (String) -> Void = { _ in }) async -> LocalCompositionAnalysis? {
         let bufferBox = SendablePixelBuffer(value: pixelBuffer)
@@ -693,7 +709,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 let result = self.analyzeComposition(
                     pixelBuffer: bufferBox.value, frame: frame, pose: pose,
                     allowedZooms: allowedZooms, preferences: preferences,
-                    requestID: requestID, cancellation: cancellation, progress: progress
+                    requestID: requestID, lowMemoryBudget: lowMemoryBudget,
+                    cancellation: cancellation, progress: progress
                 )
                 continuation.resume(returning: result)
             }
@@ -703,12 +720,21 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     func analyzeComposition(pixelBuffer: CVPixelBuffer, frame: TrackingFrameContext,
                             pose: simd_quatd, allowedZooms: [CGFloat],
                             preferences: [String: Double], requestID: UUID,
+                            lowMemoryBudget: Bool = false,
                             cancellation: CompositionAnalysisCancellation,
                             progress: @Sendable (String) -> Void = { _ in }) -> LocalCompositionAnalysis? {
         guard !cancellation.isCancelled else { return nil }
+        let lowMem = lowMemoryBudget || ProcessInfo.processInfo.physicalMemory < 7_500_000_000
         analysisLock.lock()
+        if lowMem {
+            releaseAllModelCaches()
+        }
         SemanticCropRanker.shared.beginAnalysis()
-        defer { SemanticCropRanker.shared.endAnalysis(); analysisLock.unlock() }
+        defer {
+            SemanticCropRanker.shared.endAnalysis()
+            if lowMem { self.releaseAllModelCaches() }
+            analysisLock.unlock()
+        }
         let started = ProcessInfo.processInfo.systemUptime
         func receipt(count: Int = 0, specialist: Bool = false, modern: Int = 0) -> CompositionAnalysisReceipt {
             CompositionAnalysisReceipt(requestID: requestID, sourceTimestamp: frame.timestamp,
@@ -738,19 +764,24 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             detectedScene: output.detectedScene,
             cancellation: cancellation
         )
-        // 2) IMMEDIATELY unload SigLIP (~350-450MB RAM) BEFORE OpenWorldPhotoYOLOE + ForegroundInstanceMask
-        //    so peak memory never breaches iOS Jetsam limits on 4GB/6GB iPhones!
+        // 2) IMMEDIATELY unload SigLIP (~350-450MB) and DepthAnythingV2 (~180MB) BEFORE
+        //    OpenWorldPhotoYOLOE + ForegroundInstanceMask so peak memory stays strictly single-model!
         autoreleasepool {
             SemanticCropRanker.shared.releaseModelNow()
+            if lowMem {
+                renderer.releaseDepthModel()
+                renderer.clearCaches()
+            }
         }
         guard !cancellation.isCancelled else { return nil }
 
-        // 3) Run Open-World Photographic YOLOE-26s (101 classes) + iOS 17+ Foreground Instance Mask
+        // 3) Run Open-World Photographic YOLOE-26m (curated classes) + iOS 17+ Foreground Instance Mask
         progress("Đang nhận diện vật thể mở rộng & tách nền tiền cảnh…")
         let openWorldDetections = OpenWorldSubjectDetector.shared.detect(
             pixelBuffer: pixelBuffer,
             orientation: frame.orientation,
-            cancellation: cancellation
+            cancellation: cancellation,
+            preferSequential: lowMem
         )
         let directorDetections: [DirectorDetection] = {
             var list: [DirectorDetection] = output.allCandidates.map { c in
@@ -1017,12 +1048,13 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 profile: spatialProfile
             )
         }
-        // Release DepthAnythingV2 and OpenWorldYOLOE caches on < 6GB devices before loading
-        // GAIC + SAMP + Charm so peak memory stays strictly below iOS Jetsam limits.
-        if ProcessInfo.processInfo.physicalMemory < 5_800_000_000 {
+        // Release DepthAnythingV2 and OpenWorldYOLOE caches before loading GAIC -> SAMP -> Charm
+        // whenever single-model residency is active (< 8GB devices or Live Photo enabled).
+        if lowMem {
             autoreleasepool {
                 renderer.releaseDepthModel()
                 OpenWorldSubjectDetector.shared.releaseCachedModel()
+                renderer.clearCaches()
             }
         }
         progress("Đang đánh giá bố cục bằng mô hình trên máy…")
@@ -1038,6 +1070,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             positionURL: constrained ? nil : Bundle.main.url(forResource: "CharmPositionEmbedding", withExtension: "bin"),
             requiresModernModel: false,
             sceneHints: sceneHints,
+            lowMemoryBudget: lowMem,
             cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) })
         guard let result = searchResult else {
             renderer.clearCaches()
