@@ -812,13 +812,20 @@ public final class CameraViewModel: ObservableObject {
     }
 
     // MARK: - Thước Đo Cân Bằng Chân Trời (Horizon Leveler) & Hiệu Chuẩn Gyro
+    public let horizonLevelerService = HorizonLevelerService.shared
     @Published public var isHorizonLevelerEnabled: Bool = true {
-        didSet { UserDefaults.standard.set(isHorizonLevelerEnabled, forKey: "isHorizonLevelerEnabled") }
+        didSet {
+            UserDefaults.standard.set(isHorizonLevelerEnabled, forKey: "isHorizonLevelerEnabled")
+            syncHorizonLevelerLifecycle()
+        }
     }
     @Published public var currentRollDegrees: Double = 0.0
     @Published public var isDeviceLevel: Bool = false
     @Published public var gyroRollOffsetDegrees: Double = 0.0 {
-        didSet { UserDefaults.standard.set(gyroRollOffsetDegrees, forKey: "gyroRollOffsetDegrees") }
+        didSet {
+            UserDefaults.standard.set(gyroRollOffsetDegrees, forKey: "gyroRollOffsetDegrees")
+            horizonLevelerService.updateRollOffset(gyroRollOffsetDegrees)
+        }
     }
     @Published public var gyroPitchOffsetDegrees: Double = 0.0 {
         didSet { UserDefaults.standard.set(gyroPitchOffsetDegrees, forKey: "gyroPitchOffsetDegrees") }
@@ -832,6 +839,32 @@ public final class CameraViewModel: ObservableObject {
     private let horizonMotionManager = CMMotionManager()
     private var hasTriggeredLevelHaptic: Bool = false
     private var lastLevelHapticTime: TimeInterval = -.infinity
+
+    /// Đồng bộ vòng đời Thước Cân Bằng qua duy nhất `DeviceMotionService.shared` (1 CMMotionManager toàn app).
+    public func syncHorizonLevelerLifecycle() {
+        // Dừng manager phụ cũ để tránh xung đột hai CMMotionManager song song theo khuyến nghị Apple CoreMotion.
+        if horizonMotionManager.isDeviceMotionActive {
+            horizonMotionManager.stopDeviceMotionUpdates()
+        }
+        horizonLevelerService.isHapticsEnabled = isProximityHapticsEnabled && !isAISessionActive && !isShutterPressing
+        horizonLevelerService.onLevelStateUpdated = { [weak self] roll, level in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.horizonLevelerService.isHapticsEnabled = self.isProximityHapticsEnabled && !self.isAISessionActive && !self.isShutterPressing
+                if abs(roll - self.currentRollDegrees) >= 0.15 || level != self.isDeviceLevel {
+                    self.currentRollDegrees = roll
+                }
+                if self.isDeviceLevel != level {
+                    self.isDeviceLevel = level
+                }
+            }
+        }
+        if isHorizonLevelerEnabled && !isCameraHibernating && !isAppInBackground {
+            horizonLevelerService.start(rollOffsetDegrees: gyroRollOffsetDegrees)
+        } else {
+            horizonLevelerService.stop()
+        }
+    }
 
     // MARK: - Focus Peaking (Viền Báo Nét Điện Ảnh)
     @Published public var isFocusPeakingEnabled: Bool = false {
@@ -1527,6 +1560,7 @@ public final class CameraViewModel: ObservableObject {
             }
             // 2. Giải phóng bộ nhớ đồ họa tạm
             proPhotoService.setPollingPaused(true)
+            horizonLevelerService.stop()
             frameProcessor.clearBuffers()
             updateFrameProcessingConfiguration()
             CameraLogger.info("Camera chuyển sang chế độ ngủ đông (Standby: 0% CPU/AI)", category: .general)
@@ -1535,6 +1569,7 @@ public final class CameraViewModel: ObservableObject {
             if isProPhotoModeEnabled {
                 proPhotoService.setPollingPaused(false)
             }
+            syncHorizonLevelerLifecycle()
             updateFrameProcessingConfiguration()
             CameraLogger.info("Camera thức dậy, khôi phục pipeline 60fps tức thì", category: .general)
             Task { @MainActor [weak self] in
@@ -1576,6 +1611,7 @@ public final class CameraViewModel: ObservableObject {
             cameraService.stop()
         } else if phase == .active {
             SpatialTrackingEngine.shared.prepare()
+            syncHorizonLevelerLifecycle()
             guard hasCameraPermission else { return }
             if !cameraService.isSessionRunning {
                 cameraService.start { [weak self] running in
@@ -1884,6 +1920,7 @@ public final class CameraViewModel: ObservableObject {
         setupCallbacks()
         setupMotionCallbacks()
         startHorizonLeveler()
+        syncHorizonLevelerLifecycle()
     }
 
     private func updateFrameProcessingConfiguration() {

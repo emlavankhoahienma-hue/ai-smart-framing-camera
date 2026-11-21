@@ -145,9 +145,6 @@ public enum CameraFeatureGate {
             return .available
 
         case .horizonLeveler:
-            if ctx.isVideo {
-                return .disabled(shortHint: "Chỉ chế độ Ảnh", detailReason: "Thước cân bằng chỉ hiển thị ở chế độ Ảnh")
-            }
             if ctx.isAISessionActive {
                 return .disabled(shortHint: "Đang chạy AI", detailReason: "Tắt AI Bố cục để bật/tắt thước cân bằng")
             }

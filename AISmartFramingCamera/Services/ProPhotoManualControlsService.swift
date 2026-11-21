@@ -201,6 +201,7 @@ public final class ProPhotoManualControlsService: ObservableObject {
     private var pendingExposureWorkItem: DispatchWorkItem?
     private var pendingEVWorkItem: DispatchWorkItem?
     private var pendingWBWorkItem: DispatchWorkItem?
+    private var pendingAWBLockWorkItem: DispatchWorkItem?
     private var pendingFocusWorkItem: DispatchWorkItem?
     private var pendingHardwareWorkItem: DispatchWorkItem?
 
@@ -1008,7 +1009,8 @@ public final class ProPhotoManualControlsService: ObservableObject {
             let shouldLockCurrentAWB = !isWhiteBalanceLocked && isWhiteBalanceLockSupported
             if shouldLockCurrentAWB {
                 isWhiteBalanceLocked = true
-                pendingWBWorkItem = CameraService.shared.scheduleDeviceConfiguration(after: 0.02) { camera in
+                pendingAWBLockWorkItem?.cancel()
+                pendingAWBLockWorkItem = CameraService.shared.scheduleDeviceConfiguration(after: 0.02) { camera in
                     guard camera.isWhiteBalanceModeSupported(.locked), camera.whiteBalanceMode != .locked else { return }
                     do {
                         try camera.lockForConfiguration()
@@ -1057,6 +1059,7 @@ public final class ProPhotoManualControlsService: ObservableObject {
 
     private func restoreContinuousAutoWhiteBalance() {
         pendingWBWorkItem?.cancel()
+        pendingAWBLockWorkItem?.cancel()
         CameraService.shared.scheduleDeviceConfiguration { camera in
             do {
                 try camera.lockForConfiguration()
@@ -1241,6 +1244,7 @@ public final class ProPhotoManualControlsService: ObservableObject {
         pendingExposureWorkItem?.cancel()
         pendingEVWorkItem?.cancel()
         pendingWBWorkItem?.cancel()
+        pendingAWBLockWorkItem?.cancel()
         pendingFocusWorkItem?.cancel()
         pendingHardwareWorkItem?.cancel()
 

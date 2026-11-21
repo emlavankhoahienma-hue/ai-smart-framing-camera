@@ -103,6 +103,7 @@
 		C2000000000000000000007E /* OpenWorldSubjectDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000007E /* OpenWorldSubjectDetector.swift */; };
 		C2000000000000000000007F /* ProPhotoManualControlsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000007F /* ProPhotoManualControlsService.swift */; };
 		C20000000000000000000080 /* ProPhotoControlsOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000080 /* ProPhotoControlsOverlayView.swift */; };
+		C20000000000000000000081 /* HorizonLevelerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000081 /* HorizonLevelerService.swift */; };
 		B20000000000000000000047 /* GeminiLiveService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000047 /* GeminiLiveService.swift */; };
 		C20000000000000000000076 /* NativeTrackingCore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000076 /* NativeTrackingCore.cpp */; };
 		C20000000000000000000079 /* NativeOpticsCore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000079 /* NativeOpticsCore.cpp */; };
@@ -208,6 +209,7 @@
 		C1000000000000000000007E /* OpenWorldSubjectDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWorldSubjectDetector.swift; sourceTree = "<group>"; };
 		C1000000000000000000007F /* ProPhotoManualControlsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProPhotoManualControlsService.swift; sourceTree = "<group>"; };
 		C10000000000000000000080 /* ProPhotoControlsOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProPhotoControlsOverlayView.swift; sourceTree = "<group>"; };
+		C10000000000000000000081 /* HorizonLevelerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizonLevelerService.swift; sourceTree = "<group>"; };
 		B100000000000000000000047 /* GeminiLiveService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiLiveService.swift; sourceTree = "<group>"; };
 		C10000000000000000000075 /* NativeTrackingCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NativeTrackingCore.h; sourceTree = "<group>"; };
 		C10000000000000000000076 /* NativeTrackingCore.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NativeTrackingCore.cpp; sourceTree = "<group>"; };
@@ -314,6 +316,7 @@
 				C1000000000000000000007D /* CameraFramingDirector.swift */,
 				C1000000000000000000007E /* OpenWorldSubjectDetector.swift */,
 				C1000000000000000000007F /* ProPhotoManualControlsService.swift */,
+				C10000000000000000000081 /* HorizonLevelerService.swift */,
 				C10000000000000000000062 /* CharmPhotographicModel.swift */,
 				C10000000000000000000063 /* PortraitFramingEvidence.swift */,
 				C10000000000000000000064 /* CompositionTuning.swift */,
@@ -563,6 +566,7 @@
 				C2000000000000000000007E /* OpenWorldSubjectDetector.swift in Sources */,
 				C2000000000000000000007F /* ProPhotoManualControlsService.swift in Sources */,
 				C20000000000000000000080 /* ProPhotoControlsOverlayView.swift in Sources */,
+				C20000000000000000000081 /* HorizonLevelerService.swift in Sources */,
 				C20000000000000000000062 /* CharmPhotographicModel.swift in Sources */,
 				C20000000000000000000063 /* PortraitFramingEvidence.swift in Sources */,
 				C20000000000000000000064 /* CompositionTuning.swift in Sources */,

@@ -326,6 +326,37 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             self.assertIn(f"/* {filename} */", pbx)
             self.assertIn(f"/* {filename} in Sources */", pbx)
 
+    def test_13_horizon_leveler_single_motion_manager_and_360_overhead(self):
+        leveler = source("Services/HorizonLevelerService.swift")
+        for token in [
+            "DeviceMotionService.shared.subscribe",
+            "DeviceMotionService.shared.unsubscribe",
+            "q.inverse.act(SIMD3<Double>(0.0, 0.0, -1.0))",
+            "evaluateGravity(",
+            "isOverheadMode",
+            "cardinalDeviationDegrees",
+            "nearestCardinalDegrees",
+            "wrapAngle180(",
+        ]:
+            self.assertIn(token, leveler)
+
+        overlay = source("Views/ARFramingOverlayView.swift")
+        self.assertIn("HorizonLevelerView(leveler: viewModel.horizonLevelerService)", overlay)
+        self.assertIn("private var overheadBubbleLevel: some View", overlay)
+        self.assertNotIn("abs(rollDegrees) > 15.0 ? 0.0", overlay)
+
+        vm = source("ViewModels/CameraViewModel.swift")
+        self.assertIn("public let horizonLevelerService = HorizonLevelerService.shared", vm)
+        self.assertIn("public func syncHorizonLevelerLifecycle()", vm)
+        self.assertIn("horizonMotionManager.stopDeviceMotionUpdates()", vm)
+
+        pro_photo = source("Services/ProPhotoManualControlsService.swift")
+        self.assertIn("private var pendingAWBLockWorkItem: DispatchWorkItem?", pro_photo)
+
+        pbx = PBXPROJ.read_text(encoding="utf-8")
+        self.assertIn("/* HorizonLevelerService.swift */", pbx)
+        self.assertIn("/* HorizonLevelerService.swift in Sources */", pbx)
+
 
 if __name__ == "__main__":
     unittest.main()

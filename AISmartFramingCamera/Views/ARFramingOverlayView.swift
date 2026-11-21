@@ -216,10 +216,11 @@ public struct ARFramingOverlayView: View {
                     }
                 }
 
-                // 8c. Thước Đo Cân Bằng Chân Trời (Virtual Horizon Leveler)
-                if viewModel.isHorizonLevelerEnabled && !viewModel.isAISessionActive && viewModel.captureMode == .photo {
-                    HorizonLevelerView(rollDegrees: viewModel.currentRollDegrees, isLevel: viewModel.isDeviceLevel)
+                // 8c. Thước Đo Cân Bằng Chân Trời & Cân Phẳng 2 Trục (Virtual Horizon & Flatlay Leveler)
+                if viewModel.isHorizonLevelerEnabled && !viewModel.isAISessionActive && !viewModel.isCameraHibernating {
+                    HorizonLevelerView(leveler: viewModel.horizonLevelerService)
                         .position(screenCenter)
+                        .allowsHitTesting(false)
                 }
 
                 // 9. Smart Autofocus Yellow Square Indicator with Sun Exposure Slider (Apple Camera Style)
@@ -831,27 +832,138 @@ struct FocusSquareWithSunSlider: View {
     }
 }
 
-// MARK: - Virtual Horizon Leveler (Thước Cân Bằng Chân Trời)
+// MARK: - Virtual Horizon & Overhead Dual-Axis Leveler (Thước Cân Bằng Chân Trời & Phẳng 2 Trục)
 struct HorizonLevelerView: View {
-    let rollDegrees: Double
-    let isLevel: Bool
+    @ObservedObject var leveler: HorizonLevelerService
+
+    private var activeColor: Color {
+        leveler.isLevel ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.92)
+    }
+
+    private var angleLabel: String {
+        if leveler.isLevel { return "0°" }
+        let rounded = (leveler.cardinalDeviationDegrees * 10.0).rounded() / 10.0
+        return String(format: "%+.1f°", rounded)
+    }
 
     var body: some View {
-        HStack(spacing: 16) {
-            Rectangle()
-                .fill(isLevel ? Color.yellow : Color.white.opacity(0.60))
-                .frame(width: 34, height: isLevel ? 1.8 : 1.0)
-
-            Color.clear
-                .frame(width: 8, height: 8)
-
-            Rectangle()
-                .fill(isLevel ? Color.yellow : Color.white.opacity(0.60))
-                .frame(width: 34, height: isLevel ? 1.8 : 1.0)
+        ZStack {
+            if leveler.isOverheadMode {
+                overheadBubbleLevel
+                    .transition(.scale(scale: 0.90).combined(with: .opacity))
+            } else {
+                horizonBarLevel
+                    .transition(.opacity)
+            }
         }
-        .rotationEffect(.degrees(-rollDegrees))
-        .opacity(abs(rollDegrees) > 15.0 ? 0.0 : (isLevel ? 1.0 : max(0.20, 1.0 - abs(rollDegrees) / 12.0)))
-        .animation(.easeInOut(duration: 0.15), value: isLevel)
+        .animation(.easeInOut(duration: 0.16), value: leveler.isOverheadMode)
+        .animation(.easeInOut(duration: 0.14), value: leveler.isLevel)
+    }
+
+    // MARK: - Chế độ cân chân trời 360° (Portrait 0°, Landscape ±90°, Upside-down 180°)
+    private var horizonBarLevel: some View {
+        let deviation = leveler.cardinalDeviationDegrees
+        let cardinalRotation = -leveler.nearestCardinalDegrees
+        let barHeight: CGFloat = leveler.isLevel ? 2.2 : 1.5
+
+        return ZStack {
+            // Hai vạch chuẩn cố định trái/phải gắn theo trục ngang/dọc gần nhất (luôn nhìn thấy rõ để căn thẳng)
+            HStack(spacing: 86) {
+                Capsule()
+                    .fill(activeColor.opacity(leveler.isLevel ? 1.0 : 0.72))
+                    .frame(width: 16, height: barHeight)
+                    .shadow(color: Color.black.opacity(0.65), radius: 2, y: 0.5)
+
+                Capsule()
+                    .fill(activeColor.opacity(leveler.isLevel ? 1.0 : 0.72))
+                    .frame(width: 16, height: barHeight)
+                    .shadow(color: Color.black.opacity(0.65), radius: 2, y: 0.5)
+            }
+            .rotationEffect(.degrees(cardinalRotation))
+
+            // Thanh cân bằng động xoay thực theo trọng lực (liền mạch khi đạt chuẩn 0°)
+            Group {
+                if leveler.isLevel {
+                    Capsule()
+                        .fill(AlignTheme.studioAccent)
+                        .frame(width: 82, height: 2.2)
+                        .shadow(color: Color.black.opacity(0.70), radius: 2.5, y: 0.5)
+                } else {
+                    HStack(spacing: 10) {
+                        Capsule()
+                            .fill(AlignTheme.studioInkPrimary.opacity(0.92))
+                            .frame(width: 34, height: 1.5)
+                            .shadow(color: Color.black.opacity(0.70), radius: 2, y: 0.5)
+
+                        Circle()
+                            .stroke(AlignTheme.studioInkPrimary.opacity(0.85), lineWidth: 1.1)
+                            .frame(width: 5, height: 5)
+                            .shadow(color: Color.black.opacity(0.70), radius: 1.5)
+
+                        Capsule()
+                            .fill(AlignTheme.studioInkPrimary.opacity(0.92))
+                            .frame(width: 34, height: 1.5)
+                            .shadow(color: Color.black.opacity(0.70), radius: 2, y: 0.5)
+                    }
+                }
+            }
+            .rotationEffect(.degrees(cardinalRotation - deviation))
+
+            // Huy hiệu số đo góc nghiêng nhỏ gọn giúp nhận biết trực quan ngay khi xoay máy
+            Text(angleLabel)
+                .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                .foregroundColor(leveler.isLevel ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.88))
+                .padding(.horizontal, 6.5)
+                .padding(.vertical, 2.2)
+                .background(
+                    Capsule()
+                        .fill(Color.black.opacity(0.46))
+                        .overlay(
+                            Capsule()
+                                .stroke(leveler.isLevel ? AlignTheme.studioAccentBorder : Color.white.opacity(0.14), lineWidth: 0.6)
+                        )
+                )
+                .offset(y: 22)
+        }
+    }
+
+    // MARK: - Chế độ cân phẳng 2 trục chụp từ trên xuống (Flatlay / Đồ ăn / Tài liệu / Bầu trời)
+    private var overheadBubbleLevel: some View {
+        let maxShift: CGFloat = 28.0
+        let dx = CGFloat(leveler.overheadOffsetX) * maxShift
+        let dy = CGFloat(leveler.overheadOffsetY) * maxShift
+
+        return ZStack {
+            // Vòng định vị tâm phẳng
+            Circle()
+                .stroke(
+                    leveler.isLevel ? AlignTheme.studioAccent.opacity(0.85) : Color.white.opacity(0.28),
+                    lineWidth: leveler.isLevel ? 1.5 : 1.0
+                )
+                .frame(width: 44, height: 44)
+                .shadow(color: Color.black.opacity(0.55), radius: 2)
+
+            // Tâm chữ thập cố định
+            crosshairMark(color: leveler.isLevel ? AlignTheme.studioAccent : Color.white.opacity(0.60), size: 18, thickness: 1.4)
+
+            // Tâm chữ thập di động theo độ nghiêng 2 trục X/Y (khớp khít vào tâm khi máy phẳng tuyệt đối)
+            if !leveler.isLevel {
+                crosshairMark(color: AlignTheme.studioAccent, size: 16, thickness: 1.8)
+                    .offset(x: dx, y: dy)
+            }
+        }
+    }
+
+    private func crosshairMark(color: Color, size: CGFloat, thickness: CGFloat) -> some View {
+        ZStack {
+            Capsule()
+                .fill(color)
+                .frame(width: size, height: thickness)
+            Capsule()
+                .fill(color)
+                .frame(width: thickness, height: size)
+        }
+        .shadow(color: Color.black.opacity(0.70), radius: 2, y: 0.5)
     }
 }
 
