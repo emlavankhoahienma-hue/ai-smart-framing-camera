@@ -470,6 +470,9 @@ enum CameraFramingDirector {
             $0.det.confidence >= ($0.hasFace ? 0.26 : 0.36) &&
             $0.det.area >= 0.012 && !$0.isCornerHeadless && !$0.isEdgeSliver
         }
+        let validAnimals = fgCandidates.filter {
+            $0.det.domain == .animal && !$0.isEdgeSliver && $0.det.confidence >= 0.20
+        }
         let namedNonPerson = fgCandidates.filter {
             $0.det.domain != .human && $0.det.domain != .face &&
             $0.det.domain != .architecture && $0.det.domain != .foregroundMask &&
@@ -576,7 +579,8 @@ enum CameraFramingDirector {
                 heroConf = p0.det.confidence
                 protectedBoxes = p0.det.faceBounds.isEmpty ? [heroBox] : (p0.det.faceBounds + [heroBox])
             }
-        } else if let a0 = fgCandidates.first, a0.det.domain == .animal && !a0.isEdgeSliver && a0.det.confidence >= 0.20 {
+        } else if let a0 = validAnimals.first,
+                  topNamed.map({ $0.det.domain == .animal || a0.heroScore >= $0.heroScore * 0.75 }) ?? true {
             role = .animal
             heroBox = a0.det.boundingBox
             heroAnchor = a0.det.anchor ?? CGPoint(x: heroBox.midX, y: heroBox.minY + 0.30 * heroBox.height)
@@ -680,7 +684,7 @@ enum CameraFramingDirector {
                   obj0.det.domain != .furniture && obj0.det.domain != .pottedPlant &&
                   (obj0.dAim <= 0.34 || obj0.det.domain == .pureFlower ||
                    (siglipScene != "flower" && siglipScene != "foliage" && siglipScene != "sky_clouds" && siglipScene != "sunset" && siglipScene != "landscape")) {
-            role = obj0.det.domain == .vehicle ? .vehicle : (obj0.det.domain == .pureFlower ? .flower : .object)
+            role = obj0.det.domain == .animal ? .animal : (obj0.det.domain == .vehicle ? .vehicle : (obj0.det.domain == .pureFlower ? .flower : .object))
             if !companionBoxes.isEmpty && role == .object && (siglipScene == "object" || siglipScene == "indoor_room" || siglipScene == "food") {
                 let allB = [obj0.det.boundingBox] + companionBoxes
                 heroBox = unionRects(allB)
