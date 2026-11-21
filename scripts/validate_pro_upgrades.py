@@ -357,6 +357,50 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         self.assertIn("/* HorizonLevelerService.swift */", pbx)
         self.assertIn("/* HorizonLevelerService.swift in Sources */", pbx)
 
+    def test_14_local_ai_speed_oom_and_freeform_director(self):
+        charm = source("Services/CharmPhotographicModel.swift")
+        self.assertIn("configuration.computeUnits = .cpuAndGPU", charm)
+        self.assertIn("static func cachedOrLoad(url: URL, positionURL: URL)", charm)
+        self.assertIn("SharedPositionCache", charm)
+
+        samp = source("Services/PhotographicCompositionModel.swift")
+        self.assertIn("static func cachedOrLoad(url: URL)", samp)
+        self.assertIn("configuration.computeUnits = .all", samp)
+
+        evidence = source("Services/CompositionImageEvidence.swift")
+        self.assertIn("private var activeRequests: [ObjectIdentifier: VNRequest] = [:]", evidence)
+        self.assertIn("var isSoftDeadlineReached: Bool", evidence)
+        self.assertIn("func releaseDepthModel()", evidence)
+
+        ow = source("Services/OpenWorldSubjectDetector.swift")
+        self.assertIn("group.wait(timeout:", ow)
+        self.assertIn("renderLock.withLock", ow)
+
+        search = source("Services/CompositionAestheticSearch.swift")
+        self.assertIn("var allGAICProposals: [CompositionProposal] = []", search)
+        self.assertIn("PhotographicCompositionModel.cachedOrLoad(url: modelURL)", search)
+        self.assertIn("CharmPhotographicModel.cachedOrLoad(url: aestheticModelURL, positionURL: positionURL)", search)
+
+        neural = source("Services/NeuralSubjectIntelligenceEngine.swift")
+        self.assertIn("func releaseModelNow()", neural)
+        self.assertIn("func scoreProposalsFromSpatialProfile(", neural)
+        self.assertIn("func analyzeCompositionAsync(", neural)
+        self.assertIn("gaicProposals: result.allGAICProposals", neural)
+
+        director = source("Services/CameraFramingDirector.swift")
+        self.assertIn("enum DirectorCompositionStyle", director)
+        self.assertIn("case centerFocus", director)
+        self.assertIn("case negativeSpace", director)
+        self.assertIn("case diagonalDynamic", director)
+        self.assertIn("case frameInFrame", director)
+        self.assertIn("bystanderOverridden", director)
+
+        vm = source("ViewModels/CameraViewModel.swift")
+        self.assertIn("private static func clonePixelBuffer(", vm)
+        self.assertIn("CompositionAnalysisCancellation(softTimeoutSeconds:", vm)
+        self.assertIn("NeuralSubjectIntelligenceEngine.shared.analyzeCompositionAsync(", vm)
+        self.assertIn("if captureMode.isVideo { selectCaptureMode(.photo) }", vm)
+
 
 if __name__ == "__main__":
     unittest.main()

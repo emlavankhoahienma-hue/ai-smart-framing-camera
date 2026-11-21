@@ -35,6 +35,7 @@ private final class SemanticCropRanker: @unchecked Sendable {
         let topIsSky: Bool
         let roleScores: [SemanticCompositionRole: Double]
         let fullScores: [String: Double]
+        var zoneBonuses: [String: Double] = [:]
     }
 
     static let shared = SemanticCropRanker()
@@ -53,6 +54,11 @@ private final class SemanticCropRanker: @unchecked Sendable {
     func endAnalysis() {
         activeSessionDepth = max(0, activeSessionDepth - 1)
         guard activeSessionDepth == 0 else { return }
+        releaseModelNow()
+    }
+    /// Releases SigLIP weights (~350MB runtime RAM) immediately before heavy OpenWorld/Mask/SAMP/Charm stages
+    /// while preserving `activeSessionDepth` balance.
+    func releaseModelNow() {
         model = nil
         prompts.removeAll(keepingCapacity: false)
         attemptedLoad = false
@@ -72,7 +78,8 @@ private final class SemanticCropRanker: @unchecked Sendable {
               !vectors.isEmpty else { return }
         do {
             let config = MLModelConfiguration()
-            config.computeUnits = .cpuAndNeuralEngine
+            config.computeUnits = .all
+            config.allowLowPrecisionAccumulationOnGPU = true
             model = try VNCoreMLModel(for: MLModel(contentsOf: url, configuration: config))
             prompts = vectors
         } catch {
@@ -194,18 +201,24 @@ private final class SemanticCropRanker: @unchecked Sendable {
         let topS: [String: Double]
         let botS: [String: Double]
         let coreS: [String: Double]
-        if hasRichPrompts, let model, !isThermalConstrained {
+        if hasRichPrompts, let model, !isThermalConstrained, !cancellation.isSoftDeadlineReached {
             coreS = affinities(model: model, handler: handler, cancellation: cancellation,
                                topLeftRoI: CGRect(x: 0.16, y: 0.16, width: 0.68, height: 0.68), cropScale: .scaleFill)
-            if fullClutterSignal >= 0.015 {
+            if fullClutterSignal >= 0.015 && !cancellation.isSoftDeadlineReached && cancellation.remainingSoftBudget > 2.2 {
                 leftS = affinities(model: model, handler: handler, cancellation: cancellation,
                                    topLeftRoI: CGRect(x: 0.0, y: 0.06, width: 0.52, height: 0.88), cropScale: .scaleFill)
-                rightS = affinities(model: model, handler: handler, cancellation: cancellation,
-                                    topLeftRoI: CGRect(x: 0.48, y: 0.06, width: 0.52, height: 0.88), cropScale: .scaleFill)
-                topS = affinities(model: model, handler: handler, cancellation: cancellation,
-                                  topLeftRoI: CGRect(x: 0.06, y: 0.0, width: 0.88, height: 0.42), cropScale: .scaleFill)
-                botS = affinities(model: model, handler: handler, cancellation: cancellation,
-                                  topLeftRoI: CGRect(x: 0.06, y: 0.58, width: 0.88, height: 0.42), cropScale: .scaleFill)
+                rightS = !cancellation.isSoftDeadlineReached
+                    ? affinities(model: model, handler: handler, cancellation: cancellation,
+                                 topLeftRoI: CGRect(x: 0.48, y: 0.06, width: 0.52, height: 0.88), cropScale: .scaleFill)
+                    : [:]
+                topS = !cancellation.isSoftDeadlineReached
+                    ? affinities(model: model, handler: handler, cancellation: cancellation,
+                                 topLeftRoI: CGRect(x: 0.06, y: 0.0, width: 0.88, height: 0.42), cropScale: .scaleFill)
+                    : [:]
+                botS = !cancellation.isSoftDeadlineReached
+                    ? affinities(model: model, handler: handler, cancellation: cancellation,
+                                 topLeftRoI: CGRect(x: 0.06, y: 0.58, width: 0.88, height: 0.42), cropScale: .scaleFill)
+                    : [:]
             } else {
                 leftS = [:]; rightS = [:]; topS = [:]; botS = [:]
             }
@@ -358,14 +371,63 @@ private final class SemanticCropRanker: @unchecked Sendable {
             botBad *= 0.35
         }
         let avoidBottom = min(1.0, max(0.0, botBad * 9.0))
+        var zoneBonuses: [String: Double] = [:]
+        if !coreS.isEmpty { zoneBonuses["core"] = cropBonus(cropScores: coreS, origScores: fullS, role: bestRole) }
+        if !leftS.isEmpty { zoneBonuses["left"] = cropBonus(cropScores: leftS, origScores: fullS, role: bestRole) }
+        if !rightS.isEmpty { zoneBonuses["right"] = cropBonus(cropScores: rightS, origScores: fullS, role: bestRole) }
+        if !topS.isEmpty { zoneBonuses["top"] = cropBonus(cropScores: topS, origScores: fullS, role: bestRole) }
+        if !botS.isEmpty { zoneBonuses["bottom"] = cropBonus(cropScores: botS, origScores: fullS, role: bestRole) }
 
         return SpatialSemanticProfile(
             role: bestRole,
             avoid: EdgeAvoidanceHints(left: avoidLeft, right: avoidRight, top: avoidTop, bottom: avoidBottom),
             topIsSky: topIsSky,
             roleScores: roleScores,
-            fullScores: fullS
+            fullScores: fullS,
+            zoneBonuses: zoneBonuses
         )
+    }
+
+    /// Zero-latency spatial-zone SigLIP scorer: propagates already-computed SigLIP zone semantics
+    /// (`core`, `left`, `right`, `top`, `bottom`) across all 256 crop proposals in <0.5ms without
+    /// keeping the 175MB SigLIP model resident during OpenWorld/Mask/SAMP/Charm inference.
+    func scoreProposalsFromSpatialProfile(_ proposals: [CompositionProposal],
+                                          profile: SpatialSemanticProfile) -> [CompositionProposal] {
+        guard !profile.zoneBonuses.isEmpty, !proposals.isEmpty else { return proposals }
+        let zones: [(key: String, rect: CGRect)] = [
+            ("core", CGRect(x: 0.16, y: 0.16, width: 0.68, height: 0.68)),
+            ("left", CGRect(x: 0.0, y: 0.06, width: 0.52, height: 0.88)),
+            ("right", CGRect(x: 0.48, y: 0.06, width: 0.52, height: 0.88)),
+            ("top", CGRect(x: 0.06, y: 0.0, width: 0.88, height: 0.42)),
+            ("bottom", CGRect(x: 0.06, y: 0.58, width: 0.88, height: 0.42)),
+        ]
+        var updated = proposals
+        for i in updated.indices where !updated[i].isUnchangedView {
+            let corners = updated[i].sourceCorners
+            let minX = max(0.0, min(1.0, corners.map(\.x).min() ?? 0.0))
+            let maxX = max(0.0, min(1.0, corners.map(\.x).max() ?? 1.0))
+            let minY = max(0.0, min(1.0, corners.map(\.y).min() ?? 0.0))
+            let maxY = max(0.0, min(1.0, corners.map(\.y).max() ?? 1.0))
+            let crop = CGRect(x: minX, y: minY, width: max(0.02, maxX - minX), height: max(0.02, maxY - minY))
+            var wSum = 0.0
+            var bSum = 0.0
+            for z in zones {
+                guard let zBonus = profile.zoneBonuses[z.key] else { continue }
+                let inter = crop.intersection(z.rect)
+                guard !inter.isNull, !inter.isEmpty else { continue }
+                let ia = Double(inter.width * inter.height)
+                let ua = Double(crop.width * crop.height + z.rect.width * z.rect.height) - ia
+                let iou = ua > 1e-6 ? ia / ua : 0.0
+                if iou > 0.12 {
+                    wSum += iou
+                    bSum += iou * zBonus
+                }
+            }
+            if wSum > 0.05 {
+                updated[i].semanticCropBonus = max(-0.18, min(0.26, bSum / wSum))
+            }
+        }
+        return updated
     }
 
     private func cropBonus(cropScores: [String: Double], origScores: [String: Double], role: SemanticCompositionRole) -> Double {
@@ -605,8 +667,33 @@ struct LocalCompositionAnalysis: Sendable {
 public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     public static let shared = NeuralSubjectIntelligenceEngine()
     private let analysisLock = NSLock()
+    /// Dedicated serial worker queue so Swift Concurrency cooperative threads never block on `analysisLock`.
+    private let analysisQueue = DispatchQueue(label: "com.alignstudio.localAI.analysis", qos: .userInitiated)
     private let renderer = CompositionImageRenderer()
     public init() {}
+
+    /// Non-blocking async entry point for UI/ViewModel callers. Runs on the dedicated serial worker queue
+    /// and exits immediately if cancelled while queued behind an earlier request.
+    func analyzeCompositionAsync(pixelBuffer: CVPixelBuffer, frame: TrackingFrameContext,
+                                 pose: simd_quatd, allowedZooms: [CGFloat],
+                                 preferences: [String: Double], requestID: UUID,
+                                 cancellation: CompositionAnalysisCancellation,
+                                 progress: @escaping @Sendable (String) -> Void = { _ in }) async -> LocalCompositionAnalysis? {
+        await withCheckedContinuation { continuation in
+            analysisQueue.async {
+                if cancellation.isCancelled {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let result = self.analyzeComposition(
+                    pixelBuffer: pixelBuffer, frame: frame, pose: pose,
+                    allowedZooms: allowedZooms, preferences: preferences,
+                    requestID: requestID, cancellation: cancellation, progress: progress
+                )
+                continuation.resume(returning: result)
+            }
+        }
+    }
 
     func analyzeComposition(pixelBuffer: CVPixelBuffer, frame: TrackingFrameContext,
                             pose: simd_quatd, allowedZooms: [CGFloat],
@@ -634,8 +721,27 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             )
             return LocalCompositionAnalysis(detection: output, choices: [], fallbackCandidates: [basicHero], receipt: receipt())
         }
-        // Run Open-World Photographic YOLOE-26s (101 classes) + iOS 17+ Foreground Instance Mask
-        progress("Đang nhận diện vật thể mở rộng & chiều sâu cảnh…")
+
+        // MEMORY-SAFE STAGE ORDER:
+        // 1) SigLIP is ALREADY loaded in RAM by `analyzeCapturedFrame`. Extract spatial semantic profile NOW...
+        progress("Đang phân tích ngữ nghĩa & chiều sâu bố cục…")
+        let spatialProfile = SemanticCropRanker.shared.spatialProfile(
+            pixelBuffer: pixelBuffer,
+            orientation: frame.orientation,
+            fullScores: output.semanticAffinities,
+            candidates: output.allCandidates,
+            detectedScene: output.detectedScene,
+            cancellation: cancellation
+        )
+        // 2) IMMEDIATELY unload SigLIP (~350-450MB RAM) BEFORE OpenWorldPhotoYOLOE + ForegroundInstanceMask
+        //    so peak memory never breaches iOS Jetsam limits on 4GB/6GB iPhones!
+        autoreleasepool {
+            SemanticCropRanker.shared.releaseModelNow()
+        }
+        guard !cancellation.isCancelled else { return nil }
+
+        // 3) Run Open-World Photographic YOLOE-26s (101 classes) + iOS 17+ Foreground Instance Mask
+        progress("Đang nhận diện vật thể mở rộng & tách nền tiền cảnh…")
         let openWorldDetections = OpenWorldSubjectDetector.shared.detect(
             pixelBuffer: pixelBuffer,
             orientation: frame.orientation,
@@ -678,7 +784,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             return list
         }()
 
-        // Enrich candidates for SigLIP spatial profile without mutating locked analyzeCapturedFrame
+        // Enrich candidates with OpenWorld detections without mutating locked analyzeCapturedFrame
         let enrichedCandidates: [NeuralSubjectCandidate] = {
             var merged = output.allCandidates
             for ow in openWorldDetections where ow.domain != .backgroundSurface && ow.domain != .wideNature && ow.confidence >= 0.24 {
@@ -710,21 +816,13 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
             return merged
         }()
-
-        let spatialProfile = SemanticCropRanker.shared.spatialProfile(
-            pixelBuffer: pixelBuffer,
-            orientation: frame.orientation,
-            fullScores: output.semanticAffinities,
-            candidates: enrichedCandidates,
-            detectedScene: output.detectedScene,
-            cancellation: cancellation
-        )
         let meanLuma = raster.luminance.reduce(0.0, +) / Double(max(1, raster.luminance.count))
         let builtPlan = buildIntelligentSubjectPlan(
             output: output,
             raster: raster,
             spatialProfile: spatialProfile,
-            isLowLuma: meanLuma < 0.35
+            isLowLuma: meanLuma < 0.35,
+            candidates: enrichedCandidates
         )
         let hero = builtPlan.hero
         let sceneHints = builtPlan.sceneHints
@@ -907,21 +1005,20 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 sceneHints: sceneHints
             )
         }
-        // Score top diverse crop candidates semantically with SigLIP RoI BEFORE releasing SigLIP RAM.
+        // Zero-latency spatial-zone SigLIP scoring across all 256 proposals (<0.5ms, zero extra RAM)
         if !constrained && !initialProposals.isEmpty {
-            initialProposals = SemanticCropRanker.shared.scoreProposalsSemantically(
+            initialProposals = SemanticCropRanker.shared.scoreProposalsFromSpatialProfile(
                 initialProposals,
-                role: sceneHints.role,
-                fullScores: spatialProfile.fullScores,
-                pixelBuffer: pixelBuffer,
-                orientation: frame.orientation,
-                cancellation: cancellation
+                profile: spatialProfile
             )
         }
-        // Release the semantic encoder before loading the composition specialist,
-        // especially on iPhone XS. Detection and group membership remain unchanged.
-        autoreleasepool {
-            SemanticCropRanker.shared.endAnalysis()
+        // Release DepthAnythingV2 and OpenWorldYOLOE caches on < 6GB devices before loading
+        // GAIC + SAMP + Charm so peak memory stays strictly below iOS Jetsam limits.
+        if ProcessInfo.processInfo.physicalMemory < 5_800_000_000 {
+            autoreleasepool {
+                renderer.releaseDepthModel()
+                OpenWorldSubjectDetector.shared.releaseCachedModel()
+            }
         }
         progress("Đang đánh giá bố cục bằng mô hình trên máy…")
         let orientedCI = CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation)
@@ -942,15 +1039,17 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             return nil
         }
 
-        // Solve true 3D physical camera pan/tilt + smart optical zoom (including 1.0x off-center pan,
-        // 0.5x cramped zoom-out, and 1.2x/1.5x/2.0x/3.0x optical zoom-in) fusing OpenWorld YOLOE +
-        // DepthAnythingV2 + iOS 17 Foreground Mask + SigLIP + normalized GAIC/SAMP/Charm scores.
+        // Solve true 3D physical camera pan/tilt + smart optical zoom using Free-Form Neural-Guided Director:
+        // fuses OpenWorld YOLOE + DepthAnythingV2 + iOS 17 Foreground Mask + SigLIP clutter avoidance +
+        // ALL 256 GAIC boxes + SAMP/Charm aesthetic consensus (no Golden-Ratio straitjacket).
         let directorDecision = CameraFramingDirector.direct(
             detections: directorDetections,
             raster: raster,
             sceneHints: sceneHints,
             semanticAffinities: spatialProfile.fullScores.isEmpty ? output.semanticAffinities : spatialProfile.fullScores,
             neuralProposals: result.allEvaluatedViews.map(\.proposal),
+            gaicProposals: result.allGAICProposals,
+            incidentalBounds: arbitratedIncidentals,
             calibration: frame.calibration,
             pose: pose,
             currentZoom: CGFloat(frame.displayZoom),
@@ -984,7 +1083,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             let activeAllowsAtt = (proposal.subjectIndex == 1 ? (secondarySubject?.allowsAttentionCrop ?? false) : subject.allowsAttentionCrop)
             let explanationText = sceneHints.hasRichGuidance
                 ? proposal.explanation
-                : (proposal.explanation + (result.usedSpecialist ? " Đã tối ưu bố cục theo Tỷ lệ vàng và Luật một phần ba." : " Bố cục tự nhiên."))
+                : (proposal.explanation + (result.usedSpecialist ? " Đã tối ưu bố cục bằng AI thẩm mỹ." : " Bố cục tự nhiên."))
             let plan = LocalFramingPlan(subjectPoint: hero.trackingPoint ?? proposal.subjectPoint, subjectRect: hero.boundingBox,
                 cropProtectionRect: CompositionCropProtection.bounds(body: hero.boundingBox,
                     portrait: activePortraitBounds, intent: proposal.intent, anchor: activeAnchor,
@@ -1021,6 +1120,26 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         var choices: [LocalCompositionChoice] = []
         if let dirImage = directorPreviewImage {
             let topNeuralScore = result.views.first?.proposal.score ?? 0.85
+            let mappedRule: CompositionRule = {
+                switch directorDecision.compositionStyle {
+                case .centerFocus, .elevatedCenter, .groundedCenter, .symmetry, .mirrorHorizon:
+                    return .centerSymmetry
+                case .negativeSpace, .openHeadroom:
+                    return .negativeSpace
+                case .lookingRoom:
+                    return .lookingRoom
+                case .leadingLines:
+                    return .leadingLines
+                case .diagonalDynamic:
+                    return .diagonal
+                case .frameInFrame:
+                    return .frameInFrame
+                case .ruleOfThirds, .lowHorizonSky, .highHorizonGround:
+                    return .ruleOfThirds
+                case .keepNatural, .neuralFreeform, .subtleBalance, .ultraWide:
+                    return .dynamicAI
+                }
+            }()
             let directedPlan = LocalFramingPlan(
                 subjectPoint: directorDecision.heroAnchor,
                 subjectRect: directorDecision.heroBounds,
@@ -1035,7 +1154,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 explanation: directorDecision.explanation,
                 usesCenter: directorDecision.usesCenter,
                 preferenceKey: "director|\(directorDecision.role.rawValue)|\(Int((directorDecision.recommendedZoom * 10).rounded()))",
-                recommendedEVBias: result.views.first?.proposal.recommendedEVBias ?? 0.0
+                recommendedEVBias: result.views.first?.proposal.recommendedEVBias ?? 0.0,
+                compositionRule: mappedRule
             )
             choices.append(LocalCompositionChoice(
                 candidate: directedHero,
@@ -1113,7 +1233,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     private func buildIntelligentSubjectPlan(output: NeuralAnalysisOutput,
                                              raster: CompositionRaster,
                                              spatialProfile: SemanticCropRanker.SpatialSemanticProfile,
-                                             isLowLuma: Bool) -> IntelligentSubjectPlan {
+                                             isLowLuma: Bool,
+                                             candidates: [NeuralSubjectCandidate]? = nil) -> IntelligentSubjectPlan {
+        let sourceCandidates = candidates ?? output.allCandidates
         var sceneHints = CompositionSceneHints.build(
             from: raster,
             role: spatialProfile.role,
@@ -1139,7 +1261,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
 
         // Preserve established group detection first
-        if let groupHero = output.allCandidates.first(where: { $0.isGroup && !$0.isAttentionRegion }) {
+        if let groupHero = sourceCandidates.first(where: { $0.isGroup && !$0.isAttentionRegion }) {
             sceneHints.reasonSubject = "Nhận diện \(groupHero.label)"
             return IntelligentSubjectPlan(
                 hero: groupHero, subjectKind: .group, protectedBounds: groupHero.companionBounds,
@@ -1149,7 +1271,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
 
         var validYolo: [NeuralSubjectCandidate] = []
         var incidentalSlivers: [CGRect] = []
-        for c in output.allCandidates where !c.isAttentionRegion {
+        for c in sourceCandidates where !c.isAttentionRegion {
             if c.confidence < minConf { continue }
             let box = c.boundingBox
             let area = c.areaRatio

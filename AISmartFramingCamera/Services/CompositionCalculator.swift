@@ -20,6 +20,7 @@ struct LocalFramingPlan: Sendable {
     let usesCenter: Bool
     let preferenceKey: String
     var recommendedEVBias: CGFloat = 0.0
+    var compositionRule: CompositionRule? = nil
 
     init(
         subjectPoint: CGPoint,
@@ -35,7 +36,8 @@ struct LocalFramingPlan: Sendable {
         explanation: String,
         usesCenter: Bool,
         preferenceKey: String,
-        recommendedEVBias: CGFloat = 0.0
+        recommendedEVBias: CGFloat = 0.0,
+        compositionRule: CompositionRule? = nil
     ) {
         self.subjectPoint = subjectPoint
         self.subjectRect = subjectRect
@@ -51,6 +53,7 @@ struct LocalFramingPlan: Sendable {
         self.usesCenter = usesCenter
         self.preferenceKey = preferenceKey
         self.recommendedEVBias = recommendedEVBias
+        self.compositionRule = compositionRule
     }
 }
 

@@ -2,13 +2,65 @@ import Foundation
 import CoreGraphics
 import CoreML
 import Accelerate
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// SAMP-Net (BMVC 2021), author checkpoint trained on expert CADB composition ratings.
-/// One instance belongs to one still-image analysis; no inference runs on the camera queue.
+/// One instance belongs to serialized still-image analysis; no inference runs on the camera queue.
 final class PhotographicCompositionModel {
     struct Assessment: Sendable {
         let distribution: [Double]
         var mean: Double { zip(distribution, 1...5).reduce(0) { $0 + $1.0 * Double($1.1) } }
+    }
+
+    private final class ModelCache: @unchecked Sendable {
+        static let shared = ModelCache()
+        private let lock = NSLock()
+        private var cachedURL: URL?
+        private var cachedInstance: PhotographicCompositionModel?
+
+        private init() {
+            #if canImport(UIKit)
+            _ = NotificationCenter.default.addObserver(
+                forName: UIApplication.didReceiveMemoryWarningNotification,
+                object: nil,
+                queue: nil
+            ) { [weak self] _ in
+                self?.clear()
+            }
+            #endif
+        }
+
+        func clear() {
+            lock.withLock {
+                cachedURL = nil
+                cachedInstance = nil
+            }
+        }
+
+        func getOrLoad(url: URL) -> PhotographicCompositionModel? {
+            let keepCached = ProcessInfo.processInfo.physicalMemory >= 5_800_000_000
+            return lock.withLock {
+                if keepCached, cachedURL == url, let existing = cachedInstance {
+                    return existing
+                }
+                guard let loaded = try? PhotographicCompositionModel(url: url) else { return nil }
+                if keepCached {
+                    cachedURL = url
+                    cachedInstance = loaded
+                }
+                return loaded
+            }
+        }
+    }
+
+    static func cachedOrLoad(url: URL) -> PhotographicCompositionModel? {
+        ModelCache.shared.getOrLoad(url: url)
+    }
+
+    static func clearCache() {
+        ModelCache.shared.clear()
     }
 
     private let model: MLModel
@@ -18,7 +70,8 @@ final class PhotographicCompositionModel {
 
     init(url: URL) throws {
         let configuration = MLModelConfiguration()
-        configuration.computeUnits = .cpuAndNeuralEngine
+        configuration.computeUnits = .all
+        configuration.allowLowPrecisionAccumulationOnGPU = true
         model = try MLModel(contentsOf: url, configuration: configuration)
         guard model.modelDescription.inputDescriptionsByName["image"]?.multiArrayConstraint?.shape.map(\.intValue) == [1, 3, 224, 224] else {
             throw CocoaError(.coderInvalidValue)
@@ -39,18 +92,36 @@ final class PhotographicCompositionModel {
               let map = saliency.map(image: image),
               let rgb = CompositionPhotoPixels.resizedRGB(image: image, side: 224) else { return nil }
         let values = input.dataPointer.assumingMemoryBound(to: Float.self)
-        if let sync = synchronizedSaliencyCrop, sync.count == map.count {
-            for index in map.indices {
-                let fused = 0.72 * map[index] + 0.28 * min(1.0, max(0.0, sync[index]))
-                values[index] = Float(min(1.0, max(0.0, fused)))
+        let mapCount = map.count
+        if let sync = synchronizedSaliencyCrop, sync.count == mapCount {
+            map.withUnsafeBufferPointer { mBuf in
+                sync.withUnsafeBufferPointer { sBuf in
+                    guard let mPtr = mBuf.baseAddress, let sPtr = sBuf.baseAddress else { return }
+                    for index in 0..<mapCount {
+                        let sv = min(1.0, max(0.0, sPtr[index]))
+                        let fused = 0.72 * mPtr[index] + 0.28 * sv
+                        values[index] = Float(min(1.0, max(0.0, fused)))
+                    }
+                }
             }
         } else {
-            for index in map.indices { values[index] = Float(map[index]) }
+            map.withUnsafeBufferPointer { mBuf in
+                guard let mPtr = mBuf.baseAddress else { return }
+                for index in 0..<mapCount { values[index] = Float(mPtr[index]) }
+            }
         }
         let pixels = imageInput.dataPointer.assumingMemoryBound(to: Float.self)
-        for index in 0..<(224 * 224) { for channel in 0..<3 {
-            pixels[channel * 224 * 224 + index] = Float(rgb[index * 3 + channel]) / 255
-        } }
+        let plane = 224 * 224
+        let inv255: Float = 1.0 / 255.0
+        rgb.withUnsafeBufferPointer { rgbBuf in
+            guard let src = rgbBuf.baseAddress else { return }
+            for index in 0..<plane {
+                let s = index * 3
+                pixels[index] = Float(src[s]) * inv255
+                pixels[plane + index] = Float(src[s + 1]) * inv255
+                pixels[2 * plane + index] = Float(src[s + 2]) * inv255
+            }
+        }
         guard let provider = try? MLDictionaryFeatureProvider(dictionary: [
                 "image": MLFeatureValue(multiArray: imageInput), "saliency": MLFeatureValue(multiArray: input)]),
               !cancellation.isCancelled,
@@ -89,6 +160,7 @@ enum CompositionPhotoPixels {
     static func resizedRGB(image: CGImage, width: Int, height: Int) -> [UInt8]? {
         guard width > 0, height > 0 else { return nil }
         guard let bytes = rgba(image: image) else { return nil }
+        let srcW = image.width, srcH = image.height
         func weights(source: Int, target: Int) -> [[(Int, Int)]] {
             let scale = Double(source) / Double(target), filter = max(1, scale)
             return (0..<target).map { destination in
@@ -100,21 +172,56 @@ enum CompositionPhotoPixels {
                 return coefficients.enumerated().map { (start + $0.offset, Int(($0.element / total * 4_194_304 + 0.5).rounded(.down))) }
             }
         }
-        let horizontalWeights = weights(source: image.width, target: width), verticalWeights = weights(source: image.height, target: height)
-        var horizontal = [UInt8](repeating: 0, count: width * image.height * 3)
-        for y in 0..<image.height { for x in 0..<width { for channel in 0..<3 {
-            let total = horizontalWeights[x].reduce(2_097_152) {
-                $0 + Int(bytes[(y * image.width + $1.0) * 4 + channel]) * $1.1
-            }
-            horizontal[(y * width + x) * 3 + channel] = UInt8(clamping: total >> 22)
-        } } }
+        let horizontalWeights = weights(source: srcW, target: width)
+        let verticalWeights = weights(source: srcH, target: height)
+        var horizontal = [UInt8](repeating: 0, count: width * srcH * 3)
         var output = [UInt8](repeating: 0, count: width * height * 3)
-        for y in 0..<height { for x in 0..<width { for channel in 0..<3 {
-            let total = verticalWeights[y].reduce(2_097_152) {
-                $0 + Int(horizontal[($1.0 * width + x) * 3 + channel]) * $1.1
+
+        bytes.withUnsafeBufferPointer { srcBuf in
+            horizontal.withUnsafeMutableBufferPointer { hBuf in
+                guard let src = srcBuf.baseAddress, let hDst = hBuf.baseAddress else { return }
+                for y in 0..<srcH {
+                    let srcRow = y * srcW * 4
+                    let hRow = y * width * 3
+                    for x in 0..<width {
+                        let hw = horizontalWeights[x]
+                        var t0 = 2_097_152, t1 = 2_097_152, t2 = 2_097_152
+                        for (sx, w) in hw {
+                            let off = srcRow + sx * 4
+                            t0 += Int(src[off]) * w
+                            t1 += Int(src[off + 1]) * w
+                            t2 += Int(src[off + 2]) * w
+                        }
+                        let dst = hRow + x * 3
+                        hDst[dst] = UInt8(clamping: t0 >> 22)
+                        hDst[dst + 1] = UInt8(clamping: t1 >> 22)
+                        hDst[dst + 2] = UInt8(clamping: t2 >> 22)
+                    }
+                }
+                output.withUnsafeMutableBufferPointer { oBuf in
+                    guard let oDst = oBuf.baseAddress else { return }
+                    let rowStride = width * 3
+                    for y in 0..<height {
+                        let vw = verticalWeights[y]
+                        let oRow = y * rowStride
+                        for x in 0..<width {
+                            let xOff = x * 3
+                            var t0 = 2_097_152, t1 = 2_097_152, t2 = 2_097_152
+                            for (sy, w) in vw {
+                                let off = sy * rowStride + xOff
+                                t0 += Int(hDst[off]) * w
+                                t1 += Int(hDst[off + 1]) * w
+                                t2 += Int(hDst[off + 2]) * w
+                            }
+                            let dst = oRow + xOff
+                            oDst[dst] = UInt8(clamping: t0 >> 22)
+                            oDst[dst + 1] = UInt8(clamping: t1 >> 22)
+                            oDst[dst + 2] = UInt8(clamping: t2 >> 22)
+                        }
+                    }
+                }
             }
-            output[(y * width + x) * 3 + channel] = UInt8(clamping: total >> 22)
-        } } }
+        }
         return output
     }
 }
@@ -129,25 +236,40 @@ final class SpectralCompositionSaliency {
         let width = image.width, height = image.height
         guard width >= 6, height >= 6, max(width, height) <= 1024 else { return nil }
         guard let bytes = CompositionPhotoPixels.rgba(image: image) else { return nil }
-        let gray = (0..<(width * height)).map { index -> Double in
-            let offset = index * 4
-            let value = Int(bytes[offset]) * 4899 + Int(bytes[offset + 1]) * 9617 + Int(bytes[offset + 2]) * 1868
-            return Double((value + 8192) >> 14)
+        let pixelCount = width * height
+        var gray = [Double](repeating: 0.0, count: pixelCount)
+        bytes.withUnsafeBufferPointer { bBuf in
+            gray.withUnsafeMutableBufferPointer { gBuf in
+                guard let src = bBuf.baseAddress, let dst = gBuf.baseAddress else { return }
+                for index in 0..<pixelCount {
+                    let offset = index * 4
+                    let value = Int(src[offset]) * 4899 + Int(src[offset + 1]) * 9617 + Int(src[offset + 2]) * 1868
+                    dst[index] = Double((value + 8192) >> 14)
+                }
+            }
         }
         let w = width / 6, h = height / 6
         let small = areaResize(gray, width: width, height: height, toWidth: w, toHeight: h)
         let spectrum = transform(small, [Double](repeating: 0, count: small.count), width: w, height: h, inverse: false)
-        let amplitude = zip(spectrum.0, spectrum.1).map { log(hypot($0, $1) + 0.000001) }
+        let smallCount = small.count
+        var amplitude = [Double](repeating: 0, count: smallCount)
+        for i in 0..<smallCount {
+            amplitude[i] = log(hypot(spectrum.0[i], spectrum.1[i]) + 0.000001)
+        }
         let smooth = blur(amplitude, width: w, height: h, kernel: [1 / 3.0, 1 / 3.0, 1 / 3.0])
-        var real = [Double](repeating: 0, count: small.count), imaginary = real
-        for index in real.indices {
+        var real = [Double](repeating: 0, count: smallCount), imaginary = [Double](repeating: 0, count: smallCount)
+        for index in 0..<smallCount {
             let magnitude = exp(amplitude[index] - smooth[index])
             let phase = atan2(spectrum.1[index], spectrum.0[index])
             real[index] = magnitude * cos(phase)
             imaginary[index] = magnitude * sin(phase)
         }
         let spatial = transform(real, imaginary, width: w, height: h, inverse: true)
-        let power = zip(spatial.0, spatial.1).map { $0 * $0 + $1 * $1 }
+        var power = [Double](repeating: 0, count: smallCount)
+        for i in 0..<smallCount {
+            let r = spatial.0[i], im = spatial.1[i]
+            power[i] = r * r + im * im
+        }
         var kernel = (-4...4).map { exp(-Double($0 * $0) / (2 * 2.5 * 2.5)) }
         let sum = kernel.reduce(0, +)
         kernel = kernel.map { $0 / sum }
@@ -159,18 +281,24 @@ final class SpectralCompositionSaliency {
         let threshold = sorted[low] * (1 - fraction) + sorted[min(low + 1, sorted.count - 1)] * fraction
         let minimum = sorted[0]
         guard threshold.isFinite, threshold > 0 else { return [Double](repeating: 0, count: 224 * 224) }
-        let result = resized.map { max(0, (min($0, threshold) - minimum) / threshold) }
+        let invThreshold = 1.0 / threshold
+        let result = resized.map { max(0, (min($0, threshold) - minimum) * invThreshold) }
         return result.allSatisfy(\.isFinite) ? result : nil
     }
 
     private func basis(_ count: Int) -> (cosine: [Double], sine: [Double]) {
         if let stored = bases[count] { return stored }
         var cosine = [Double](repeating: 0, count: count * count), sine = cosine
-        for row in 0..<count { for column in 0..<count {
-            let angle = 2 * Double.pi * Double(row * column) / Double(count)
-            cosine[row * count + column] = cos(angle)
-            sine[row * count + column] = sin(angle)
-        } }
+        let step = 2 * Double.pi / Double(count)
+        for row in 0..<count {
+            let base = row * count
+            let rowAngle = step * Double(row)
+            for column in 0..<count {
+                let angle = rowAngle * Double(column)
+                cosine[base + column] = cos(angle)
+                sine[base + column] = sin(angle)
+            }
+        }
         // Analyses normally share one preview size. Bound the cache for tests
         // or exceptional callers that supply many different aspect ratios.
         if bases.count >= 4 { bases.removeAll(keepingCapacity: true) }
@@ -193,17 +321,28 @@ final class SpectralCompositionSaliency {
         let imaginarySine = multiply(imaginary, x.sine, rows: height, columns: width, inner: width)
         let rs = multiply(real, x.sine, rows: height, columns: width, inner: width)
         let ic = multiply(imaginary, x.cosine, rows: height, columns: width, inner: width)
-        let rowReal = zip(rc, imaginarySine).map { $0 - sign * $1 }
-        let rowImaginary = zip(rs, ic).map { sign * $0 + $1 }
+        let n = width * height
+        var rowReal = [Double](repeating: 0, count: n)
+        var rowImaginary = [Double](repeating: 0, count: n)
+        for i in 0..<n {
+            rowReal[i] = rc[i] - sign * imaginarySine[i]
+            rowImaginary[i] = sign * rs[i] + ic[i]
+        }
         let cr = multiply(y.cosine, rowReal, rows: height, columns: width, inner: height)
         let si = multiply(y.sine, rowImaginary, rows: height, columns: width, inner: height)
         let sr = multiply(y.sine, rowReal, rows: height, columns: width, inner: height)
         let ci = multiply(y.cosine, rowImaginary, rows: height, columns: width, inner: height)
-        let scale = inverse ? 1 / Double(width * height) : 1
-        return (zip(cr, si).map { ($0 - sign * $1) * scale },
-                zip(sr, ci).map { (sign * $0 + $1) * scale })
+        let scale = inverse ? 1 / Double(n) : 1
+        var outReal = [Double](repeating: 0, count: n)
+        var outImag = [Double](repeating: 0, count: n)
+        for i in 0..<n {
+            outReal[i] = (cr[i] - sign * si[i]) * scale
+            outImag[i] = (sign * sr[i] + ci[i]) * scale
+        }
+        return (outReal, outImag)
     }
 
+    @inline(__always)
     private func reflected(_ index: Int, count: Int) -> Int {
         guard count > 1 else { return 0 }
         let period = 2 * count - 2
@@ -214,16 +353,27 @@ final class SpectralCompositionSaliency {
     private func blur(_ values: [Double], width: Int, height: Int, kernel: [Double]) -> [Double] {
         var horizontal = values, result = values
         let radius = kernel.count / 2
-        for y in 0..<height { for x in 0..<width {
-            horizontal[y * width + x] = kernel.indices.reduce(0) {
-                $0 + kernel[$1] * values[y * width + reflected(x + $1 - radius, count: width)]
+        let kCount = kernel.count
+        for y in 0..<height {
+            let rowOff = y * width
+            for x in 0..<width {
+                var acc = 0.0
+                for k in 0..<kCount {
+                    acc += kernel[k] * values[rowOff + reflected(x + k - radius, count: width)]
+                }
+                horizontal[rowOff + x] = acc
             }
-        } }
-        for y in 0..<height { for x in 0..<width {
-            result[y * width + x] = kernel.indices.reduce(0) {
-                $0 + kernel[$1] * horizontal[reflected(y + $1 - radius, count: height) * width + x]
+        }
+        for y in 0..<height {
+            let rowOff = y * width
+            for x in 0..<width {
+                var acc = 0.0
+                for k in 0..<kCount {
+                    acc += kernel[k] * horizontal[reflected(y + k - radius, count: height) * width + x]
+                }
+                result[rowOff + x] = acc
             }
-        } }
+        }
         return result
     }
 
@@ -231,34 +381,56 @@ final class SpectralCompositionSaliency {
                             toWidth: Int, toHeight: Int) -> [Double] {
         var result = [Double](repeating: 0, count: toWidth * toHeight)
         let sx = Double(width) / Double(toWidth), sy = Double(height) / Double(toHeight)
-        for y in 0..<toHeight { for x in 0..<toWidth {
-            let x0 = Double(x) * sx, x1 = Double(x + 1) * sx
-            let y0 = Double(y) * sy, y1 = Double(y + 1) * sy
-            var sum = 0.0
-            for row in Int(floor(y0))..<min(height, Int(ceil(y1))) {
-                let wy = max(0, min(y1, Double(row + 1)) - max(y0, Double(row)))
-                for column in Int(floor(x0))..<min(width, Int(ceil(x1))) {
-                    let wx = max(0, min(x1, Double(column + 1)) - max(x0, Double(column)))
-                    sum += values[row * width + column] * wx * wy
+        let invArea = 1.0 / (sx * sy)
+        values.withUnsafeBufferPointer { vBuf in
+            guard let src = vBuf.baseAddress else { return }
+            for y in 0..<toHeight {
+                let y0 = Double(y) * sy, y1 = Double(y + 1) * sy
+                let rStart = Int(floor(y0)), rEnd = min(height, Int(ceil(y1)))
+                let dstRow = y * toWidth
+                for x in 0..<toWidth {
+                    let x0 = Double(x) * sx, x1 = Double(x + 1) * sx
+                    let cStart = Int(floor(x0)), cEnd = min(width, Int(ceil(x1)))
+                    var sum = 0.0
+                    for row in rStart..<rEnd {
+                        let wy = max(0, min(y1, Double(row + 1)) - max(y0, Double(row)))
+                        let srcRow = row * width
+                        var rowSum = 0.0
+                        for column in cStart..<cEnd {
+                            let wx = max(0, min(x1, Double(column + 1)) - max(x0, Double(column)))
+                            rowSum += src[srcRow + column] * wx
+                        }
+                        sum += rowSum * wy
+                    }
+                    result[dstRow + x] = (sum * invArea).rounded(.toNearestOrEven)
                 }
             }
-            result[y * toWidth + x] = (sum / (sx * sy)).rounded(.toNearestOrEven)
-        } }
+        }
         return result
     }
 
     private func linearResize(_ values: [Double], width: Int, height: Int, side: Int) -> [Double] {
         var result = [Double](repeating: 0, count: side * side)
-        for y in 0..<side { for x in 0..<side {
-            let px = (Double(x) + 0.5) * Double(width) / Double(side) - 0.5
-            let py = (Double(y) + 0.5) * Double(height) / Double(side) - 0.5
-            let bx = Int(floor(px)), by = Int(floor(py))
-            let dx = px - Double(bx), dy = py - Double(by)
-            let x0 = max(0, min(width - 1, bx)), x1 = max(0, min(width - 1, bx + 1))
-            let y0 = max(0, min(height - 1, by)), y1 = max(0, min(height - 1, by + 1))
-            result[y * side + x] = (values[y0 * width + x0] * (1 - dx) + values[y0 * width + x1] * dx) * (1 - dy) +
-                (values[y1 * width + x0] * (1 - dx) + values[y1 * width + x1] * dx) * dy
-        } }
+        let scaleX = Double(width) / Double(side)
+        let scaleY = Double(height) / Double(side)
+        values.withUnsafeBufferPointer { vBuf in
+            guard let src = vBuf.baseAddress else { return }
+            for y in 0..<side {
+                let py = (Double(y) + 0.5) * scaleY - 0.5
+                let by = Int(floor(py)), dy = py - Double(by)
+                let y0 = max(0, min(height - 1, by)), y1 = max(0, min(height - 1, by + 1))
+                let r0 = y0 * width, r1 = y1 * width
+                let dstRow = y * side
+                for x in 0..<side {
+                    let px = (Double(x) + 0.5) * scaleX - 0.5
+                    let bx = Int(floor(px)), dx = px - Double(bx)
+                    let x0 = max(0, min(width - 1, bx)), x1 = max(0, min(width - 1, bx + 1))
+                    let top = src[r0 + x0] * (1 - dx) + src[r0 + x1] * dx
+                    let bot = src[r1 + x0] * (1 - dx) + src[r1 + x1] * dx
+                    result[dstRow + x] = top * (1 - dy) + bot * dy
+                }
+            }
+        }
         return result
     }
 }

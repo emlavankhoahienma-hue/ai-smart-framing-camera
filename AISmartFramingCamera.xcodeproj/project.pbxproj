@@ -43,7 +43,6 @@
 		B20000000000000000000019 /* FeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000022 /* FeedbackView.swift */; };
 		B20000000000000000000020 /* RealtimeHistogramEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000023 /* RealtimeHistogramEngine.swift */; };
 		B20000000000000000000021 /* LiveColorHistogramHUDView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000024 /* LiveColorHistogramHUDView.swift */; };
-		B20000000000000000000022 /* PresetThumbnailProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000025 /* PresetThumbnailProvider.swift */; };
 		B20000000000000000000023 /* StreetSpatialTrackingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000026 /* StreetSpatialTrackingEngine.swift */; };
 		B20000000000000000000024 /* FocusPeakingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000027 /* FocusPeakingEngine.swift */; };
 		C20000000000000000000073 /* FocusPeakingMetalProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000073 /* FocusPeakingMetalProcessor.swift */; };
@@ -52,9 +51,7 @@
 		C20000000000000000000071 /* MasterWatermarkRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000071 /* MasterWatermarkRenderer.swift */; };
 		C20000000000000000000072 /* MasterWatermarkConfigSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000072 /* MasterWatermarkConfigSheet.swift */; };
 		B20000000000000000000025 /* ProVideoManualControlsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000028 /* ProVideoManualControlsService.swift */; };
-		B20000000000000000000026 /* ProVideoManualControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000029 /* ProVideoManualControlsView.swift */; };
 		B20000000000000000000027 /* PhotoGallerySheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000037 /* PhotoGallerySheetView.swift */; };
-		B20000000000000000000028 /* LuxuryInteractiveGoldButtonStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000038 /* LuxuryInteractiveGoldButtonStyle.swift */; };
 		B20000000000000000000045 /* UltraWideWarpEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000045 /* UltraWideWarpEngine.swift */; };
 		B20000000000000000000046 /* SeparableSuperView.metal in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000046 /* SeparableSuperView.metal */; };
 		B20000000000000000000099 /* FocusPeakingShaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000099 /* FocusPeakingShaders.metal */; };
@@ -74,7 +71,6 @@
 		B20000000000000000000037 /* nuticonbocuc.png in Resources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000039 /* nuticonbocuc.png */; };
 		C20000000000000000000040 /* TrackingGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000040 /* TrackingGeometry.swift */; };
 		C20000000000000000000041 /* NeuralTargetTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000041 /* NeuralTargetTracker.swift */; };
-		C20000000000000000000042 /* GyroCalibrationSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000042 /* GyroCalibrationSheetView.swift */; };
 		C20000000000000000000043 /* AppLogo.png in Resources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000043 /* AppLogo.png */; };
 		C20000000000000000000044 /* WindowedZoomOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000044 /* WindowedZoomOverlayView.swift */; };
 		C20000000000000000000045 /* TargetPatchFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000045 /* TargetPatchFlow.swift */; };
@@ -104,7 +100,6 @@
 		C2000000000000000000007F /* ProPhotoManualControlsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000007F /* ProPhotoManualControlsService.swift */; };
 		C20000000000000000000080 /* ProPhotoControlsOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000080 /* ProPhotoControlsOverlayView.swift */; };
 		C20000000000000000000081 /* HorizonLevelerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000081 /* HorizonLevelerService.swift */; };
-		B20000000000000000000047 /* GeminiLiveService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000047 /* GeminiLiveService.swift */; };
 		C20000000000000000000076 /* NativeTrackingCore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000076 /* NativeTrackingCore.cpp */; };
 		C20000000000000000000079 /* NativeOpticsCore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000079 /* NativeOpticsCore.cpp */; };
 		C2000000000000000000007A /* NativeOpticsBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000007A /* NativeOpticsBridge.swift */; };
@@ -150,7 +145,6 @@
 		B100000000000000000000022 /* FeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackView.swift; sourceTree = "<group>"; };
 		B100000000000000000000023 /* RealtimeHistogramEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealtimeHistogramEngine.swift; sourceTree = "<group>"; };
 		B100000000000000000000024 /* LiveColorHistogramHUDView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveColorHistogramHUDView.swift; sourceTree = "<group>"; };
-		B100000000000000000000025 /* PresetThumbnailProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresetThumbnailProvider.swift; sourceTree = "<group>"; };
 		B100000000000000000000026 /* StreetSpatialTrackingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreetSpatialTrackingEngine.swift; sourceTree = "<group>"; };
 		B100000000000000000000027 /* FocusPeakingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusPeakingEngine.swift; sourceTree = "<group>"; };
 		C10000000000000000000073 /* FocusPeakingMetalProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusPeakingMetalProcessor.swift; sourceTree = "<group>"; };
@@ -159,7 +153,6 @@
 		C10000000000000000000071 /* MasterWatermarkRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterWatermarkRenderer.swift; sourceTree = "<group>"; };
 		C10000000000000000000072 /* MasterWatermarkConfigSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MasterWatermarkConfigSheet.swift; sourceTree = "<group>"; };
 		B100000000000000000000028 /* ProVideoManualControlsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProVideoManualControlsService.swift; sourceTree = "<group>"; };
-		B100000000000000000000029 /* ProVideoManualControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProVideoManualControlsView.swift; sourceTree = "<group>"; };
 		B100000000000000000000045 /* UltraWideWarpEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UltraWideWarpEngine.swift; sourceTree = "<group>"; };
 		B100000000000000000000046 /* SeparableSuperView.metal */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.metal; path = SeparableSuperView.metal; sourceTree = "<group>"; };
 		B100000000000000000000099 /* FocusPeakingShaders.metal */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.metal; path = FocusPeakingShaders.metal; sourceTree = "<group>"; };
@@ -176,11 +169,9 @@
 		B100000000000000000000035 /* nutAI.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = nutAI.png; sourceTree = "<group>"; };
 		B100000000000000000000036 /* nuticonbocucAI.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = nuticonbocucAI.png; sourceTree = "<group>"; };
 		B100000000000000000000037 /* PhotoGallerySheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoGallerySheetView.swift; sourceTree = "<group>"; };
-		B100000000000000000000038 /* LuxuryInteractiveGoldButtonStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LuxuryInteractiveGoldButtonStyle.swift; sourceTree = "<group>"; };
 		B100000000000000000000039 /* nuticonbocuc.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = nuticonbocuc.png; sourceTree = "<group>"; };
 		C10000000000000000000040 /* TrackingGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackingGeometry.swift; sourceTree = "<group>"; };
 		C10000000000000000000041 /* NeuralTargetTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeuralTargetTracker.swift; sourceTree = "<group>"; };
-		C10000000000000000000042 /* GyroCalibrationSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroCalibrationSheetView.swift; sourceTree = "<group>"; };
 		C10000000000000000000043 /* AppLogo.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppLogo.png; sourceTree = "<group>"; };
 		C10000000000000000000044 /* WindowedZoomOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowedZoomOverlayView.swift; sourceTree = "<group>"; };
 		C10000000000000000000045 /* TargetPatchFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TargetPatchFlow.swift; sourceTree = "<group>"; };
@@ -210,7 +201,6 @@
 		C1000000000000000000007F /* ProPhotoManualControlsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProPhotoManualControlsService.swift; sourceTree = "<group>"; };
 		C10000000000000000000080 /* ProPhotoControlsOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProPhotoControlsOverlayView.swift; sourceTree = "<group>"; };
 		C10000000000000000000081 /* HorizonLevelerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizonLevelerService.swift; sourceTree = "<group>"; };
-		B100000000000000000000047 /* GeminiLiveService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiLiveService.swift; sourceTree = "<group>"; };
 		C10000000000000000000075 /* NativeTrackingCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NativeTrackingCore.h; sourceTree = "<group>"; };
 		C10000000000000000000076 /* NativeTrackingCore.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NativeTrackingCore.cpp; sourceTree = "<group>"; };
 		C10000000000000000000078 /* NativeOpticsCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NativeOpticsCore.h; sourceTree = "<group>"; };
@@ -280,7 +270,6 @@
 				B10000000000000000000006 /* FilmFilterEngine.swift */,
 				B10000000000000000000007 /* HapticFeedbackService.swift */,
 				B100000000000000000000014 /* GeminiService.swift */,
-				B100000000000000000000047 /* GeminiLiveService.swift */,
 				B100000000000000000000015 /* DeviceMotionService.swift */,
 				B100000000000000000000017 /* CameraLogger.swift */,
 				B100000000000000000000018 /* SpatialTrackingEngine.swift */,
@@ -293,7 +282,6 @@
 				B100000000000000000000020 /* YOLODetectionEngine.swift */,
 				B100000000000000000000021 /* VisualOdometryEngine.swift */,
 				B100000000000000000000023 /* RealtimeHistogramEngine.swift */,
-				B100000000000000000000025 /* PresetThumbnailProvider.swift */,
 				B100000000000000000000026 /* StreetSpatialTrackingEngine.swift */,
 				B100000000000000000000027 /* FocusPeakingEngine.swift */,
 				C10000000000000000000073 /* FocusPeakingMetalProcessor.swift */,
@@ -393,11 +381,8 @@
 				B100000000000000000000016 /* VideoPreviewSheetView.swift */,
 				B100000000000000000000022 /* FeedbackView.swift */,
 				B100000000000000000000024 /* LiveColorHistogramHUDView.swift */,
-				B100000000000000000000029 /* ProVideoManualControlsView.swift */,
 				C10000000000000000000080 /* ProPhotoControlsOverlayView.swift */,
 				B100000000000000000000037 /* PhotoGallerySheetView.swift */,
-				B100000000000000000000038 /* LuxuryInteractiveGoldButtonStyle.swift */,
-				C10000000000000000000042 /* GyroCalibrationSheetView.swift */,
 				C10000000000000000000044 /* WindowedZoomOverlayView.swift */,
 				C10000000000000000000051 /* AudioVULevelMeterView.swift */,
 			);
@@ -509,7 +494,6 @@
 				B2000000000000000000000F /* CapturedPhotoPreviewView.swift in Sources */,
 				B20000000000000000000010 /* SettingsSheetView.swift in Sources */,
 				B20000000000000000000011 /* GeminiService.swift in Sources */,
-				B20000000000000000000047 /* GeminiLiveService.swift in Sources */,
 				B20000000000000000000012 /* DeviceMotionService.swift in Sources */,
 				B20000000000000000000013 /* VideoPreviewSheetView.swift in Sources */,
 				B20000000000000000000014 /* CameraLogger.swift in Sources */,
@@ -522,7 +506,6 @@
 				B20000000000000000000019 /* FeedbackView.swift in Sources */,
 				B20000000000000000000020 /* RealtimeHistogramEngine.swift in Sources */,
 				B20000000000000000000021 /* LiveColorHistogramHUDView.swift in Sources */,
-				B20000000000000000000022 /* PresetThumbnailProvider.swift in Sources */,
 				B20000000000000000000023 /* StreetSpatialTrackingEngine.swift in Sources */,
 				B20000000000000000000024 /* FocusPeakingEngine.swift in Sources */,
 				C20000000000000000000073 /* FocusPeakingMetalProcessor.swift in Sources */,
@@ -531,7 +514,6 @@
 				C20000000000000000000071 /* MasterWatermarkRenderer.swift in Sources */,
 				C20000000000000000000072 /* MasterWatermarkConfigSheet.swift in Sources */,
 				B20000000000000000000025 /* ProVideoManualControlsService.swift in Sources */,
-				B20000000000000000000026 /* ProVideoManualControlsView.swift in Sources */,
 				B20000000000000000000045 /* UltraWideWarpEngine.swift in Sources */,
 				B20000000000000000000046 /* SeparableSuperView.metal in Sources */,
 				B20000000000000000000099 /* FocusPeakingShaders.metal in Sources */,
@@ -542,8 +524,6 @@
 				B200000000000000000000A5 /* UltraSharpCaptureController.swift in Sources */,
 				B200000000000000000000A6 /* UltraSharpService.swift in Sources */,
 				B20000000000000000000027 /* PhotoGallerySheetView.swift in Sources */,
-				B20000000000000000000028 /* LuxuryInteractiveGoldButtonStyle.swift in Sources */,
-				C20000000000000000000042 /* GyroCalibrationSheetView.swift in Sources */,
 				C20000000000000000000044 /* WindowedZoomOverlayView.swift in Sources */,
 				C20000000000000000000045 /* TargetPatchFlow.swift in Sources */,
 				C20000000000000000000046 /* SuperResolutionMetalShaders.swift in Sources */,

@@ -2707,7 +2707,7 @@ public final class CameraViewModel: ObservableObject {
     /// Bắt đầu phiên AI khi người dùng bấm nút AI — chỉ phân tích ĐÚNG 1 LẦN duy nhất
     public func startAISession() {
         if isCameraHibernating { return }
-        if captureMode != .photo { selectCaptureMode(.photo) }
+        if captureMode.isVideo { selectCaptureMode(.photo) }
         if isShutterPressing { isShutterPressing = false }
         if aiSessionState != .idle && aiSessionState != .done { cancelAISession() }
 
@@ -2815,7 +2815,34 @@ public final class CameraViewModel: ObservableObject {
                                               subjectRect: nil, faceRects: [])
                 self?.beginLocalCompositionAnalysis(source: source)
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 75) { [weak self] in
+            // Fast 1.5s frame-delivery watchdog: if VisionFramingEngine missed or throttled the callback,
+            // immediately grab the latest camera frame snapshot instead of hanging until timeout.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self, self.aiSessionGeneration == requestGeneration,
+                      self.aiSessionState == .analyzing, !self.isOneShotCaptured,
+                      !self.localAnalysisFinished else { return }
+                let snap = self.frameProcessor.latestTrackingFrameSnapshot()
+                let fallbackBuffer = snap?.0 ?? self.cameraService.currentMultiCamPixelBuffer() ?? self.latestCameraPixelBuffer()
+                guard let buffer = fallbackBuffer else { return }
+                let now = CACurrentMediaTime()
+                let fallbackFrame = snap?.1 ?? TrackingFrameContext(
+                    timestamp: now,
+                    calibration: TrackingCalibration.fallback(fovLongDegrees: CompositionTuning.defaultCameraFOVWide, zoom: Double(self.displayZoom), aspect: 9.0/16.0),
+                    imageSize: CGSize(width: CGFloat(CVPixelBufferGetWidth(buffer)),
+                                      height: CGFloat(CVPixelBufferGetHeight(buffer))),
+                    displayZoom: Double(self.displayZoom)
+                )
+                let fallbackPose = SpatialTrackingEngine.shared.pose(at: fallbackFrame.timestamp)
+                    ?? SpatialTrackingEngine.shared.latestPose()
+                    ?? simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
+                self.isOneShotCaptured = true
+                self.visionEngine.captureNextFrameForGemini = false
+                self.visionEngine.onFrameCapturedForAIWithSource = nil
+                let source = AITrackingSource(buffer: buffer, frame: fallbackFrame, pose: fallbackPose,
+                                              subjectRect: nil, faceRects: [])
+                self.beginLocalCompositionAnalysis(source: source)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 18) { [weak self] in
                 guard let self, self.aiSessionGeneration == requestGeneration,
                       self.aiSessionState == .analyzing,
                       !self.localAnalysisFinished else { return }
@@ -3185,7 +3212,7 @@ public final class CameraViewModel: ObservableObject {
         cloudTrackingSource = nil
         beginLocalCompositionAnalysis(source: source)
         let generation = aiSessionGeneration
-        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 16) { [weak self] in
             guard let self, self.aiSessionGeneration == generation,
                   self.aiSessionState == .analyzing,
                   !self.localAnalysisFinished else { return }
@@ -3346,13 +3373,61 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
+    /// Fast (<1.5ms) standalone copy of a camera `CVPixelBuffer` so `AVCaptureVideoDataOutput`'s
+    /// tiny buffer pool gets its frame back immediately instead of stalling live preview/capture.
+    private static func clonePixelBuffer(_ source: CVPixelBuffer) -> CVPixelBuffer? {
+        let width = CVPixelBufferGetWidth(source)
+        let height = CVPixelBufferGetHeight(source)
+        let format = CVPixelBufferGetPixelFormatType(source)
+        guard width > 0, height > 0 else { return nil }
+        var copy: CVPixelBuffer?
+        let attrs = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
+        guard CVPixelBufferCreate(kCFAllocatorDefault, width, height, format, attrs, &copy) == kCVReturnSuccess,
+              let dst = copy else { return nil }
+        guard CVPixelBufferLockBaseAddress(source, .readOnly) == kCVReturnSuccess else { return nil }
+        defer { CVPixelBufferUnlockBaseAddress(source, .readOnly) }
+        guard CVPixelBufferLockBaseAddress(dst, []) == kCVReturnSuccess else { return nil }
+        defer { CVPixelBufferUnlockBaseAddress(dst, []) }
+
+        let planeCount = CVPixelBufferGetPlaneCount(source)
+        if planeCount > 0 {
+            for plane in 0..<planeCount {
+                guard let srcBase = CVPixelBufferGetBaseAddressOfPlane(source, plane),
+                      let dstBase = CVPixelBufferGetBaseAddressOfPlane(dst, plane) else { return nil }
+                let srcBpr = CVPixelBufferGetBytesPerRowOfPlane(source, plane)
+                let dstBpr = CVPixelBufferGetBytesPerRowOfPlane(dst, plane)
+                let planeH = CVPixelBufferGetHeightOfPlane(source, plane)
+                let copyBytes = min(srcBpr, dstBpr)
+                for row in 0..<planeH {
+                    memcpy(dstBase.advanced(by: row * dstBpr), srcBase.advanced(by: row * srcBpr), copyBytes)
+                }
+            }
+        } else {
+            guard let srcBase = CVPixelBufferGetBaseAddress(source),
+                  let dstBase = CVPixelBufferGetBaseAddress(dst) else { return nil }
+            let srcBpr = CVPixelBufferGetBytesPerRow(source)
+            let dstBpr = CVPixelBufferGetBytesPerRow(dst)
+            let copyBytes = min(srcBpr, dstBpr)
+            for row in 0..<height {
+                memcpy(dstBase.advanced(by: row * dstBpr), srcBase.advanced(by: row * srcBpr), copyBytes)
+            }
+        }
+        return dst
+    }
+
     private func beginLocalCompositionAnalysis(source: AITrackingSource) {
         localAnalysisCompletedAt = nil
         localAnalysisCancellation?.cancel()
         localAnalysisTask?.cancel()
-        let cancellation = CompositionAnalysisCancellation()
+        // Detach from AVCaptureVideoDataOutput's pool immediately so live camera frames never stall.
+        let detachedBuffer = Self.clonePixelBuffer(source.buffer) ?? source.buffer
+        let ownedSource = AITrackingSource(
+            buffer: detachedBuffer, frame: source.frame, pose: source.pose,
+            subjectRect: source.subjectRect, faceRects: source.faceRects
+        )
+        let cancellation = CompositionAnalysisCancellation(softTimeoutSeconds: 5.5)
         localAnalysisCancellation = cancellation
-        localTrackingSource = source
+        localTrackingSource = ownedSource
         localSelectionMessage = nil
         localAnalysisExpired = false
         localAnalysisFinished = false
@@ -3364,19 +3439,17 @@ public final class CameraViewModel: ObservableObject {
             let preferences = await CompositionPreferenceStore.shared.bonuses()
             guard !Task.isCancelled, !cancellation.isCancelled else { return }
             let result = await withTaskCancellationHandler {
-                await Task.detached(priority: .userInitiated) {
-                    NeuralSubjectIntelligenceEngine.shared.analyzeComposition(
-                        pixelBuffer: source.buffer, frame: source.frame, pose: source.pose,
-                        allowedZooms: zooms, preferences: preferences, requestID: requestID, cancellation: cancellation,
-                        progress: { [weak self] message in
-                            Task { @MainActor [weak self] in
-                                guard let self, self.aiSessionGeneration == generation,
-                                      self.aiSessionState == .analyzing, !self.localAnalysisFinished,
-                                      !cancellation.isCancelled else { return }
-                                self.localAnalysisProgress = message
-                            }
-                        })
-                }.value
+                await NeuralSubjectIntelligenceEngine.shared.analyzeCompositionAsync(
+                    pixelBuffer: ownedSource.buffer, frame: ownedSource.frame, pose: ownedSource.pose,
+                    allowedZooms: zooms, preferences: preferences, requestID: requestID, cancellation: cancellation,
+                    progress: { [weak self] message in
+                        Task { @MainActor [weak self] in
+                            guard let self, self.aiSessionGeneration == generation,
+                                  self.aiSessionState == .analyzing, !self.localAnalysisFinished,
+                                  !cancellation.isCancelled else { return }
+                            self.localAnalysisProgress = message
+                        }
+                    })
             } onCancel: {
                 cancellation.cancel()
             }
@@ -3385,7 +3458,7 @@ public final class CameraViewModel: ObservableObject {
                   !self.localAnalysisExpired, let result else { return }
             self.localAnalysisTask = nil
             self.localAnalysisCancellation = nil
-            self.finishLocalAnalysis(result, source: source)
+            self.finishLocalAnalysis(result, source: ownedSource)
         }
     }
 
@@ -3664,14 +3737,16 @@ public final class CameraViewModel: ObservableObject {
             effectiveZoom = displayZoom
         }
 
-        if planDistFromCenter < 0.09 && detectedScene != .architecture {
+        if let explicitRule = plan.compositionRule {
+            activeCompositionRule = explicitRule
+        } else if planDistFromCenter < 0.09 && detectedScene != .architecture {
             activeCompositionRule = evaluatedFraming.optimalRule
         } else if plan.explanation.contains("Tỷ lệ vàng") || plan.explanation.contains("Golden") {
             activeCompositionRule = .goldenRatio
-        } else if plan.usesCenter && detectedScene == .architecture {
+        } else if plan.usesCenter {
             activeCompositionRule = .centerSymmetry
         } else {
-            activeCompositionRule = .ruleOfThirds
+            activeCompositionRule = .dynamicAI
         }
         localCompositionIntent = plan.intent
         let zoomText = (abs(effectiveZoom - displayZoom) > 0.12 &&

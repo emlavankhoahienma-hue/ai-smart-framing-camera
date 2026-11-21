@@ -21,6 +21,7 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
     static let shared = OpenWorldSubjectDetector()
 
     private let lock = NSLock()
+    private let renderLock = NSLock()
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
     private let inputSide: Int = 640
 
@@ -31,7 +32,9 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
         "sky", "cloud", "sunset", "sun", "moon", "mountain", "hill", "sea", "ocean",
         "beach", "river", "lake", "waterfall", "rainbow", "flower", "blossom",
         "rose", "sunflower", "tulip", "bouquet", "leaf", "branch", "cactus",
-        "building", "skyscraper", "tower", "temple", "church", "bridge", "street sign"
+        "building", "skyscraper", "tower", "temple", "church", "bridge", "street sign",
+        "butterfly", "bird", "cat", "dog", "animal", "statue", "vase", "lamp",
+        "coffee", "cup", "dish", "food", "cake", "camera", "watch", "book", "bag", "shoe", "guitar"
     ]
 
     private final class ConcurrentResults: @unchecked Sendable {
@@ -69,40 +72,71 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
     }
 
     /// Runs OpenWorldPhotoYOLOE (when bundled & within RAM/thermal budgets) and iOS 17+
-    /// foreground instance segmentation CONCURRENTLY to halve wall-clock analysis latency.
+    /// foreground instance segmentation. Uses concurrent DispatchGroup execution on >= 6GB
+    /// devices (with a bounded wait timeout to prevent ANE stalls) and sequential
+    /// autoreleasepool passes on < 6GB devices so peak RAM never spikes past iOS Jetsam limits.
     func detect(
         pixelBuffer: CVPixelBuffer,
         orientation: CGImagePropertyOrientation,
         cancellation: CompositionAnalysisCancellation
     ) -> [DirectorDetection] {
-        guard !cancellation.isCancelled else { return [] }
+        guard !cancellation.isCancelled, !cancellation.isSoftDeadlineReached else { return [] }
         let results = ConcurrentResults()
         let group = DispatchGroup()
+        let canRunConcurrently = ProcessInfo.processInfo.physicalMemory >= 5_800_000_000
 
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            let dets = self.detectOpenWorldYOLOE(
-                pixelBuffer: pixelBuffer,
-                orientation: orientation,
-                cancellation: cancellation
-            )
-            results.setYOLOE(dets)
+        if canRunConcurrently {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let dets = self.detectOpenWorldYOLOE(
+                    pixelBuffer: pixelBuffer,
+                    orientation: orientation,
+                    cancellation: cancellation
+                )
+                results.setYOLOE(dets)
+                group.leave()
+            }
+
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let dets = self.detectForegroundInstances(
+                    pixelBuffer: pixelBuffer,
+                    orientation: orientation,
+                    cancellation: cancellation
+                )
+                results.setMasks(dets)
+                group.leave()
+            }
+
+            let waitSeconds = min(3.5, max(1.0, cancellation.remainingSoftBudget))
+            _ = group.wait(timeout: .now() + waitSeconds)
+            return results.combined()
+        } else {
+            // RAM < 6GB: execute sequentially in separate autoreleasepools so YOLOE (~120MB)
+            // and VNGenerateForegroundInstanceMaskRequest (~200MB) never overlap in RAM.
+            group.enter()
+            let yoloDets = autoreleasepool {
+                self.detectOpenWorldYOLOE(
+                    pixelBuffer: pixelBuffer,
+                    orientation: orientation,
+                    cancellation: cancellation
+                )
+            }
+            results.setYOLOE(yoloDets)
+            if !cancellation.isCancelled, !cancellation.isSoftDeadlineReached {
+                let maskDets = autoreleasepool {
+                    self.detectForegroundInstances(
+                        pixelBuffer: pixelBuffer,
+                        orientation: orientation,
+                        cancellation: cancellation
+                    )
+                }
+                results.setMasks(maskDets)
+            }
             group.leave()
+            _ = group.wait(timeout: .now() + 0.1)
+            return results.combined()
         }
-
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            let dets = self.detectForegroundInstances(
-                pixelBuffer: pixelBuffer,
-                orientation: orientation,
-                cancellation: cancellation
-            )
-            results.setMasks(dets)
-            group.leave()
-        }
-
-        group.wait()
-        return results.combined()
     }
 
     // MARK: - 1. OpenWorldPhotoYOLOE (101 Photographic Classes)
@@ -138,13 +172,14 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
             return []
         }
 
-        let keepCached = ProcessInfo.processInfo.physicalMemory >= 5_200_000_000
+        let keepCached = ProcessInfo.processInfo.physicalMemory >= 5_800_000_000
         return autoreleasepool {
             guard !cancellation.isCancelled else { return [] }
             let model: MLModel? = lock.withLock {
                 if let cached = cachedModel { return cached }
                 let config = MLModelConfiguration()
-                config.computeUnits = .cpuAndNeuralEngine
+                config.computeUnits = .all
+                config.allowLowPrecisionAccumulationOnGPU = true
                 guard let loaded = try? MLModel(contentsOf: modelURL, configuration: config) else { return nil }
                 if keepCached { cachedModel = loaded }
                 return loaded
@@ -224,12 +259,14 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
             return nil
         }
 
-        ciContext.render(
-            composed,
-            to: buffer,
-            bounds: CGRect(x: 0, y: 0, width: side, height: side),
-            colorSpace: CGColorSpaceCreateDeviceRGB()
-        )
+        renderLock.withLock {
+            ciContext.render(
+                composed,
+                to: buffer,
+                bounds: CGRect(x: 0, y: 0, width: side, height: side),
+                colorSpace: CGColorSpaceCreateDeviceRGB()
+            )
+        }
         return LetterboxResult(buffer: buffer, padX: padX, padY: padYTop, scaledWidth: scaledW, scaledHeight: scaledH)
     }
 
@@ -311,7 +348,7 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
             }
             guard bestCls >= 0 else { continue }
             let label = classes[bestCls]
-            let minThreshold: Float = Self.lowThresholdClasses.contains(label) ? 0.13 : 0.20
+            let minThreshold: Float = Self.lowThresholdClasses.contains(label) ? 0.13 : 0.18
             guard bestScore >= minThreshold else { continue }
 
             let cx = Double(read(0, a))
@@ -450,14 +487,14 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
             var results: [DirectorDetection] = []
             for (_, acc) in stats {
                 let maskFraction = Double(acc.count) / Double(sampledTotal)
-                guard maskFraction >= 0.012 && maskFraction <= 0.78 else { continue }
+                guard maskFraction >= 0.006 && maskFraction <= 0.78 else { continue }
                 let x0 = max(0.0, min(1.0, Double(acc.minX) * invW))
                 let y0 = max(0.0, min(1.0, Double(acc.minY) * invH))
                 let x1 = max(0.0, min(1.0, Double(acc.maxX + step) * invW))
                 let y1 = max(0.0, min(1.0, Double(acc.maxY + step) * invH))
                 let rw = x1 - x0
                 let rh = y1 - y0
-                guard rw >= 0.04, rh >= 0.04 else { continue }
+                guard rw >= 0.03, rh >= 0.03 else { continue }
                 let cx = max(x0, min(x1, (acc.sumX / Double(acc.count)) * invW))
                 let cy = max(y0, min(y1, (acc.sumY / Double(acc.count)) * invH))
                 let conf = min(0.84, 0.56 + 0.35 * sqrt(maskFraction))

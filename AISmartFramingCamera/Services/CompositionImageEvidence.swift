@@ -9,30 +9,56 @@ import Vision
 import UIKit
 #endif
 
-/// Cancellation reaches the active Vision request as well as the bounded search.
+/// Cancellation reaches every active Vision request as well as the bounded search.
+/// Also supports an optional monotonic `softDeadline` so stages yield gracefully
+/// instead of stalling into a hard user-facing timeout on cold ANE compilation.
 final class CompositionAnalysisCancellation: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
-    private var activeRequest: VNRequest?
+    private var activeRequests: [ObjectIdentifier: VNRequest] = [:]
+    private let softDeadlineUptime: TimeInterval?
+
+    init(softTimeoutSeconds: TimeInterval? = nil) {
+        if let timeout = softTimeoutSeconds, timeout.isFinite, timeout > 0 {
+            self.softDeadlineUptime = ProcessInfo.processInfo.systemUptime + timeout
+        } else {
+            self.softDeadlineUptime = nil
+        }
+    }
 
     var isCancelled: Bool { lock.withLock { cancelled } }
 
+    var isSoftDeadlineReached: Bool {
+        guard let deadline = softDeadlineUptime else { return false }
+        return ProcessInfo.processInfo.systemUptime >= deadline
+    }
+
+    var remainingSoftBudget: TimeInterval {
+        guard let deadline = softDeadlineUptime else { return .infinity }
+        return max(0, deadline - ProcessInfo.processInfo.systemUptime)
+    }
+
     func cancel() {
-        let request = lock.withLock { () -> VNRequest? in
+        let requests = lock.withLock { () -> [VNRequest] in
             cancelled = true
-            return activeRequest
+            let current = Array(activeRequests.values)
+            activeRequests.removeAll()
+            return current
         }
-        request?.cancel()
+        for request in requests {
+            request.cancel()
+        }
     }
 
     func perform(_ request: VNRequest, with handler: VNImageRequestHandler) throws {
+        let key = ObjectIdentifier(request)
         let shouldRun = lock.withLock { () -> Bool in
             guard !cancelled else { return false }
-            activeRequest = request
+            activeRequests[key] = request
             return true
         }
         guard shouldRun else { throw CancellationError() }
-        defer { lock.withLock { activeRequest = nil } }
+        defer { lock.withLock { _ = activeRequests.removeValue(forKey: key) } }
         try handler.perform([request])
         if isCancelled { throw CancellationError() }
     }
@@ -51,9 +77,13 @@ final class CompositionImageRenderer {
             object: nil,
             queue: nil
         ) { [weak self] _ in
-            self?.depthModelLock.withLock { self?.cachedDepthModel = nil }
+            self?.releaseDepthModel()
         }
         #endif
+    }
+
+    func releaseDepthModel() {
+        depthModelLock.withLock { cachedDepthModel = nil }
     }
 
     func clearCaches() {
@@ -185,7 +215,12 @@ final class CompositionImageRenderer {
         }
     }
 
+    @inline(__always)
     private static func float16ToDouble(_ bits: UInt16) -> Double {
+        #if arch(arm64)
+        let f16 = Float16(bitPattern: bits)
+        return f16.isFinite ? Double(f16) : 0.0
+        #else
         let sign = (bits & 0x8000) != 0 ? -1.0 : 1.0
         let exp = Int((bits >> 10) & 0x1F)
         let mant = Int(bits & 0x03FF)
@@ -195,6 +230,7 @@ final class CompositionImageRenderer {
             return 0.0
         }
         return sign * pow(2.0, Double(exp - 15)) * (1.0 + Double(mant) / 1024.0)
+        #endif
     }
 
     /// Reads raw unclipped monocular disparity values from Apple Core ML DepthAnythingV2 output buffers

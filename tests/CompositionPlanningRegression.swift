@@ -929,7 +929,7 @@ enum CompositionPlanningRegression {
             try require(groupRes.role == .group && abs(groupRes.recommendedZoom - 1.0) < 0.05,
                         "well-framed group should stay 1.0x, got \(groupRes.role) @ \(groupRes.recommendedZoom)x")
 
-            // 6. Non-COCO open-world flower detection -> flower role with Golden Ratio placement
+            // 6. Non-COCO open-world flower detection -> flower role with optical zoom
             let flowerDet = DirectorDetection(
                 label: "blossom", localizedLabel: "Cụm hoa",
                 boundingBox: CGRect(x: 0.56, y: 0.34, width: 0.24, height: 0.26),
@@ -941,7 +941,153 @@ enum CompositionPlanningRegression {
                 calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
             )
             try require(flowerRes.role == .flower && flowerRes.recommendedZoom >= 1.45,
-                        "open-world blossom should zoom cleanly onto Golden Ratio: \(flowerRes.role) @ \(flowerRes.recommendedZoom)x")
+                        "open-world blossom should zoom cleanly: \(flowerRes.role) @ \(flowerRes.recommendedZoom)x")
+
+            // 7. Minimalist centered product with clean symmetric background -> NOT shackled to Golden Ratio!
+            let watchDet = DirectorDetection(
+                label: "watch", localizedLabel: "Đồng hồ đeo tay",
+                boundingBox: CGRect(x: 0.35, y: 0.34, width: 0.30, height: 0.32),
+                anchor: nil, confidence: 0.91, domain: .object
+            )
+            let watchRes = CameraFramingDirector.direct(
+                detections: [watchDet], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["single_product": 0.10, "minimalist_space": 0.09], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(abs(Double(watchRes.destinationPoint.x) - 0.50) < 0.08,
+                        "minimalist symmetric object should allow balanced center, got dest=\(watchRes.destinationPoint)")
+
+            // 8. Heavy left-edge clutter avoidance -> steers camera aim away from left clutter
+            let vaseDet = DirectorDetection(
+                label: "vase", localizedLabel: "Bình hoa",
+                boundingBox: CGRect(x: 0.44, y: 0.36, width: 0.22, height: 0.28),
+                anchor: nil, confidence: 0.88, domain: .object
+            )
+            var leftClutterHints = CompositionSceneHints()
+            leftClutterHints.avoid = EdgeAvoidanceHints(left: 0.92, right: 0.0, top: 0.0, bottom: 0.0)
+            leftClutterHints.hasRichGuidance = true
+            let clutterRes = CameraFramingDirector.direct(
+                detections: [vaseDet], raster: baseRaster, sceneHints: leftClutterHints,
+                semanticAffinities: ["object": 0.08], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(clutterRes.aimPointInSource.x > 0.51,
+                        "heavy left edge clutter should steer aim rightward, got aim=\(clutterRes.aimPointInSource)")
+
+            // 9. Cohesive two-item tabletop pair (cake + coffee) -> preserves both together
+            let cakeDet = DirectorDetection(
+                label: "cake", localizedLabel: "Bánh ngọt",
+                boundingBox: CGRect(x: 0.24, y: 0.38, width: 0.24, height: 0.26),
+                anchor: nil, confidence: 0.90, domain: .food
+            )
+            let cupDet = DirectorDetection(
+                label: "cup", localizedLabel: "Chiếc cốc",
+                boundingBox: CGRect(x: 0.54, y: 0.40, width: 0.20, height: 0.24),
+                anchor: nil, confidence: 0.86, domain: .food
+            )
+            let pairRes = CameraFramingDirector.direct(
+                detections: [cakeDet, cupDet], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["food_spread": 0.10, "food": 0.09], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(pairRes.role == .food && pairRes.heroBounds.contains(CGPoint(x: cakeDet.boundingBox.midX, y: cakeDet.boundingBox.midY)) &&
+                        pairRes.heroBounds.contains(CGPoint(x: cupDet.boundingBox.midX, y: cupDet.boundingBox.midY)),
+                        "cohesive tabletop pair should unify both dishes, got \(pairRes.heroLabel) \(pairRes.heroBounds)")
+
+            // 10. Calm water reflection -> mirror horizon symmetry (NOT forced to 1/3 or 2/3)
+            let waterRes = CameraFramingDirector.direct(
+                detections: [skyDet], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["water_reflection": 0.11, "landscape": 0.08], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(waterRes.role == .skyLandscape && abs(Double(waterRes.destinationPoint.y) - 0.50) < 0.06,
+                        "water reflection should align horizon near mirror symmetry 0.50, got destY=\(waterRes.destinationPoint.y)")
+
+            // 11. Soft deadline & cancellation contract on CompositionAnalysisCancellation
+            let shortCancel = CompositionAnalysisCancellation(softTimeoutSeconds: 0.001)
+            Thread.sleep(forTimeInterval: 0.01)
+            try require(shortCancel.isSoftDeadlineReached && !shortCancel.isCancelled,
+                        "soft deadline should trigger graceful early stop without hard cancellation")
+            shortCancel.cancel()
+            try require(shortCancel.isCancelled, "cancel() must mark cancellation flag")
+
+            // 12. Multi-sensor aspect ratios (9:16, 3:4, 1:1, 4:3) preserve 3D ray consistency & aspect-invariant zoom
+            for testAspect in [9.0 / 16.0, 0.75, 1.0, 4.0 / 3.0] {
+                let kAspect = TrackingCalibration.fallback(aspect: testAspect)
+                let cupWide = DirectorDetection(
+                    label: "cup", localizedLabel: "Chiếc cốc",
+                    boundingBox: CGRect(x: 0.28, y: 0.42, width: 0.42, height: 0.18),
+                    anchor: nil, confidence: 0.88, domain: .food
+                )
+                let aspectRes = CameraFramingDirector.direct(
+                    detections: [cupWide], raster: baseRaster, sceneHints: .neutral,
+                    semanticAffinities: ["food": 0.08], neuralProposals: [],
+                    calibration: kAspect, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+                )
+                let aspectProj = kAspect.project(deviceRay: aspectRes.aimWorldRay)
+                try require(aspectProj.isInFront &&
+                            hypot(Double(aspectProj.point.x - aspectRes.aimPointInSource.x),
+                                  Double(aspectProj.point.y - aspectRes.aimPointInSource.y)) < 1e-4,
+                            "multi-aspect (\(testAspect)) aimWorldRay diverged from aimPointInSource")
+                try require(aspectRes.recommendedZoom >= 1.15,
+                            "aspect-invariant visualSize should zoom cleanly for 7.6% area cup on aspect=\(testAspect), got \(aspectRes.recommendedZoom)x")
+            }
+
+            // 13. Real-world recognition anti-hijack guards (skyscraper vs bottom-edge car, hand-held bottle, flower vs banana, waterfall)
+            let giantTower = DirectorDetection(
+                label: "skyscraper", localizedLabel: "Nhà cao tầng",
+                boundingBox: CGRect(x: 0.16, y: 0.03, width: 0.56, height: 0.82),
+                anchor: nil, confidence: 0.42, domain: .architecture
+            )
+            let bottomCarSliver = DirectorDetection(
+                label: "car", localizedLabel: "Ô tô",
+                boundingBox: CGRect(x: 0.34, y: 0.92, width: 0.22, height: 0.08),
+                anchor: nil, confidence: 0.88, domain: .vehicle
+            )
+            let archRes = CameraFramingDirector.direct(
+                detections: [giantTower, bottomCarSliver], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["building": 0.08], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(archRes.role == .architecture && archRes.heroLabel == "skyscraper",
+                        "bottom-edge car sliver hijacked dominant skyscraper: got \(archRes.role) / \(archRes.heroLabel)")
+
+            let handHolding = DirectorDetection(
+                label: "person", localizedLabel: "Người",
+                boundingBox: CGRect(x: 0.12, y: 0.38, width: 0.72, height: 0.60),
+                anchor: nil, confidence: 0.90, domain: .human
+            )
+            let heldBottle = DirectorDetection(
+                label: "bottle", localizedLabel: "Chai nước",
+                boundingBox: CGRect(x: 0.22, y: 0.20, width: 0.52, height: 0.70),
+                anchor: nil, confidence: 0.88, domain: .food
+            )
+            let heldRes = CameraFramingDirector.direct(
+                detections: [handHolding, heldBottle], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["object": 0.08, "food": 0.06], neuralProposals: [],
+                calibration: TrackingCalibration.fallback(aspect: 9.0 / 16.0), pose: identityPose,
+                currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(heldRes.role == .food && heldRes.heroLabel == "bottle",
+                        "headless hand hijacked held bottle: got \(heldRes.role) / \(heldRes.heroLabel)")
+
+            let succulentBanana = DirectorDetection(
+                label: "banana", localizedLabel: "Chuối",
+                boundingBox: CGRect(x: 0.06, y: 0.10, width: 0.82, height: 0.80),
+                anchor: nil, confidence: 0.66, domain: .food
+            )
+            let yellowFlower = DirectorDetection(
+                label: "flower", localizedLabel: "Bông hoa",
+                boundingBox: CGRect(x: 0.42, y: 0.42, width: 0.46, height: 0.44),
+                anchor: nil, confidence: 0.30, domain: .pureFlower
+            )
+            let floraRes = CameraFramingDirector.direct(
+                detections: [succulentBanana, yellowFlower], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["flower": 0.09], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(floraRes.role == .flower && floraRes.heroLabel == "flower",
+                        "plant-confusable COCO banana hijacked yellow flower: got \(floraRes.role) / \(floraRes.heroLabel)")
         }
         print("Composition regressions: \(passed) passed")
     }

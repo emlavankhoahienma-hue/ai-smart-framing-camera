@@ -2,8 +2,8 @@ import Foundation
 import CoreGraphics
 import CoreImage
 
-/// Two passes over feasible camera views. The trained composition model ranks
-/// photographic layout and focal length; the planner enforces subject safety.
+/// Two passes over feasible camera views. The trained composition models (GAIC + SAMP-Net + Charm-PARA)
+/// rank photographic layout and optical focal length while the planner enforces subject safety.
 final class CompositionAestheticSearch {
     struct View {
         var proposal: CompositionProposal
@@ -20,6 +20,7 @@ final class CompositionAestheticSearch {
         let usedSpecialist: Bool
         var modernAssessmentCount = 0
         var allEvaluatedViews: [View] = []
+        var allGAICProposals: [CompositionProposal] = []
     }
 
     private let renderer: CompositionImageRenderer
@@ -37,6 +38,7 @@ final class CompositionAestheticSearch {
         let resolvedGaicURL = gaicModelURL ?? GAICCompositionModel.defaultModelURL(near: modelURL)
         let sourceBaseZoom = max(0.5, Double(proposals.first(where: \.isUnchangedView)?.zoom ?? proposals.first?.zoom ?? 1.0))
         var workingProposals = proposals
+        var allGAICScoredProposals: [CompositionProposal] = []
         var usedGAIC = false
         var preScoredGAIC: [(corners: [CGPoint], gaic: Double)] = []
         if let resolvedGaicURL, !workingProposals.isEmpty {
@@ -51,16 +53,17 @@ final class CompositionAestheticSearch {
                     workingProposals[idx].gaicScore = evaluatedGAIC[idx]
                     preScoredGAIC.append((corners: workingProposals[idx].sourceCorners, gaic: evaluatedGAIC[idx]))
                 }
+                allGAICScoredProposals = workingProposals
                 progress("GAIC đã đánh giá \(workingProposals.count) khung hình đa tỷ lệ…")
             }
         }
         guard !cancellation.isCancelled else { return nil }
 
-        // When dense multi-scale windows were scored by GAIC, shortlist diverse peak candidates for SAMP
-        // to stay within mobile RAM & compute latency budgets while keeping baseline and zoom spread intact.
-        let isHighMem = ProcessInfo.processInfo.physicalMemory >= 5_200_000_000
-        let sampBudget = isHighMem ? 10 : 8
-        if usedGAIC && workingProposals.count > sampBudget {
+        // Shortlist diverse peak candidates for SAMP-Net to stay fast and memory-safe even when
+        // GAIC is unavailable (preventing runaway 64+28 SAMP / 28 Charm stalls on mobile devices).
+        let isHighMem = ProcessInfo.processInfo.physicalMemory >= 5_800_000_000
+        let sampBudget = usedGAIC ? (isHighMem ? 8 : 6) : (isHighMem ? 12 : 8)
+        if workingProposals.count > sampBudget {
             let rankedForSamp = workingProposals.map { candidate -> CompositionProposal in
                 var copy = candidate
                 let zoomRatio = Double(candidate.zoom) / sourceBaseZoom
@@ -69,10 +72,14 @@ final class CompositionAestheticSearch {
                 let field = min(1.35, max(0.0, candidate.continuousFieldScore))
                 let gaic = min(1.0, max(0.0, candidate.gaicScore))
                 let semBonus = min(0.35, max(-0.20, candidate.semanticCropBonus))
-                if sceneHints.hasRichGuidance {
-                    copy.score = 0.66 * field + 0.34 * gaic + 0.24 * semBonus - zoomReg
+                if usedGAIC {
+                    if sceneHints.hasRichGuidance {
+                        copy.score = 0.62 * field + 0.38 * gaic + 0.24 * semBonus - zoomReg
+                    } else {
+                        copy.score = 0.52 * field + 0.48 * gaic + 0.20 * semBonus - zoomReg
+                    }
                 } else {
-                    copy.score = 0.55 * field + 0.45 * gaic + 0.20 * semBonus - zoomReg
+                    copy.score = field + 0.22 * semBonus - zoomReg
                 }
                 return copy
             }
@@ -81,7 +88,7 @@ final class CompositionAestheticSearch {
             shortlist.reserveCapacity(sampBudget)
             if let baselineCandidate { shortlist.append(baselineCandidate) }
             // Preserve the strongest pure-geometry photography champions before balanced GAIC+geometry selection
-            let geometryChampions = CompositionPlanner.diverse(workingProposals, limit: min(10, max(4, sampBudget / 3)),
+            let geometryChampions = CompositionPlanner.diverse(workingProposals, limit: min(6, max(3, sampBudget / 3)),
                                                                raySeparation: 0.05, zoomSeparation: 0.10)
             for pick in geometryChampions where shortlist.count < sampBudget {
                 if !shortlist.contains(where: { $0.sourceCorners == pick.sourceCorners && $0.zoom == pick.zoom }) {
@@ -150,12 +157,16 @@ final class CompositionAestheticSearch {
             return bestDist < 0.14 ? bestBonus : proposal.semanticCropBonus
         }
 
-        var specialist = modelURL.flatMap { try? PhotographicCompositionModel(url: $0) }
+        var specialist: PhotographicCompositionModel? = nil
+        if let modelURL, !cancellation.isSoftDeadlineReached || !usedGAIC {
+            specialist = PhotographicCompositionModel.cachedOrLoad(url: modelURL)
+        }
         var assessedCount = 0
         func evaluate(_ candidates: [CompositionProposal]) -> [View] {
             var result: [View] = []
             for (index, rawCandidate) in candidates.enumerated() {
                 if cancellation.isCancelled { return [] }
+                let skipHeavyModel = cancellation.isSoftDeadlineReached && (usedGAIC || assessedCount >= 2)
                 var candidate = rawCandidate
                 if usedGAIC && rawCandidate.gaicScore == 0.5 {
                     candidate.gaicScore = matchedGAICScore(for: rawCandidate)
@@ -165,8 +176,10 @@ final class CompositionAestheticSearch {
                 }
                 let item: View? = autoreleasepool {
                     guard let preview = renderer.preview(image: image, corners: candidate.sourceCorners, aspect: aspect) else { return nil }
-                    let syncCrop = raster.flatMap { renderer.synchronizedSaliencyCrop(from: $0, corners: candidate.sourceCorners, side: 224) }
-                    let assessment = specialist?.assess(preview, synchronizedSaliencyCrop: syncCrop, cancellation: cancellation)
+                    let syncCrop = skipHeavyModel ? nil : raster.flatMap {
+                        renderer.synchronizedSaliencyCrop(from: $0, corners: candidate.sourceCorners, side: 224)
+                    }
+                    let assessment = skipHeavyModel ? nil : specialist?.assess(preview, synchronizedSaliencyCrop: syncCrop, cancellation: cancellation)
                     var proposal = candidate
                     let zoomRatio = Double(candidate.zoom) / sourceBaseZoom
                     let justified = CompositionPreferencePolicy.isJustifiedZoom(candidate)
@@ -192,24 +205,15 @@ final class CompositionAestheticSearch {
                                 oobPenalty
                         }
                     } else if usedGAIC {
-                        proposal.score = 0.56 * geomClamped +
-                            0.44 * gaicClamped +
+                        proposal.score = 0.54 * geomClamped +
+                            0.46 * gaicClamped +
                             0.24 * semBonus -
                             zoomReg - oobPenalty
                     } else {
                         proposal.score += 0.24 * semBonus
-                        if let aesthetic = renderer.aestheticScore(image: preview, cancellation: cancellation) {
+                        if !skipHeavyModel, let aesthetic = renderer.aestheticScore(image: preview, cancellation: cancellation) {
                             proposal.score += aesthetic * 0.075
                         }
-                    }
-                    if !proposal.isUnchangedView {
-                        let subjCenterX = Double(proposal.expectedSubjectRect.midX)
-                        let subjTopThirdY = Double(proposal.expectedSubjectRect.minY + proposal.expectedSubjectRect.height * 0.28)
-                        let thirdX = min(abs(subjCenterX - Double(CompositionTuning.goldenSectionLeft)),
-                                         abs(subjCenterX - Double(CompositionTuning.goldenSectionRight)))
-                        let thirdY = min(abs(subjTopThirdY - 0.36), abs(Double(proposal.expectedSubjectRect.midY) - 0.382))
-                        let thirdWeight = usedGAIC ? 0.030 : 0.035
-                        proposal.score += thirdWeight * exp(-14 * (thirdX * thirdX + thirdY * thirdY))
                     }
                     // preferences bonus removed to ensure unbiased realtime evaluation
                     return View(proposal: proposal, image: preview, assessment: assessment,
@@ -218,67 +222,64 @@ final class CompositionAestheticSearch {
                 guard let item else { continue }
                 result.append(item)
                 progress("Đang so sánh bố cục và zoom \(index + 1)/\(candidates.count)…")
+                if skipHeavyModel && result.count >= 4 { break }
             }
             return result
         }
         var evaluated = evaluate(workingProposals)
         guard !cancellation.isCancelled else { return nil }
-        let initial = CompositionPlanner.diverse(evaluated.map(\.proposal), limit: usedGAIC ? 2 : 3)
-        progress("Đang kiểm tra lại khung và các mức zoom lân cận…")
-        let refinedSeeds = refine(initial)
-        let cappedNeighbours = usedGAIC ? Array(refinedSeeds.prefix(2)) : refinedSeeds
-        let neighbours = evaluate(cappedNeighbours)
-        if usedGAIC {
-            let bestSeedScore = initial.map(\.score).max() ?? 0.0
-            for nb in neighbours where nb.proposal.score >= bestSeedScore - 0.008 {
-                evaluated.append(nb)
+        if !cancellation.isSoftDeadlineReached && cancellation.remainingSoftBudget > 1.2 {
+            let initial = CompositionPlanner.diverse(evaluated.map(\.proposal), limit: usedGAIC ? 2 : 3)
+            progress("Đang kiểm tra lại khung và các mức zoom lân cận…")
+            let refinedSeeds = refine(initial)
+            let cappedNeighbours = Array(refinedSeeds.prefix(usedGAIC ? 2 : 3))
+            let neighbours = evaluate(cappedNeighbours)
+            if usedGAIC {
+                let bestSeedScore = initial.map(\.score).max() ?? 0.0
+                for nb in neighbours where nb.proposal.score >= bestSeedScore - 0.008 {
+                    evaluated.append(nb)
+                }
+            } else {
+                evaluated.append(contentsOf: neighbours)
             }
-        } else {
-            evaluated.append(contentsOf: neighbours)
         }
         guard !cancellation.isCancelled else { return nil }
         var usedSpecialist = !evaluated.isEmpty && assessedCount == evaluated.count
-        if specialist != nil && !usedSpecialist {
+        if specialist != nil && !usedSpecialist && !usedGAIC {
             // Never compare learned 1-to-5 ratings against unrelated fallback
-            // scores if a request fails partway through the comparison.
+            // scores if a request fails partway through the comparison without GAIC.
             for index in evaluated.indices { evaluated[index].proposal.score = evaluated[index].geometryScore }
         }
-        // Release the first scorer before loading the 2025 aesthetic specialist.
+        // Release SAMP-Net on < 6GB devices before loading Charm DINOv2-small to prevent Jetsam spikes.
         specialist = nil
+        if !isHighMem {
+            PhotographicCompositionModel.clearCache()
+        }
         var allEvaluated = evaluated
         var modernCount = 0
-        if requiresModernModel || aestheticModelURL != nil {
+        if (requiresModernModel || aestheticModelURL != nil) &&
+            (requiresModernModel || !cancellation.isSoftDeadlineReached) {
             var indices: [Int] = []
             func include(_ index: Int) { if !indices.contains(index) { indices.append(index) } }
             if let original = evaluated.firstIndex(where: { $0.proposal.isUnchangedView }) { include(original) }
-            let leaders = CompositionPlanner.diverse(evaluated.map(\.proposal), limit: 5)
+            let leaders = CompositionPlanner.diverse(evaluated.map(\.proposal), limit: 4)
             for leader in leaders {
                 if let index = evaluated.firstIndex(where: { $0.proposal.sourceCorners == leader.sourceCorners }) { include(index) }
-                let nearby = evaluated.indices.filter {
-                    hypot(evaluated[$0].proposal.aimPoint.x - leader.aimPoint.x,
-                          evaluated[$0].proposal.aimPoint.y - leader.aimPoint.y) < 0.055 &&
-                        abs(log(Double(evaluated[$0].proposal.zoom / leader.zoom))) < 0.12
-                }.sorted { evaluated[$0].proposal.score > evaluated[$1].proposal.score }
-                for index in nearby.prefix(3) { include(index) }
             }
-            // A strong tighter view must reach the second model even when the
-            // old whole-image composition scorer slightly prefers the wide view.
             let baseView = evaluated.first(where: { $0.proposal.isUnchangedView })
             let sourceZoom = baseView?.proposal.zoom ?? 1
             let baseArea = baseView.map { Double($0.proposal.expectedSubjectRect.width * $0.proposal.expectedSubjectRect.height) } ?? 1.0
-            // Mở rộng giới hạn zoom thông minh: cho phép khai thác tiêu cự chân dung / telephoto (1.8x - 3.5x)
             let maxAllowedZoom: CGFloat = baseArea < 0.08 ? 3.5 : (baseArea < 0.22 ? 3.0 : 2.2)
             let zoomed = evaluated.indices.filter { evaluated[$0].proposal.zoom > sourceZoom * 1.20 && evaluated[$0].proposal.zoom <= maxAllowedZoom }
                 .sorted { evaluated[$0].proposal.score > evaluated[$1].proposal.score }
-            for index in zoomed.prefix(8) { include(index) }
+            for index in zoomed.prefix(3) { include(index) }
             let geomSorted = evaluated.indices.sorted { evaluated[$0].geometryScore > evaluated[$1].geometryScore }
-            for index in geomSorted.prefix(4) { include(index) }
+            for index in geomSorted.prefix(2) { include(index) }
             let thermalOrLowPower = ProcessInfo.processInfo.isLowPowerModeEnabled ||
                 ProcessInfo.processInfo.thermalState == .serious
-            let isLowMemory = ProcessInfo.processInfo.physicalMemory < 5_200_000_000
-            let budget = usedGAIC
-                ? (thermalOrLowPower ? 2 : (isLowMemory ? 3 : 4))
-                : (thermalOrLowPower ? 10 : (isLowMemory ? 18 : 28))
+            let isLowMemory = ProcessInfo.processInfo.physicalMemory < 5_800_000_000
+            // Bounded Charm-PARA DINOv2 budget (never 28x even if GAIC is absent!)
+            let budget = thermalOrLowPower ? 2 : (isLowMemory ? 3 : 4)
             for index in evaluated.indices.sorted(by: { evaluated[$0].proposal.score > evaluated[$1].proposal.score }) {
                 if indices.count >= budget { break }
                 include(index)
@@ -286,11 +287,14 @@ final class CompositionAestheticSearch {
             var pool = indices.prefix(budget).map { evaluated[$0] }
             var modern: CharmPhotographicModel?
             if let aestheticModelURL, let positionURL {
-                modern = try? CharmPhotographicModel(url: aestheticModelURL, positionURL: positionURL)
+                modern = CharmPhotographicModel.cachedOrLoad(url: aestheticModelURL, positionURL: positionURL)
             } else { modern = nil }
             if let activeModern = modern {
                 for index in pool.indices {
                     guard !cancellation.isCancelled else { return nil }
+                    if !requiresModernModel && cancellation.isSoftDeadlineReached && (modernCount >= 2 || usedGAIC) {
+                        break
+                    }
                     guard ProcessInfo.processInfo.thermalState != .critical else {
                         progress("Nhiệt độ máy cao. Chuyển sang chọn bố cục thủ công…")
                         break
@@ -313,13 +317,20 @@ final class CompositionAestheticSearch {
                        ) {
                         pool[index].proposal.score = score
                         modernCount += 1
+                    } else if let aesthetics = pool[index].aesthetics, usedGAIC {
+                        let aesthNorm = (aesthetics.mean - 1.0) / 4.0
+                        pool[index].proposal.score = 0.72 * pool[index].proposal.score + 0.28 * aesthNorm
+                        modernCount += 1
                     }
                     progress("Charm 2025 đã chấm \(modernCount)/\(pool.count) khung và mức zoom…")
                 }
             } else {
-                progress("Không nạp được Charm. Đang chuẩn bị các khung để chọn thủ công…")
+                progress("Đang tổng hợp điểm bố cục từ GAIC & SAMP…")
             }
             modern = nil
+            if !isHighMem {
+                CharmPhotographicModel.clearCache()
+            }
             for poolItem in pool {
                 if let matchIdx = allEvaluated.firstIndex(where: {
                     $0.proposal.sourceCorners == poolItem.proposal.sourceCorners &&
@@ -330,9 +341,13 @@ final class CompositionAestheticSearch {
                     allEvaluated[matchIdx].proposal.score = poolItem.proposal.score
                 }
             }
-            usedSpecialist = usedSpecialist && !pool.isEmpty && modernCount == pool.count
-            evaluated = pool
-            if !usedSpecialist {
+            if modernCount == pool.count && !pool.isEmpty {
+                usedSpecialist = usedSpecialist || usedGAIC
+                evaluated = pool
+            } else if modernCount > 0 {
+                evaluated = pool
+                usedSpecialist = usedGAIC || assessedCount == evaluated.count
+            } else if !usedGAIC && !usedSpecialist {
                 for index in evaluated.indices { evaluated[index].proposal.score = evaluated[index].geometryScore }
             }
         }
@@ -479,11 +494,9 @@ final class CompositionAestheticSearch {
         if let baseline, !selected.contains(where: { $0.proposal.isUnchangedView }) {
             selected = Array(selected.prefix(2)) + [baseline]
         }
-        // The view model compares the leading two scores before auto-selection.
-        // Restoring the original frame must not leave a stronger runner-up third.
         selected.sort { $0.proposal.score > $1.proposal.score }
         var robust = false
-        if usedSpecialist, let best = selected.first {
+        if (usedSpecialist || usedGAIC), let best = selected.first {
             if best.proposal.isUnchangedView {
                 robust = true
             } else {
@@ -505,10 +518,13 @@ final class CompositionAestheticSearch {
                 abs(log(Double(best.proposal.zoom / alternative.proposal.zoom))) < 0.08
             robust = robust && (nearlySame || best.proposal.score - alternative.proposal.score >= 0.015)
         }
-        return Result(views: selected, assessedCount: assessedCount,
-                      canAutoselect: usedSpecialist && robust && assessedCount >= 10, usedSpecialist: usedSpecialist,
+        let effectiveAssessed = usedGAIC ? max(assessedCount, allGAICScoredProposals.count) : assessedCount
+        return Result(views: selected, assessedCount: effectiveAssessed,
+                      canAutoselect: (usedSpecialist || usedGAIC) && robust && effectiveAssessed >= 6,
+                      usedSpecialist: usedSpecialist || usedGAIC,
                       modernAssessmentCount: modernCount,
-                      allEvaluatedViews: allEvaluated)
+                      allEvaluatedViews: allEvaluated,
+                      allGAICProposals: allGAICScoredProposals)
     }
 }
 

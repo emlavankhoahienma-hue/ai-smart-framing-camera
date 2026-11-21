@@ -66,3 +66,10 @@ eval_set.json
 # Local extract bundle and master prompts
 ai_cloud_vision_full_bundle.txt
 PROMPT_NANG_CAP_AI_CLOUD_VISION.txt
+
+# Audit trash staging & temporary scratch files
+_TRASH_CHECK/
+_tmp_*.py
+*.bak
+*.tmp
+.mypy_cache/
