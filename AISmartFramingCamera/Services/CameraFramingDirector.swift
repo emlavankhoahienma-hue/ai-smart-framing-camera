@@ -997,7 +997,8 @@ enum CameraFramingDirector {
         let baseVisHero = visibleFraction(heroBox, margin: 0.025)
 
         let skyPrefY: Double = horizonInfo.skyRich >= horizonInfo.groundRich * 0.92 ? 0.667 : 0.333
-        let rawHorizonOK = role != .skyLandscape || horizonInfo.horizonY.map { abs($0 - skyPrefY) < 0.10 } ?? true
+        let horizonTargetY: Double = isWaterReflection ? 0.50 : skyPrefY
+        let rawHorizonOK = role != .skyLandscape || horizonInfo.horizonY.map { abs($0 - horizonTargetY) < 0.045 } ?? true
         let gaicHeadroom = neuralField.maxScore - neuralField.baseScore
         let rawAlreadyStrong = (gaicHeadroom < 0.025) && rawEdgeDist >= 0.27 && !heroCrampedSide && rawHorizonOK &&
             visualSize >= targetScale * 0.72 && abs(heroGazeX) < 0.14 && clutterSum < 0.28
@@ -1094,7 +1095,9 @@ enum CameraFramingDirector {
             let distCenter = hypot(Double(cand.destG.x) - 0.5, Double(cand.destG.y) - 0.5)
             let leftOpen = 1.0 - halfDepthMean(leftHalf: true, raster: raster, in: evalCrop, splitX: Double(effectiveAnchor.x))
             let rightOpen = 1.0 - halfDepthMean(leftHalf: false, raster: raster, in: evalCrop, splitX: Double(effectiveAnchor.x))
-            let torqueBal = visualBalanceScore(raster: raster, in: evalCrop, aim: cand.aim, relZoom: relZ)
+            let torqueBal = (role == .skyLandscape && relZ <= 1.05)
+                ? visualBalanceScore(raster: raster, in: evalCrop, aim: CGPoint(x: 0.5, y: 0.5), relZoom: 1.0)
+                : visualBalanceScore(raster: raster, in: evalCrop, aim: cand.aim, relZoom: relZ)
             let destEdge = min(Double(cand.destG.x), min(1.0 - Double(cand.destG.x), min(Double(cand.destG.y), 1.0 - Double(cand.destG.y))))
             let edgePen = max(0.0, (0.22 - destEdge) * 2.2)
 
