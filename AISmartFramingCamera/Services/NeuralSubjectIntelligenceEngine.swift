@@ -672,6 +672,10 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     private let renderer = CompositionImageRenderer()
     public init() {}
 
+    private struct SendablePixelBuffer: @unchecked Sendable {
+        let value: CVPixelBuffer
+    }
+
     /// Non-blocking async entry point for UI/ViewModel callers. Runs on the dedicated serial worker queue
     /// and exits immediately if cancelled while queued behind an earlier request.
     func analyzeCompositionAsync(pixelBuffer: CVPixelBuffer, frame: TrackingFrameContext,
@@ -679,14 +683,15 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                                  preferences: [String: Double], requestID: UUID,
                                  cancellation: CompositionAnalysisCancellation,
                                  progress: @escaping @Sendable (String) -> Void = { _ in }) async -> LocalCompositionAnalysis? {
-        await withCheckedContinuation { continuation in
+        let bufferBox = SendablePixelBuffer(value: pixelBuffer)
+        return await withCheckedContinuation { continuation in
             analysisQueue.async {
                 if cancellation.isCancelled {
                     continuation.resume(returning: nil)
                     return
                 }
                 let result = self.analyzeComposition(
-                    pixelBuffer: pixelBuffer, frame: frame, pose: pose,
+                    pixelBuffer: bufferBox.value, frame: frame, pose: pose,
                     allowedZooms: allowedZooms, preferences: preferences,
                     requestID: requestID, cancellation: cancellation, progress: progress
                 )
