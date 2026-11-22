@@ -92,6 +92,7 @@ public final class FilmFilterEngine: @unchecked Sendable {
     private let stateLock = NSLock()
     private var _activeFilmTuning: FilmSimulationTuning = .neutral
     private var _activeSoftwareWhiteBalance: ProPhotoSoftwareWBGrade = .inactive
+    private var _activePhotographicStyle: PhotographicStyleState = .standard
 
     public var activeFilmTuning: FilmSimulationTuning {
         get {
@@ -115,6 +116,19 @@ public final class FilmFilterEngine: @unchecked Sendable {
         set {
             stateLock.lock()
             _activeSoftwareWhiteBalance = newValue
+            stateLock.unlock()
+        }
+    }
+
+    public var activePhotographicStyle: PhotographicStyleState {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _activePhotographicStyle
+        }
+        set {
+            stateLock.lock()
+            _activePhotographicStyle = newValue
             stateLock.unlock()
         }
     }
@@ -211,12 +225,20 @@ public final class FilmFilterEngine: @unchecked Sendable {
         return output
     }
 
+    // MARK: - Single-Pass Metal Photographic Style Color Science
+
+    public func applyPhotographicStyle(to inputImage: CIImage, style: PhotographicStyleState) -> CIImage {
+        guard !style.isIdentity else { return inputImage }
+        return PhotographicStyleMetalKernel.apply(to: inputImage, style: style)
+    }
+
     // MARK: - Manual Film Presets (62 Tones Chuyen Nghiep)
     public func applyPreset(to image: CGImage, preset: FilmPreset, intensity: Float = 1.0) -> CGImage? {
         let wb = activeSoftwareWhiteBalance
+        let photoStyle = activePhotographicStyle
         let tuning = activeFilmTuning
         let hasPreset = preset != .aiFullAuto && preset != .standard && preset != .proColorGrade && intensity > 0.001
-        guard hasPreset || !wb.isIdentity || !tuning.isIdentity else { return image }
+        guard hasPreset || !wb.isIdentity || !photoStyle.isIdentity || !tuning.isIdentity else { return image }
         let ciImage = CIImage(cgImage: image)
         guard let filteredCI = applyPreset(to: ciImage, preset: preset, intensity: intensity) else { return image }
         return context.createCGImage(
@@ -235,15 +257,19 @@ public final class FilmFilterEngine: @unchecked Sendable {
         applyUserGrade: Bool = true
     ) -> CIImage? {
         let wb = applyUserGrade ? activeSoftwareWhiteBalance : .inactive
+        let photoStyle = applyUserGrade ? activePhotographicStyle : .standard
         let tuning = applyUserGrade ? activeFilmTuning : .neutral
         let hasPreset = preset != .standard && preset != .aiFullAuto && preset != .proColorGrade && intensity > 0.001
-        guard hasPreset || !wb.isIdentity || !tuning.isIdentity else { return inputImage }
+        guard hasPreset || !wb.isIdentity || !photoStyle.isIdentity || !tuning.isIdentity else { return inputImage }
 
         let prevRealtime = FilmSimulationCore.isRealtimePreview
         FilmSimulationCore.isRealtimePreview = isRealtimePreview
         defer { FilmSimulationCore.isRealtimePreview = prevRealtime }
 
-        let wbAdjustedInput = applySoftwareWhiteBalance(to: inputImage, wb: wb)
+        let wbAdjustedInput = applyPhotographicStyle(
+            to: applySoftwareWhiteBalance(to: inputImage, wb: wb),
+            style: photoStyle
+        )
         let workingOutput: CIImage
 
         if !hasPreset {
@@ -361,7 +387,10 @@ public final class FilmFilterEngine: @unchecked Sendable {
         // Build one lazy graph and render once, avoiding two full 48 MP RGBA
         // intermediates and an unnecessary 8-bit colour round trip.
         var output = CIImage(cgImage: image)
-        if (preset != .standard && preset != .aiFullAuto) || !activeSoftwareWhiteBalance.isIdentity || !activeFilmTuning.isIdentity {
+        if (preset != .standard && preset != .aiFullAuto)
+            || !activeSoftwareWhiteBalance.isIdentity
+            || !activePhotographicStyle.isIdentity
+            || !activeFilmTuning.isIdentity {
             output = applyPreset(to: output, preset: preset, intensity: intensity) ?? output
         }
         if let params {

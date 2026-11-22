@@ -11,6 +11,7 @@ public final class HapticFeedbackService {
     private let notificationFeedback = UINotificationFeedbackGenerator()
     
     private var lastSnapTime: TimeInterval = 0
+    private var lastPadTickTime: TimeInterval = 0
     
     public init() {
         prepare()
@@ -42,6 +43,19 @@ public final class HapticFeedbackService {
     // MARK: - Light Tap / Zoom Snap
     public func triggerLight() {
         impactLight.impactOccurred(intensity: 0.7)
+    }
+
+    // MARK: - Medium Center Origin Detent (Photographic Styles Control Pad)
+    public func triggerMedium() {
+        impactMedium.impactOccurred(intensity: 0.78)
+    }
+
+    // MARK: - Throttled Micro-Detent Grid Tick (>= 35ms debounce)
+    public func triggerPadGridTick() {
+        let now = CACurrentMediaTime()
+        guard now - lastPadTickTime >= 0.035 else { return }
+        lastPadTickTime = now
+        selectionFeedback.selectionChanged()
     }
 
     // MARK: - Mode or Filter Selection

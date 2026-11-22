@@ -17,6 +17,7 @@ public enum CameraFeature: String, CaseIterable, Sendable {
     case masterWatermark
     case videoQualityAndCodec
     case filmColor
+    case photographicStyles
     case focusPeaking
     case proPhoto
 }
@@ -248,6 +249,18 @@ public enum CameraFeatureGate {
             }
             if ctx.isRecordingVideo {
                 return .disabled(shortHint: "Đang quay", detailReason: "Dừng quay video để đổi bộ lọc màu")
+            }
+            return .available
+
+        case .photographicStyles:
+            if ctx.isVideo {
+                return .disabled(shortHint: "Chỉ chế độ Ảnh", detailReason: "Photographic Styles chỉ hỗ trợ chế độ Ảnh & Pro để khớp 100% màu ảnh xuất ra")
+            }
+            if ctx.selectedPhotoFormat == .dng {
+                return .disabled(shortHint: "Không dùng RAW", detailReason: "Đổi khỏi RAW DNG để dùng Photographic Styles")
+            }
+            if ctx.isRecordingVideo {
+                return .disabled(shortHint: "Đang quay", detailReason: "Dừng quay video để chỉnh Photographic Styles")
             }
             return .available
 

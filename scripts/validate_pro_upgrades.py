@@ -7,6 +7,7 @@
 6. Multi-Mode Viewfinder Grid with animated button icon
 7. High-Fidelity Master Frame for Video (AVAssetReader/AVAssetWriter + Audio Passthrough)
 """
+import re
 import unittest
 from pathlib import Path
 
@@ -484,6 +485,99 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         ci_yml = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ios-build.yml").read_text(encoding="utf-8")
         self.assertIn("cp AISmartFramingCamera/Resources/LUTs/*.bin Payload/AISmartFramingCamera.app/LUTs/", ci_yml)
         self.assertNotIn("cp -r AISmartFramingCamera/Resources/LUTs/* Payload/AISmartFramingCamera.app/", ci_yml)
+
+    def test_17_photographic_styles_metal_color_science_and_pad(self):
+        # 1. Models: 8 presets split cleanly into standard / undertone / mood + real HUD numbers
+        models = source("Models/PhotographicStyleModels.swift")
+        for token in [
+            "public enum PhotographicStylePreset:",
+            "case standard",
+            "case warmAmber",
+            "case softRose",
+            "case neutral",
+            "case richContrast",
+            "case vibrant",
+            "case coolMood",
+            "case starkBW",
+            "public struct PhotographicStyleState:",
+            "public var isIdentity: Bool",
+            "public var isModifiedFromPresetDefault: Bool",
+        ]:
+            self.assertIn(token, models)
+
+        # 2. Single-Pass Metal CIImageProcessorKernel (Linear RGBAh, OkLab, Skin Mask, Filmic Shoulder, Linear Mix)
+        kernel = source("Services/PhotographicStyleMetalKernel.swift")
+        for token in [
+            "CIImageProcessorKernel",
+            "formatForInput(at input: Int32) -> CIFormat",
+            ".RGBAh",
+            "signedCbrt",
+            "linearSRGBToOkLab",
+            "okLabToLinearSRGB",
+            "computeSkinMaskOkLab",
+            "applyHighlightShoulder",
+            "mix(origLinear, graded, palette)",
+            "dispatchThreadgroups",
+            "applyCoreImageFallback",
+        ]:
+            self.assertIn(token, kernel)
+        # Ensure MSL never uses invalid cbrt() and every literal smoothstep(e0, e1, ...) satisfies e0 < e1
+        self.assertNotIn("cbrtf(", kernel)
+        for m_ss in re.finditer(r"smoothstep\(\s*([+-]?\d+(?:\.\d+)?)f\s*,\s*([+-]?\d+(?:\.\d+)?)f", kernel):
+            self.assertLess(float(m_ss.group(1)), float(m_ss.group(2)), f"Reversed MSL smoothstep: {m_ss.group(0)}")
+        # Verify exact Björn Ottosson OkLab inverse matrix (guards against transposed M1_inv regression)
+        self.assertIn("+4.0767416613f * l - 3.3077115904f * m + 0.2309699287f * s", kernel)
+        self.assertIn("-1.2684380041f * l + 2.6097574007f * m - 0.3413193963f * s", kernel)
+        self.assertIn("-0.0041960865f * l - 0.7034186145f * m + 1.7076147009f * s", kernel)
+
+        # 3. Real pipeline wired into FilmFilterEngine, CameraPreviewView, CameraViewModel & FeatureGate
+        engine = source("Services/FilmFilterEngine.swift")
+        self.assertIn("public var activePhotographicStyle: PhotographicStyleState", engine)
+        self.assertIn("PhotographicStyleMetalKernel.apply(to: inputImage, style: style)", engine)
+
+        preview = source("Views/CameraPreviewView.swift")
+        self.assertIn("photographicStyle: viewModel.effectivePhotographicStyle", preview)
+        self.assertIn("photographicStyle == lastPhotographicStyle", preview)
+
+        gate = source("Models/CameraFeatureGate.swift")
+        self.assertIn("case photographicStyles", gate)
+        self.assertIn("if ctx.isVideo", gate)
+
+        vm = source("ViewModels/CameraViewModel.swift")
+        self.assertIn("private var photographicStyleMemory: [PhotographicStylePreset: PhotographicStyleState]", vm)
+        self.assertIn("public var effectivePhotographicStyle: PhotographicStyleState", vm)
+        self.assertIn("@Published public var photographicStyle: PhotographicStyleState = .standard", vm)
+        self.assertIn("@Published public var isShowingPhotographicStylePad: Bool = false", vm)
+        self.assertIn("public func resetActivePhotographicStylePreset()", vm)
+
+        # 4. Native iOS 2D Control Pad UI (no AI/neon slop, Gaussian proximity Canvas, hysteresis snap, numbered slider)
+        pad = source("Views/PhotographicStylesPadView.swift")
+        for token in [
+            "public struct PhotographicStyleQuickTriggerButton: View",
+            "public struct PhotographicStylesControlPadOverlay: View",
+            "snapEnterDeadzone: Float = 0.04",
+            "snapExitDeadzone: Float = 0.065",
+            "monospacedDigit()",
+            "PhotographicPaletteSlider",
+            "triggerPadGridTick()",
+        ]:
+            self.assertIn(token, pad)
+        self.assertNotIn("electricCyan", pad)
+        self.assertNotIn("iridescentRainbow", pad)
+
+        main_view = source("Views/CameraMainView.swift")
+        self.assertIn("PhotographicStyleQuickTriggerButton(viewModel: viewModel)", main_view)
+        self.assertIn("PhotographicStylesControlPadOverlay(viewModel: viewModel, compact: layout.isCompact)", main_view)
+
+        # 5. All 3 new Swift files registered cleanly in project.pbxproj
+        pbx = PBXPROJ.read_text(encoding="utf-8")
+        for filename in [
+            "PhotographicStyleModels.swift",
+            "PhotographicStyleMetalKernel.swift",
+            "PhotographicStylesPadView.swift",
+        ]:
+            self.assertIn(f"/* {filename} */", pbx)
+            self.assertIn(f"/* {filename} in Sources */", pbx)
 
 
 if __name__ == "__main__":

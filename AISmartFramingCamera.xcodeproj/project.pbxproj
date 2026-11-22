@@ -100,6 +100,9 @@
 		C2000000000000000000007F /* ProPhotoManualControlsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000007F /* ProPhotoManualControlsService.swift */; };
 		C20000000000000000000080 /* ProPhotoControlsOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000080 /* ProPhotoControlsOverlayView.swift */; };
 		C20000000000000000000081 /* HorizonLevelerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000081 /* HorizonLevelerService.swift */; };
+		C20000000000000000000082 /* PhotographicStyleModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000082 /* PhotographicStyleModels.swift */; };
+		C20000000000000000000083 /* PhotographicStyleMetalKernel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000083 /* PhotographicStyleMetalKernel.swift */; };
+		C20000000000000000000084 /* PhotographicStylesPadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000084 /* PhotographicStylesPadView.swift */; };
 		C20000000000000000000076 /* NativeTrackingCore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000076 /* NativeTrackingCore.cpp */; };
 		C20000000000000000000079 /* NativeOpticsCore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000079 /* NativeOpticsCore.cpp */; };
 		C2000000000000000000007A /* NativeOpticsBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000007A /* NativeOpticsBridge.swift */; };
@@ -201,6 +204,9 @@
 		C1000000000000000000007F /* ProPhotoManualControlsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProPhotoManualControlsService.swift; sourceTree = "<group>"; };
 		C10000000000000000000080 /* ProPhotoControlsOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProPhotoControlsOverlayView.swift; sourceTree = "<group>"; };
 		C10000000000000000000081 /* HorizonLevelerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HorizonLevelerService.swift; sourceTree = "<group>"; };
+		C10000000000000000000082 /* PhotographicStyleModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotographicStyleModels.swift; sourceTree = "<group>"; };
+		C10000000000000000000083 /* PhotographicStyleMetalKernel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotographicStyleMetalKernel.swift; sourceTree = "<group>"; };
+		C10000000000000000000084 /* PhotographicStylesPadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotographicStylesPadView.swift; sourceTree = "<group>"; };
 		C10000000000000000000075 /* NativeTrackingCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NativeTrackingCore.h; sourceTree = "<group>"; };
 		C10000000000000000000076 /* NativeTrackingCore.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NativeTrackingCore.cpp; sourceTree = "<group>"; };
 		C10000000000000000000078 /* NativeOpticsCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NativeOpticsCore.h; sourceTree = "<group>"; };
@@ -255,6 +261,7 @@
 			children = (
 				B10000000000000000000002 /* FramingModels.swift */,
 				C1000000000000000000007B /* CameraFeatureGate.swift */,
+				C10000000000000000000082 /* PhotographicStyleModels.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -305,6 +312,7 @@
 				C1000000000000000000007E /* OpenWorldSubjectDetector.swift */,
 				C1000000000000000000007F /* ProPhotoManualControlsService.swift */,
 				C10000000000000000000081 /* HorizonLevelerService.swift */,
+				C10000000000000000000083 /* PhotographicStyleMetalKernel.swift */,
 				C10000000000000000000062 /* CharmPhotographicModel.swift */,
 				C10000000000000000000063 /* PortraitFramingEvidence.swift */,
 				C10000000000000000000064 /* CompositionTuning.swift */,
@@ -382,6 +390,7 @@
 				B100000000000000000000022 /* FeedbackView.swift */,
 				B100000000000000000000024 /* LiveColorHistogramHUDView.swift */,
 				C10000000000000000000080 /* ProPhotoControlsOverlayView.swift */,
+				C10000000000000000000084 /* PhotographicStylesPadView.swift */,
 				B100000000000000000000037 /* PhotoGallerySheetView.swift */,
 				C10000000000000000000044 /* WindowedZoomOverlayView.swift */,
 				C10000000000000000000051 /* AudioVULevelMeterView.swift */,
@@ -547,6 +556,9 @@
 				C2000000000000000000007F /* ProPhotoManualControlsService.swift in Sources */,
 				C20000000000000000000080 /* ProPhotoControlsOverlayView.swift in Sources */,
 				C20000000000000000000081 /* HorizonLevelerService.swift in Sources */,
+				C20000000000000000000082 /* PhotographicStyleModels.swift in Sources */,
+				C20000000000000000000083 /* PhotographicStyleMetalKernel.swift in Sources */,
+				C20000000000000000000084 /* PhotographicStylesPadView.swift in Sources */,
 				C20000000000000000000062 /* CharmPhotographicModel.swift in Sources */,
 				C20000000000000000000063 /* PortraitFramingEvidence.swift in Sources */,
 				C20000000000000000000064 /* CompositionTuning.swift in Sources */,

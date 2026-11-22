@@ -258,15 +258,36 @@ public struct CameraMainView: View {
                                     .transition(.opacity)
                             }
                         }
-                        // Expanded Pro RGB + Luma Scope HUD (Top Trailing khi chạm vào Histogram hoặc bật trong Cài đặt)
+                        // Expanded Pro RGB + Luma Scope HUD / Photographic Styles 3x3 Quick Trigger (Top Trailing)
                         .overlay(alignment: .topTrailing) {
+                            let proTopOffset: CGFloat = (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 64 : 0
+                            let horizonOffset: CGFloat = viewModel.isHorizonLockEnabled ? 34 : 0
+
                             if viewModel.showHistogramInViewfinder && viewModel.isHistogramBarExpanded && !viewModel.isCameraHibernating {
-                                let proTopOffset: CGFloat = (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 64 : 0
-                                let horizonOffset: CGFloat = viewModel.isHorizonLockEnabled ? 34 : 0
                                 ProHistogramExpandedHUDView(viewModel: viewModel)
                                     .padding(.top, layout.viewfinderTopInset + proTopOffset + horizonOffset)
                                     .padding(.trailing, 10)
                                     .transition(.scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity))
+                            } else if !viewModel.captureMode.isVideo &&
+                                      !viewModel.isCameraHibernating &&
+                                      !viewModel.isWindowedZoomActive &&
+                                      !viewModel.isShowingPhotographicStylePad {
+                                PhotographicStyleQuickTriggerButton(viewModel: viewModel)
+                                    .padding(.top, layout.viewfinderTopInset + proTopOffset + horizonOffset)
+                                    .padding(.trailing, 10)
+                                    .transition(.scale(scale: 0.90, anchor: .topTrailing).combined(with: .opacity))
+                            }
+                        }
+                        // Tap vùng trống khung ngắm để thu gọn Photographic Styles Control Pad mượt mà
+                        .overlay {
+                            if viewModel.isShowingPhotographicStylePad && !viewModel.captureMode.isVideo && !viewModel.isCameraHibernating {
+                                Color.clear
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                                            viewModel.isShowingPhotographicStylePad = false
+                                        }
+                                    }
                             }
                         }
                         // Top Viewfinder Overlays (Pro Photo Telemetry / Video Timer / AI Status)
@@ -286,10 +307,14 @@ public struct CameraMainView: View {
                             }
                             .padding(.top, layout.viewfinderTopInset)
                         }
-                        // Bottom In-Viewfinder Smoked Glass Zoom Capsule / Pro Photo Manual Deck
+                        // Bottom In-Viewfinder Smoked Glass Zoom Capsule / Pro Photo Manual Deck / Photographic Styles Control Pad
                         .overlay(alignment: .bottom) {
                             if !viewModel.isWindowedZoomActive {
-                                if viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo && !viewModel.isCameraHibernating {
+                                if viewModel.isShowingPhotographicStylePad && !viewModel.captureMode.isVideo && !viewModel.isCameraHibernating {
+                                    PhotographicStylesControlPadOverlay(viewModel: viewModel, compact: layout.isCompact)
+                                        .padding(.bottom, max(6, layout.viewfinderBottomInset - 2))
+                                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                                } else if viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo && !viewModel.isCameraHibernating {
                                     ProPhotoManualDeckView(viewModel: viewModel)
                                         .padding(.bottom, max(6, layout.viewfinderBottomInset - 2))
                                         .transition(.move(edge: .bottom).combined(with: .opacity))

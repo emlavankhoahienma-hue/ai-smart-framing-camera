@@ -305,6 +305,9 @@ public final class CameraViewModel: ObservableObject {
                 localCompositionAimPoint = nil
             default:
                 visionEngine.isIdlePreviewMode = false
+                if isShowingPhotographicStylePad {
+                    isShowingPhotographicStylePad = false
+                }
             }
             updateFrameProcessingConfiguration()
         }
@@ -322,7 +325,7 @@ public final class CameraViewModel: ObservableObject {
         didSet {
             if !isFilmSimulationActive {
                 isColorAppliedByAI = false
-                let targetPreset: FilmPreset = (!activeProSoftwareWB.isIdentity || !filmTuning.isIdentity) ? .proColorGrade : .standard
+                let targetPreset: FilmPreset = (!activeProSoftwareWB.isIdentity || !filmTuning.isIdentity || !effectivePhotographicStyle.isIdentity) ? .proColorGrade : .standard
                 if selectedFilmPreset != targetPreset {
                     selectedFilmPreset = targetPreset
                 }
@@ -333,6 +336,69 @@ public final class CameraViewModel: ObservableObject {
     }
     @Published public var selectedFilmPreset: FilmPreset = .standard
     private var isColorAppliedByAI: Bool = false
+
+    /// Trạng thái Photographic Styles 2D Control Pad (mặc định Tiêu chuẩn khi khởi chạy; lưu bộ nhớ theo từng preset trong phiên).
+    private var photographicStyleMemory: [PhotographicStylePreset: PhotographicStyleState] = [:]
+    /// Tự động đưa về `.standard` khi đang ở chế độ Video hoặc chụp RAW DNG để đảm bảo Live Preview khớp 100% file xuất ra.
+    public var effectivePhotographicStyle: PhotographicStyleState {
+        (captureMode.isVideo || selectedPhotoFormat == .dng) ? .standard : photographicStyle
+    }
+    @Published public var photographicStyle: PhotographicStyleState = .standard {
+        didSet {
+            photographicStyleMemory[photographicStyle.preset] = photographicStyle
+            FilmFilterEngine.shared.activePhotographicStyle = effectivePhotographicStyle
+            syncProColorPassthroughPreset()
+        }
+    }
+    @Published public var isShowingPhotographicStylePad: Bool = false {
+        didSet {
+            if isShowingPhotographicStylePad {
+                if isShowingFilmDrawer { isShowingFilmDrawer = false }
+                if isFunctionDrawerOpen { isFunctionDrawerOpen = false }
+            }
+        }
+    }
+
+    public func selectPhotographicStylePreset(_ preset: PhotographicStylePreset) {
+        let restored = photographicStyleMemory[preset] ?? PhotographicStyleState.defaultState(for: preset)
+        photographicStyle = restored
+    }
+
+    public func updatePhotographicStyle(tone: Float, color: Float) {
+        var next = photographicStyle
+        next.tone = tone.isFinite ? max(-1.0, min(1.0, tone)) : 0.0
+        next.color = color.isFinite ? max(-1.0, min(1.0, color)) : 0.0
+        photographicStyle = next
+    }
+
+    public func updatePhotographicStyle(palette: Float) {
+        var next = photographicStyle
+        next.palette = palette.isFinite ? max(0.0, min(1.0, palette)) : 1.0
+        photographicStyle = next
+    }
+
+    /// Chỉ đặt lại preset đang chọn về mặc định của chính nó (không xóa các preset khác trong phiên).
+    public func resetActivePhotographicStylePreset() {
+        haptics.triggerMedium()
+        let reset = PhotographicStyleState.defaultState(for: photographicStyle.preset)
+        photographicStyleMemory[photographicStyle.preset] = reset
+        withAnimation(.spring(response: 0.26, dampingFraction: 0.80)) {
+            photographicStyle = reset
+        }
+    }
+
+    /// Chạm đúp trên lưới 2D -> trả (Tone, Color) về mốc gốc (0, 0), giữ nguyên Preset & Palette hiện tại.
+    public func resetPhotographicStyleAxesOnly() {
+        var next = photographicStyle
+        next.tone = next.preset.defaultTone
+        next.color = next.preset.defaultColor
+        photographicStyle = next
+    }
+
+    public func hasSessionEditsForPhotographicStyle(_ preset: PhotographicStylePreset) -> Bool {
+        guard let stored = photographicStyleMemory[preset] else { return false }
+        return stored.isModifiedFromPresetDefault
+    }
 
     /// Tham số tinh chỉnh giả lập phim theo thời gian thực (Tương phản, Bão hòa, Độ ấm, Sáng/Tối, Hạt phim, Viền tối).
     @Published public var filmTuning: FilmSimulationTuning = .neutral {
@@ -351,7 +417,7 @@ public final class CameraViewModel: ObservableObject {
 
     private func syncProColorPassthroughPreset() {
         guard !isFilmSimulationActive else { return }
-        let needsPassthrough = !activeProSoftwareWB.isIdentity || !filmTuning.isIdentity
+        let needsPassthrough = !activeProSoftwareWB.isIdentity || !filmTuning.isIdentity || !effectivePhotographicStyle.isIdentity
         let desired: FilmPreset = needsPassthrough ? .proColorGrade : .standard
         if selectedFilmPreset != desired {
             selectedFilmPreset = desired
@@ -371,6 +437,8 @@ public final class CameraViewModel: ObservableObject {
         withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
             isColorAppliedByAI = false
             filmTuning = .neutral
+            photographicStyleMemory.removeAll()
+            photographicStyle = .standard
             isFilmSimulationActive = false
             selectedFilmPreset = activeProSoftwareWB.isIdentity ? .standard : .proColorGrade
             isAIFullColorEnabled = false
@@ -410,9 +478,12 @@ public final class CameraViewModel: ObservableObject {
         didSet {
             UserDefaults.standard.set(captureMode.rawValue, forKey: "captureMode")
             windowedZoomAspectRatio = captureMode.isVideo ? .ratio16_9 : .ratio3_4
-            if captureMode.isVideo && isProPhotoModeEnabled {
-                isProPhotoModeEnabled = false
+            if captureMode.isVideo {
+                if isProPhotoModeEnabled { isProPhotoModeEnabled = false }
+                if isShowingPhotographicStylePad { isShowingPhotographicStylePad = false }
             }
+            FilmFilterEngine.shared.activePhotographicStyle = effectivePhotographicStyle
+            syncProColorPassthroughPreset()
             if oldValue == .proVideo && captureMode != .proVideo {
                 proVideoService.resetToFullAuto()
             } else if captureMode == .proVideo {
@@ -439,7 +510,10 @@ public final class CameraViewModel: ObservableObject {
             if selectedPhotoFormat == .dng {
                 if isUltraSharpEnabled { isUltraSharpEnabled = false }
                 if isLivePhotoEnabled { isLivePhotoEnabled = false }
+                if isShowingPhotographicStylePad { isShowingPhotographicStylePad = false }
             }
+            FilmFilterEngine.shared.activePhotographicStyle = effectivePhotographicStyle
+            syncProColorPassthroughPreset()
         }
     }
     @Published public var isSuperResolutionRAWEnabled: Bool = UserDefaults.standard.bool(forKey: "isSuperResolutionRAWEnabled") {
@@ -1202,7 +1276,13 @@ public final class CameraViewModel: ObservableObject {
     private var autoFocusPolicy = AutoFocusCapturePolicy()
 
     // MARK: - Kho Chức Năng (Feature Drawer & Quick Tools)
-    @Published public var isFunctionDrawerOpen: Bool = false
+    @Published public var isFunctionDrawerOpen: Bool = false {
+        didSet {
+            if isFunctionDrawerOpen && isShowingPhotographicStylePad {
+                isShowingPhotographicStylePad = false
+            }
+        }
+    }
     @Published public var viewfinderGridStyle: ViewfinderGridStyle = .off {
         didSet {
             UserDefaults.standard.set(viewfinderGridStyle.rawValue, forKey: "viewfinderGridStyle")
@@ -1503,12 +1583,21 @@ public final class CameraViewModel: ObservableObject {
             updateCameraHibernationState()
         }
     }
-    @Published public var isShowingFilmDrawer: Bool = false
+    @Published public var isShowingFilmDrawer: Bool = false {
+        didSet {
+            if isShowingFilmDrawer && isShowingPhotographicStylePad {
+                isShowingPhotographicStylePad = false
+            }
+        }
+    }
 
     // MARK: - Windowed Zoom State (Optical Rangefinder Framing)
     @Published public var isWindowedZoomActive: Bool = false {
         didSet {
             if isWindowedZoomActive {
+                if isShowingPhotographicStylePad {
+                    isShowingPhotographicStylePad = false
+                }
                 if aiSessionState.isSessionActive {
                     cancelAISession()
                 }
@@ -2540,7 +2629,8 @@ public final class CameraViewModel: ObservableObject {
                 preset: self.selectedFilmPreset,
                 intensity: Float(self.filmSimulationIntensity),
                 softwareWB: self.activeProSoftwareWB,
-                filmTuning: self.filmTuning
+                filmTuning: self.filmTuning,
+                photographicStyle: self.effectivePhotographicStyle
             )
         }
     }
