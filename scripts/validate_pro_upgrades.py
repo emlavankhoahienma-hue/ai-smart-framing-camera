@@ -310,7 +310,7 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         controls = source("Views/CameraControlsView.swift")
         self.assertIn('case proPhoto = "PRO"', controls)
         self.assertIn("viewModel.selectProPhotoMode()", controls)
-        self.assertIn("private var filmTuningBar: some View", controls)
+        self.assertIn("VintageCameraDrawerView(viewModel: viewModel)", controls)
 
         main_view = source("Views/CameraMainView.swift")
         self.assertIn("ProPhotoTelemetryHUDView(viewModel: viewModel)", main_view)
@@ -537,7 +537,7 @@ class ProCameraUpgradesContracts(unittest.TestCase):
 
         preview = source("Views/CameraPreviewView.swift")
         self.assertIn("photographicStyle: viewModel.effectivePhotographicStyle", preview)
-        self.assertIn("photographicStyle == lastPhotographicStyle", preview)
+        self.assertIn("params != lastRenderParams", preview)
 
         gate = source("Models/CameraFeatureGate.swift")
         self.assertIn("case photographicStyles", gate)
@@ -575,8 +575,9 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         self.assertNotIn("electricCyan", pad)
         self.assertNotIn("iridescentRainbow", pad)
 
-        self.assertIn("photographicStyleOverride: splitTransition.leftStyle", preview)
-        self.assertIn("photographicStyleOverride: splitTransition.rightStyle", preview)
+        unified = source("Services/UnifiedMetalColorEngine.swift")
+        self.assertIn("params.splitTransition.leftStyle", unified)
+        self.assertIn("params.splitTransition.rightStyle", unified)
         self.assertIn("public func finishPhotographicStyleSwipe(", vm)
 
         main_view = source("Views/CameraMainView.swift")
@@ -648,6 +649,127 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         pbx = PBXPROJ.read_text(encoding="utf-8")
         self.assertIn("/* FilmicColorScienceKernel.swift */", pbx)
         self.assertIn("/* FilmicColorScienceKernel.swift in Sources */", pbx)
+
+    def test_19_unified_zero_lag_metal_vintage_cameras_date_stamp_light_leak(self):
+        # 1. Verify all 18 studio-lit miniature camera PNGs + sample_look.jpg exist and are packaged in CI
+        icons_dir = ROOT / "Resources/CameraIcons"
+        expected_icons = [
+            "cam_classic35.png", "cam_rangefinder_silver.png", "cam_disposable_green.png",
+            "cam_folding_orange.png", "cam_rangefinder_black.png", "cam_titanium_compact.png",
+            "cam_ricoh_gr.png", "cam_slr_chrome.png", "cam_medium120.png",
+            "cam_vhs.png", "cam_8mm.png", "cam_minidv.png",
+            "cam_ccd_silver.png", "cam_powershot_black.png", "cam_16mm_cine.png",
+            "cam_instax_mint.png", "cam_polaroid_rainbow.png", "cam_retro_phone.png",
+            "sample_look.jpg",
+        ]
+        for fname in expected_icons:
+            fpath = icons_dir / fname
+            self.assertTrue(fpath.is_file() and fpath.stat().st_size > 2000, f"Missing or tiny asset: {fname}")
+
+        ci_yml = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ios-build.yml").read_text(encoding="utf-8")
+        self.assertIn("Payload/AISmartFramingCamera.app/CameraIcons", ci_yml)
+
+        # 2. Verify VintageCameraModels defines date stamp, light leak, recipes, and references ONLY existing .bin LUTs
+        vmodels = source("Models/VintageCameraModels.swift")
+        for token in [
+            "public enum VintageDateStampStyle:",
+            "case classicQuartz",
+            "case retroLED",
+            "case compactSlanted",
+            "public struct VintageLightLeakConfig:",
+            "public struct VintageCameraOpticalRecipe:",
+            "public var cameraIconAssetName: String",
+            "public var cameraDisplayTag: String",
+            "public var metalOpticalRecipe: VintageCameraOpticalRecipe",
+        ]:
+            self.assertIn(token, vmodels)
+
+        lut_dir = ROOT / "Resources/LUTs"
+        for lut_name in re.findall(r'"([A-Za-z0-9._-]+)"', vmodels):
+            if any(lut_name.startswith(prefix) for prefix in ("Beetle.", "Fuji-", "CCD-", "Canon-")):
+                self.assertTrue((lut_dir / f"{lut_name}.bin").is_file(), f"Missing .bin LUT referenced in VintageCameraModels: {lut_name}")
+
+        # 3. Verify UnifiedMetalColorEngine 1:1 Swift/MSL struct alignment, safe MSL, .rgba16Float 3D LUT, Light Leak & Date Stamp
+        unified = source("Services/UnifiedMetalColorEngine.swift")
+        sw_m = re.search(r"private struct UnifiedColorUniforms \{(.*?)init\(", unified, re.S)
+        msl_m = re.search(r"struct UnifiedColorUniforms \{(.*?)\};", unified, re.S)
+        self.assertIsNotNone(sw_m)
+        self.assertIsNotNone(msl_m)
+        sw_fields = re.findall(r"var\s+(\w+):\s*SIMD4<Float>", sw_m.group(1))
+        msl_fields = re.findall(r"float4\s+(\w+);", msl_m.group(1))
+        self.assertEqual(sw_fields, msl_fields, "UnifiedColorUniforms Swift vs MSL field layout mismatch")
+        self.assertNotIn("cbrtf(", unified)
+        for m_ss in re.finditer(r"smoothstep\(\s*([+-]?\d+(?:\.\d+)?)f\s*,\s*([+-]?\d+(?:\.\d+)?)f", unified):
+            self.assertLess(float(m_ss.group(1)), float(m_ss.group(2)), f"Reversed MSL smoothstep: {m_ss.group(0)}")
+        for token in [
+            "CVMetalTextureCacheCreateTextureFromImage",
+            "kernel void unifiedCameraGradeYUV(",
+            "kernel void unifiedCameraGradeBGRA(",
+            ".rgba16Float",
+            "evaluateOrganicLightLeak(",
+            "public enum VintageDateStampRenderer",
+            "public final class VintageCameraIconCache",
+        ]:
+            self.assertIn(token, unified)
+
+        # 4. Verify Zero-Lag 60 FPS Architecture (non-blocking semaphore, background renderQueue, cached metal availability, zero-blur cursor)
+        preview = source("Views/CameraPreviewView.swift")
+        for token in [
+            "mtk.preferredFramesPerSecond = 60",
+            "DispatchSemaphore(value: 2)",
+            "DispatchQueue(label: \"com.alignai.metal.preview\", qos: .userInteractive)",
+            "UnifiedMetalColorEngine.shared.encodePreviewFrame(",
+            "func pushLiveColorStateFast(",
+            "lastSyncedDualActive",
+        ]:
+            self.assertIn(token, preview)
+
+        self.assertIn("public static let isMetalAvailable: Bool =", source("Services/PhotographicStyleMetalKernel.swift"))
+        self.assertIn("public static let isMetalAvailable: Bool =", source("Services/FilmicColorScienceKernel.swift"))
+        pad = source("Views/PhotographicStylesPadView.swift")
+        self.assertNotIn(".blur(radius: 7.0 + 6.5 * g)", pad)
+        self.assertNotIn(".blur(radius: 3.5 + 3.8 * g)", pad)
+
+        # 5. Verify Dazz-inspired Drawer UI, Sample Look, Viewfinder Date Stamp Overlay, Engine & ViewModel wiring
+        drawer = source("Views/VintageCameraDrawerView.swift")
+        for token in [
+            "public struct VintageHardwareCameraCard: View",
+            "public struct VintageCameraDrawerView: View",
+            "public struct VintageSampleLookPreviewSheet: View",
+            "public struct VintageDateStampViewfinderOverlay: View",
+            "Light Leak Ngẫu Nhiên",
+            "Dấu Thời Gian",
+            "ẢNH MẪU",
+        ]:
+            self.assertIn(token, drawer)
+
+        main_view = source("Views/CameraMainView.swift")
+        self.assertIn("VintageDateStampViewfinderOverlay(viewModel: viewModel)", main_view)
+
+        engine = source("Services/FilmFilterEngine.swift")
+        self.assertIn("public var activeLightLeak: VintageLightLeakConfig", engine)
+        self.assertIn("public var activeDateStampStyle: VintageDateStampStyle", engine)
+        self.assertIn("UnifiedMetalColorEngine.shared.renderStillCGImage(", engine)
+
+        vm = source("ViewModels/CameraViewModel.swift")
+        for token in [
+            "@Published public var vintageLightLeak: VintageLightLeakConfig = .off",
+            "@Published public var vintageDateStampStyle: VintageDateStampStyle = .off",
+            "public func setLightLeakIntensity(",
+            "public func shuffleLightLeakPattern()",
+            "public func selectVintageDateStampStyle(",
+            "private func pushLiveColorStateFastToPreview()",
+        ]:
+            self.assertIn(token, vm)
+
+        pbx = PBXPROJ.read_text(encoding="utf-8")
+        for filename in [
+            "VintageCameraModels.swift",
+            "UnifiedMetalColorEngine.swift",
+            "VintageCameraDrawerView.swift",
+        ]:
+            self.assertIn(f"/* {filename} */", pbx)
+            self.assertIn(f"/* {filename} in Sources */", pbx)
 
 
 if __name__ == "__main__":

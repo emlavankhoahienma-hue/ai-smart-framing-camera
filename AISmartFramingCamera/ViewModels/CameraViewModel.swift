@@ -391,16 +391,21 @@ public final class CameraViewModel: ObservableObject {
         didSet {
             if !isFilmSimulationActive {
                 isColorAppliedByAI = false
-                let targetPreset: FilmPreset = (!activeProSoftwareWB.isIdentity || !filmTuning.isIdentity || !effectivePhotographicStyle.isIdentity) ? .proColorGrade : .standard
+                let targetPreset: FilmPreset = (!activeProSoftwareWB.isIdentity || !filmTuning.isIdentity || !effectivePhotographicStyle.isIdentity || !effectiveVintageLightLeak.isIdentity || effectiveVintageDateStampStyle.isEnabled) ? .proColorGrade : .standard
                 if selectedFilmPreset != targetPreset {
                     selectedFilmPreset = targetPreset
                 }
                 currentAIColorParams = nil
                 geminiColorRecipe = nil
             }
+            pushLiveColorStateFastToPreview()
         }
     }
-    @Published public var selectedFilmPreset: FilmPreset = .standard
+    @Published public var selectedFilmPreset: FilmPreset = .standard {
+        didSet {
+            pushLiveColorStateFastToPreview()
+        }
+    }
     private var isColorAppliedByAI: Bool = false
 
     /// Trạng thái Photographic Styles 2D Control Pad (mặc định Tiêu chuẩn khi khởi chạy; lưu bộ nhớ theo từng preset trong phiên).
@@ -409,11 +414,18 @@ public final class CameraViewModel: ObservableObject {
     public var effectivePhotographicStyle: PhotographicStyleState {
         (captureMode.isVideo || selectedPhotoFormat == .dng) ? .standard : photographicStyle
     }
+    public var effectiveVintageLightLeak: VintageLightLeakConfig {
+        (captureMode.isVideo || selectedPhotoFormat == .dng) ? .off : vintageLightLeak
+    }
+    public var effectiveVintageDateStampStyle: VintageDateStampStyle {
+        (captureMode.isVideo || selectedPhotoFormat == .dng) ? .off : vintageDateStampStyle
+    }
     @Published public var photographicStyle: PhotographicStyleState = .standard {
         didSet {
             photographicStyleMemory[photographicStyle.preset] = photographicStyle
             FilmFilterEngine.shared.activePhotographicStyle = effectivePhotographicStyle
             syncProColorPassthroughPreset()
+            pushLiveColorStateFastToPreview()
         }
     }
     @Published public var isShowingPhotographicStylePad: Bool = false {
@@ -538,24 +550,99 @@ public final class CameraViewModel: ObservableObject {
         return stored.isModifiedFromPresetDefault
     }
 
-    /// Tham số tinh chỉnh giả lập phim theo thời gian thực (Tương phản, Bão hòa, Độ ấm, Sáng/Tối, Hạt phim, Viền tối).
+    /// Tham số tinh chỉnh giả lập phim theo thời gian thực (Tương phản, Bão hòa, Độ ấm, Sáng/Tối, Hạt phim, Viền tối, Độ phai, Quầng sáng).
     @Published public var filmTuning: FilmSimulationTuning = .neutral {
         didSet {
             FilmFilterEngine.shared.activeFilmTuning = filmTuning
             syncProColorPassthroughPreset()
+            pushLiveColorStateFastToPreview()
         }
+    }
+
+    /// Hiệu ứng Light Leak hữu cơ 0% - 100% (8 hoa văn cháy phim thực tế + tự đổi mẫu sau mỗi ảnh chụp).
+    @Published public var vintageLightLeak: VintageLightLeakConfig = .off {
+        didSet {
+            let eff = effectiveVintageLightLeak
+            FilmFilterEngine.shared.activeLightLeak = eff
+            if !eff.isIdentity && eff.randomizeOnCapture {
+                FilmFilterEngine.shared.onLightLeakCaptureConsumed = { [weak self] in
+                    Task { @MainActor [weak self] in
+                        guard let self, !self.vintageLightLeak.isIdentity, self.vintageLightLeak.randomizeOnCapture else { return }
+                        var next = self.vintageLightLeak
+                        next.patternIndex = (next.patternIndex + Int.random(in: 1...7)) % 8
+                        self.vintageLightLeak = next
+                    }
+                }
+            } else {
+                FilmFilterEngine.shared.onLightLeakCaptureConsumed = nil
+            }
+            syncProColorPassthroughPreset()
+            pushLiveColorStateFastToPreview()
+        }
+    }
+
+    /// Dấu thời gian máy phim 35mm cổ điển (Tắt / Quartz / LED 90s / Compact nghiêng đỏ cam).
+    @Published public var vintageDateStampStyle: VintageDateStampStyle = .off {
+        didSet {
+            FilmFilterEngine.shared.activeDateStampStyle = effectiveVintageDateStampStyle
+            syncProColorPassthroughPreset()
+        }
+    }
+
+    public func setLightLeakIntensity(_ intensity: Float) {
+        var next = vintageLightLeak
+        next.intensity = intensity.isFinite ? max(0.0, min(1.0, intensity)) : 0.0
+        vintageLightLeak = next
+    }
+
+    public func setLightLeakRandomizeOnCapture(_ enabled: Bool) {
+        var next = vintageLightLeak
+        next.randomizeOnCapture = enabled
+        vintageLightLeak = next
+    }
+
+    public func shuffleLightLeakPattern() {
+        haptics.triggerSelectionChange()
+        var next = vintageLightLeak
+        next.patternIndex = (next.patternIndex + 1) % 8
+        if next.intensity < 0.05 {
+            next.intensity = 0.25
+        }
+        vintageLightLeak = next
+    }
+
+    public func selectVintageDateStampStyle(_ style: VintageDateStampStyle) {
+        haptics.triggerSelectionChange()
+        vintageDateStampStyle = style
     }
 
     /// Cân bằng trắng GPU chủ động khi ống kính đa tiêu cự ảo không hỗ trợ custom device gains phần cứng.
     @Published public var activeProSoftwareWB: ProPhotoSoftwareWBGrade = .inactive {
         didSet {
             syncProColorPassthroughPreset()
+            pushLiveColorStateFastToPreview()
         }
+    }
+
+    private func pushLiveColorStateFastToPreview() {
+        previewContainerView?.pushLiveColorStateFast(
+            isFilmActive: isFilmSimulationActive,
+            preset: selectedFilmPreset,
+            intensity: Float(filmSimulationIntensity),
+            softwareWB: activeProSoftwareWB,
+            filmTuning: filmTuning,
+            photographicStyle: effectivePhotographicStyle,
+            lightLeak: effectiveVintageLightLeak
+        )
     }
 
     private func syncProColorPassthroughPreset() {
         guard !isFilmSimulationActive else { return }
-        let needsPassthrough = !activeProSoftwareWB.isIdentity || !filmTuning.isIdentity || !effectivePhotographicStyle.isIdentity
+        let needsPassthrough = !activeProSoftwareWB.isIdentity
+            || !filmTuning.isIdentity
+            || !effectivePhotographicStyle.isIdentity
+            || !effectiveVintageLightLeak.isIdentity
+            || effectiveVintageDateStampStyle.isEnabled
         let desired: FilmPreset = needsPassthrough ? .proColorGrade : .standard
         if selectedFilmPreset != desired {
             selectedFilmPreset = desired
@@ -575,6 +662,8 @@ public final class CameraViewModel: ObservableObject {
         withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
             isColorAppliedByAI = false
             filmTuning = .neutral
+            vintageLightLeak = .off
+            vintageDateStampStyle = .off
             photographicStyleMemory.removeAll()
             photographicStyle = .standard
             isFilmSimulationActive = false
@@ -588,7 +677,10 @@ public final class CameraViewModel: ObservableObject {
         didSet { UserDefaults.standard.set(selectedFilmCategory.rawValue, forKey: "selectedFilmCategory") }
     }
     @Published public var filmSimulationIntensity: Double = 1.0 {
-        didSet { UserDefaults.standard.set(filmSimulationIntensity, forKey: "filmSimulationIntensity") }
+        didSet {
+            UserDefaults.standard.set(filmSimulationIntensity, forKey: "filmSimulationIntensity")
+            pushLiveColorStateFastToPreview()
+        }
     }
     @Published public var isAIFullColorEnabled: Bool = false {
         didSet {
@@ -621,7 +713,10 @@ public final class CameraViewModel: ObservableObject {
                 if isShowingPhotographicStylePad { isShowingPhotographicStylePad = false }
             }
             FilmFilterEngine.shared.activePhotographicStyle = effectivePhotographicStyle
+            FilmFilterEngine.shared.activeLightLeak = effectiveVintageLightLeak
+            FilmFilterEngine.shared.activeDateStampStyle = effectiveVintageDateStampStyle
             syncProColorPassthroughPreset()
+            pushLiveColorStateFastToPreview()
             if oldValue == .proVideo && captureMode != .proVideo {
                 proVideoService.resetToFullAuto()
             } else if captureMode == .proVideo {
@@ -651,7 +746,10 @@ public final class CameraViewModel: ObservableObject {
                 if isShowingPhotographicStylePad { isShowingPhotographicStylePad = false }
             }
             FilmFilterEngine.shared.activePhotographicStyle = effectivePhotographicStyle
+            FilmFilterEngine.shared.activeLightLeak = effectiveVintageLightLeak
+            FilmFilterEngine.shared.activeDateStampStyle = effectiveVintageDateStampStyle
             syncProColorPassthroughPreset()
+            pushLiveColorStateFastToPreview()
         }
     }
     @Published public var isSuperResolutionRAWEnabled: Bool = UserDefaults.standard.bool(forKey: "isSuperResolutionRAWEnabled") {

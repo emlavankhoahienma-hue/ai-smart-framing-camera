@@ -781,28 +781,31 @@ private struct PhotographicStyleLuminousCursor: View, Animatable {
     var body: some View {
         let g = CGFloat(max(0.0, min(1.0, dragGlow)))
         let coreDiameter: CGFloat = 8.2 + 12.8 * g          // Nghỉ: 8.2pt tinh gọn -> Kéo: 21pt rực sáng
-        let innerHaloDiameter: CGFloat = 16.0 + 18.0 * g    // Quầng sáng mờ trong
-        let outerAuraDiameter: CGFloat = 24.0 + 26.0 * g    // Quầng blur lan tỏa mềm xung quanh
+        let outerAuraDiameter: CGFloat = 34.0 + 36.0 * g    // Quầng sáng lan tỏa mượt (pure RadialGradient, 0 offscreen blur pass!)
 
         ZStack {
-            // Lớp 1: Quầng sáng lan tỏa mờ ngoài cùng (outer diffused blur aura)
+            // Lớp 1 + 2 hợp nhất: Quầng sáng lan tỏa mềm xung quanh bằng RadialGradient thuần GPU (không tạo offscreen Gaussian blur pass gây giật)
             Circle()
-                .fill(Color.white.opacity(0.18 + 0.24 * g))
+                .fill(
+                    RadialGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: Color.white.opacity(0.52 + 0.34 * g), location: 0.0),
+                            .init(color: Color.white.opacity(0.28 + 0.26 * g), location: 0.32),
+                            .init(color: Color.white.opacity(0.08 + 0.12 * g), location: 0.65),
+                            .init(color: Color.clear, location: 1.0)
+                        ]),
+                        center: .center,
+                        startRadius: coreDiameter * 0.28,
+                        endRadius: outerAuraDiameter * 0.5
+                    )
+                )
                 .frame(width: outerAuraDiameter, height: outerAuraDiameter)
-                .blur(radius: 7.0 + 6.5 * g)
-
-            // Lớp 2: Quầng bloom sáng sát viền con trỏ
-            Circle()
-                .fill(Color.white.opacity(0.32 + 0.36 * g))
-                .frame(width: innerHaloDiameter, height: innerHaloDiameter)
-                .blur(radius: 3.5 + 3.8 * g)
 
             // Lớp 3: Nhân trắng tinh khiết với viền mềm mượt
             Circle()
                 .fill(Color.white)
                 .frame(width: coreDiameter, height: coreDiameter)
-                .shadow(color: Color.white.opacity(0.55 + 0.35 * g), radius: 3.0 + 4.5 * g)
-                .shadow(color: Color.black.opacity(0.24), radius: 2.5, y: 1)
+                .shadow(color: Color.black.opacity(0.22), radius: 2.0, y: 0.8)
         }
         .position(cursorPoint)
     }
@@ -1084,19 +1087,25 @@ private struct PhotographicPalettePillSlider: View {
                 )
                 .animation(.easeInOut(duration: 0.22), value: preset)
 
-            // Núm tròn trắng với quầng blur nhẹ khi kéo
+            // Núm tròn trắng với quầng sáng RadialGradient mượt 120Hz (0 offscreen blur pass)
             ZStack {
                 if isDragging {
                     Circle()
-                        .fill(Color.white.opacity(0.50))
-                        .frame(width: thumbDiameter + 10, height: thumbDiameter + 10)
-                        .blur(radius: 4.5)
+                        .fill(
+                            RadialGradient(
+                                colors: [Color.white.opacity(0.48), Color.white.opacity(0.14), Color.clear],
+                                center: .center,
+                                startRadius: thumbDiameter * 0.35,
+                                endRadius: (thumbDiameter + 14) * 0.5
+                            )
+                        )
+                        .frame(width: thumbDiameter + 14, height: thumbDiameter + 14)
                 }
 
                 Circle()
                     .fill(Color.white)
                     .frame(width: thumbDiameter, height: thumbDiameter)
-                    .shadow(color: Color.black.opacity(0.32), radius: 2.5, y: 0.8)
+                    .shadow(color: Color.black.opacity(0.28), radius: 2.0, y: 0.6)
             }
             .scaleEffect(isDragging ? 1.12 : 1.0)
             .position(x: thumbX, y: height * 0.5)

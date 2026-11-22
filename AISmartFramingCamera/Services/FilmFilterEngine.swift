@@ -103,6 +103,9 @@ public final class FilmFilterEngine: @unchecked Sendable {
     private var _activeFilmTuning: FilmSimulationTuning = .neutral
     private var _activeSoftwareWhiteBalance: ProPhotoSoftwareWBGrade = .inactive
     private var _activePhotographicStyle: PhotographicStyleState = .standard
+    private var _activeLightLeak: VintageLightLeakConfig = .off
+    private var _activeDateStampStyle: VintageDateStampStyle = .off
+    private var _onLightLeakCaptureConsumed: (@Sendable () -> Void)? = nil
 
     public var activeFilmTuning: FilmSimulationTuning {
         get {
@@ -139,6 +142,45 @@ public final class FilmFilterEngine: @unchecked Sendable {
         set {
             stateLock.lock()
             _activePhotographicStyle = newValue
+            stateLock.unlock()
+        }
+    }
+
+    public var activeLightLeak: VintageLightLeakConfig {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _activeLightLeak
+        }
+        set {
+            stateLock.lock()
+            _activeLightLeak = newValue
+            stateLock.unlock()
+        }
+    }
+
+    public var activeDateStampStyle: VintageDateStampStyle {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _activeDateStampStyle
+        }
+        set {
+            stateLock.lock()
+            _activeDateStampStyle = newValue
+            stateLock.unlock()
+        }
+    }
+
+    public var onLightLeakCaptureConsumed: (@Sendable () -> Void)? {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _onLightLeakCaptureConsumed
+        }
+        set {
+            stateLock.lock()
+            _onLightLeakCaptureConsumed = newValue
             stateLock.unlock()
         }
     }
@@ -257,21 +299,52 @@ public final class FilmFilterEngine: @unchecked Sendable {
         return PhotographicStyleMetalKernel.apply(to: inputImage, style: style)
     }
 
-    // MARK: - Manual Film Presets (62 Tones Chuyen Nghiep)
+    // MARK: - Manual Film Presets (Single-Pass Direct Metal + Vintage Light Leak + Quartz Date Stamp)
     public func applyPreset(to image: CGImage, preset: FilmPreset, intensity: Float = 1.0) -> CGImage? {
         let wb = activeSoftwareWhiteBalance
         let photoStyle = activePhotographicStyle
         let tuning = activeFilmTuning
+        let lightLeak = activeLightLeak
+        let dateStamp = activeDateStampStyle
         let hasPreset = preset != .aiFullAuto && preset != .standard && preset != .proColorGrade && intensity > 0.001
-        guard hasPreset || !wb.isIdentity || !photoStyle.isIdentity || !tuning.isIdentity else { return image }
+        guard hasPreset || !wb.isIdentity || !photoStyle.isIdentity || !tuning.isIdentity || !lightLeak.isIdentity || dateStamp.isEnabled else {
+            return image
+        }
+
+        if UnifiedMetalColorEngine.isAvailable {
+            var renderParams = UnifiedColorRenderParams()
+            renderParams.preset = preset
+            renderParams.isFilmActive = hasPreset
+            renderParams.filmIntensity = intensity
+            renderParams.softwareWB = wb
+            renderParams.filmTuning = tuning
+            renderParams.photographicStyle = photoStyle
+            renderParams.lightLeak = lightLeak
+            renderParams.isStillMode = true
+            if let rendered = UnifiedMetalColorEngine.shared.renderStillCGImage(
+                image,
+                params: renderParams,
+                dateStampStyle: dateStamp,
+                date: Date()
+            ) {
+                if !lightLeak.isIdentity && lightLeak.randomizeOnCapture {
+                    onLightLeakCaptureConsumed?()
+                }
+                return rendered
+            }
+        }
+
         let ciImage = CIImage(cgImage: image)
-        guard let filteredCI = applyPreset(to: ciImage, preset: preset, intensity: intensity) else { return image }
-        return context.createCGImage(
-            filteredCI,
-            from: filteredCI.extent,
-            format: .RGBA8,
-            colorSpace: image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
-        )
+        guard let filteredCI = applyPreset(to: ciImage, preset: preset, intensity: intensity),
+              let baseCG = context.createCGImage(
+                filteredCI,
+                from: filteredCI.extent,
+                format: .RGBA8,
+                colorSpace: image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+              ) else {
+            return dateStamp.isEnabled ? (VintageDateStampRenderer.imprint(on: image, style: dateStamp) ?? image) : image
+        }
+        return dateStamp.isEnabled ? (VintageDateStampRenderer.imprint(on: baseCG, style: dateStamp) ?? baseCG) : baseCG
     }
 
     public func applyPreset(
@@ -408,26 +481,63 @@ public final class FilmFilterEngine: @unchecked Sendable {
         )
     }
 
-    // MARK: - Combined Preset & AI Tone Mapping Pipeline
+    // MARK: - Combined Preset & AI Tone Mapping Pipeline (Exact 1:1 Parity with 60 FPS Single-Pass Metal Preview)
     public func applyPresetAndAIParameters(to image: CGImage, preset: FilmPreset, params: AIColorParameters?, intensity: Float = 1.0) -> CGImage? {
-        // Build one lazy graph and render once, avoiding two full 48 MP RGBA
-        // intermediates and an unnecessary 8-bit colour round trip.
+        let wb = activeSoftwareWhiteBalance
+        let photoStyle = activePhotographicStyle
+        let tuning = activeFilmTuning
+        let lightLeak = activeLightLeak
+        let dateStamp = activeDateStampStyle
+        let hasPreset = preset != .standard && preset != .aiFullAuto && preset != .proColorGrade && intensity > 0.001
+
+        guard hasPreset || !wb.isIdentity || !photoStyle.isIdentity || !tuning.isIdentity || !lightLeak.isIdentity || dateStamp.isEnabled || params != nil else {
+            return image
+        }
+
+        if UnifiedMetalColorEngine.isAvailable {
+            var renderParams = UnifiedColorRenderParams()
+            renderParams.preset = preset
+            renderParams.isFilmActive = hasPreset
+            renderParams.filmIntensity = intensity
+            renderParams.softwareWB = wb
+            renderParams.filmTuning = tuning
+            renderParams.photographicStyle = photoStyle
+            renderParams.lightLeak = lightLeak
+            renderParams.setAIParameters(params)
+            renderParams.isStillMode = true
+            if let rendered = UnifiedMetalColorEngine.shared.renderStillCGImage(
+                image,
+                params: renderParams,
+                dateStampStyle: dateStamp,
+                date: Date()
+            ) {
+                if !lightLeak.isIdentity && lightLeak.randomizeOnCapture {
+                    onLightLeakCaptureConsumed?()
+                }
+                return rendered
+            }
+        }
+
+        // CoreImage fallback an toàn khi không có Metal compute
         var output = CIImage(cgImage: image)
         if (preset != .standard && preset != .aiFullAuto)
-            || !activeSoftwareWhiteBalance.isIdentity
-            || !activePhotographicStyle.isIdentity
-            || !activeFilmTuning.isIdentity {
+            || !wb.isIdentity
+            || !photoStyle.isIdentity
+            || !tuning.isIdentity {
             output = applyPreset(to: output, preset: preset, intensity: intensity) ?? output
         }
         if let params {
             output = applyAIColorParameters(to: output, params: params) ?? output
         }
-        return context.createCGImage(
+        guard let baseCG = context.createCGImage(
             output,
             from: output.extent,
             format: .RGBA8,
             colorSpace: image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
-        )
+        ) else {
+            return dateStamp.isEnabled ? (VintageDateStampRenderer.imprint(on: image, style: dateStamp) ?? image) : image
+        }
+        return dateStamp.isEnabled ? (VintageDateStampRenderer.imprint(on: baseCG, style: dateStamp) ?? baseCG) : baseCG
     }
 
     // MARK: - AI Full Color Mode

@@ -287,6 +287,12 @@ jobs:
             cp AISmartFramingCamera/Resources/Noise/*.png Payload/AISmartFramingCamera.app/Noise/
             echo " Đã tích hợp Authentic CCD Noise Textures vào App Bundle!"
           fi
+          if [ -d "AISmartFramingCamera/Resources/CameraIcons" ]; then
+            mkdir -p Payload/AISmartFramingCamera.app/CameraIcons
+            cp AISmartFramingCamera/Resources/CameraIcons/*.png Payload/AISmartFramingCamera.app/CameraIcons/
+            cp AISmartFramingCamera/Resources/CameraIcons/*.jpg Payload/AISmartFramingCamera.app/CameraIcons/
+            echo " Đã tích hợp Studio 3D Vintage Camera Icons & Sample Look vào App Bundle!"
+          fi
           test -d Payload/AISmartFramingCamera.app/SigLIPBaseImage.mlmodelc
           test -s Payload/AISmartFramingCamera.app/SigLIPPrompts.json
           python scripts/verify_model_bundle.py Payload/AISmartFramingCamera.app

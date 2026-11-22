@@ -605,7 +605,10 @@ public struct SelectedCameraBadgeButton: View {
     }
 
     private var isHighlighted: Bool {
-        viewModel.isShowingFilmDrawer || viewModel.isFilmSimulationActive
+        viewModel.isShowingFilmDrawer
+            || viewModel.isFilmSimulationActive
+            || !viewModel.effectiveVintageLightLeak.isIdentity
+            || viewModel.effectiveVintageDateStampStyle.isEnabled
     }
 
     public var body: some View {
@@ -629,9 +632,18 @@ public struct SelectedCameraBadgeButton: View {
                             .stroke(activeHighlight ? AlignTheme.studioAccentBorder : AlignTheme.studioHairline, lineWidth: activeHighlight ? 0.9 : 0.65)
                     )
 
-                Image(systemName: "camera.filters")
-                    .font(.system(size: 15.5, weight: .medium))
-                    .foregroundColor(activeHighlight ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.80))
+                if viewModel.isFilmSimulationActive,
+                   let camIcon = VintageCameraIconCache.shared.icon(named: viewModel.selectedFilmPreset.cameraIconAssetName) {
+                    Image(uiImage: camIcon)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 26, height: 24)
+                } else {
+                    Image(systemName: "camera.filters")
+                        .font(.system(size: 15.5, weight: .medium))
+                        .foregroundColor(activeHighlight ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.80))
+                }
             }
             .frame(width: 44, height: 44)
             .opacity(availability.isAvailable ? 1.0 : 0.34)
@@ -642,88 +654,7 @@ public struct SelectedCameraBadgeButton: View {
     }
 }
 
-// MARK: - 35mm Film Sprocket Perforation Track (Width-Adaptive Canvas, Zero Overflow)
-private struct SprocketPerforationsRow: View {
-    var body: some View {
-        Canvas { context, size in
-            let holeWidth: CGFloat = 4.5
-            let holeHeight: CGFloat = 3.0
-            let step: CGFloat = 11.5
-            let y = (size.height - holeHeight) * 0.5
-            var x: CGFloat = 8
-            while x + holeWidth <= size.width - 8 {
-                let rect = CGRect(x: x, y: y, width: holeWidth, height: holeHeight)
-                context.fill(
-                    Path(roundedRect: rect, cornerRadius: 0.8),
-                    with: .color(Color.white.opacity(0.18))
-                )
-                x += step
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 4)
-        .allowsHitTesting(false)
-    }
-}
-
-// MARK: - Raw Original Clean Card (Turn Off Simulation)
-private struct RawCleanCardView: View {
-    let isSelected: Bool
-
-    var body: some View {
-        VStack(spacing: 2) {
-            HStack {
-                Text("GỐC")
-                    .font(.system(size: 7.0, weight: .bold, design: .monospaced))
-                    .foregroundColor(isSelected ? .black : AlignTheme.studioInkSecondary)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1.5)
-                    .background(
-                        Capsule()
-                            .fill(isSelected ? AlignTheme.studioAccent : Color.white.opacity(0.10))
-                    )
-                Spacer()
-            }
-            .padding(.top, 4)
-            .padding(.horizontal, 5)
-
-            Spacer(minLength: 1)
-
-            ZStack {
-                Circle()
-                    .fill(isSelected ? AlignTheme.studioAccentSoft : Color.white.opacity(0.06))
-                    .frame(width: 28, height: 28)
-
-                Image(systemName: "circle.slash")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
-            }
-
-            Spacer(minLength: 1)
-
-            Text("TẮT MÀU")
-                .font(.system(size: 8.0, weight: isSelected ? .semibold : .medium, design: .rounded))
-                .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.70)
-                .padding(.horizontal, 2)
-                .padding(.bottom, 4)
-        }
-        .frame(width: 56, height: 68)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isSelected ? AlignTheme.studioAccentSoft : Color.white.opacity(0.05))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(isSelected ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: isSelected ? 1.1 : 0.6)
-        )
-        .scaleEffect(isSelected ? 1.03 : 1.0)
-        .animation(.spring(response: 0.22, dampingFraction: 0.74), value: isSelected)
-    }
-}
-
-// MARK: - Camera Card View (Compact Monochrome Studio Filmstrip Card)
+// MARK: - Camera Card View (Delegates to Studio-Lit 3D Hardware Camera Card)
 public struct CameraCardView: View {
     let preset: FilmPreset
     let isSelected: Bool
@@ -734,387 +665,19 @@ public struct CameraCardView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 2) {
-            HStack {
-                Text(preset.deviceBadge)
-                    .font(.system(size: 7.0, weight: .bold, design: .monospaced))
-                    .foregroundColor(isSelected ? .black : AlignTheme.studioInkSecondary)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1.5)
-                    .background(
-                        Capsule()
-                            .fill(isSelected ? AlignTheme.studioAccent : Color.white.opacity(0.10))
-                    )
-                Spacer()
-            }
-            .padding(.top, 4)
-            .padding(.horizontal, 5)
-
-            Spacer(minLength: 1)
-
-            ZStack {
-                Circle()
-                    .fill(isSelected ? AlignTheme.studioAccentSoft : Color.white.opacity(0.07))
-                    .frame(width: 28, height: 28)
-
-                Image(systemName: preset.deviceIconSF)
-                    .font(.system(size: 13.5, weight: .medium))
-                    .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary.opacity(0.84))
-            }
-
-            Spacer(minLength: 1)
-
-            Text(preset.shortTitle)
-                .font(.system(size: 8.5, weight: isSelected ? .semibold : .medium, design: .rounded))
-                .foregroundColor(isSelected ? AlignTheme.studioInkPrimary : AlignTheme.studioInkSecondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.70)
-                .padding(.horizontal, 2)
-                .padding(.bottom, 4)
-        }
-        .frame(width: 56, height: 68)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isSelected ? AlignTheme.studioAccentSoft : Color.white.opacity(0.05))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(isSelected ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: isSelected ? 1.1 : 0.6)
-        )
-        .scaleEffect(isSelected ? 1.03 : 1.0)
-        .animation(.spring(response: 0.22, dampingFraction: 0.74), value: isSelected)
+        VintageHardwareCameraCard(preset: preset, isSelected: isSelected)
     }
 }
 
-// MARK: - Film Preset Drawer (Smoked Frosted Glass Storyboard + Live Recipe Tuning)
+// MARK: - Film Preset Drawer (Redesigned Dazz-Style Vintage Camera Shelf + Light Leak + Date Stamp + Sample Look)
 public struct FilmPresetDrawer: View {
     @ObservedObject var viewModel: CameraViewModel
-    @State private var isShowingFilmTuning: Bool = false
-    @State private var selectedAxis: FilmTuningAxis = .contrast
 
     public init(viewModel: CameraViewModel) {
         self.viewModel = viewModel
     }
 
     public var body: some View {
-        VStack(spacing: 8) {
-            headerBar
-            if viewModel.isFilmSimulationActive {
-                intensitySliderBar
-            }
-            if isShowingFilmTuning {
-                filmTuningBar
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-            filmstripTrack
-        }
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity)
-        .background(drawerBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .gesture(dismissDragGesture)
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
-        .animation(.spring(response: 0.25, dampingFraction: 0.84), value: isShowingFilmTuning)
-    }
-
-    // MARK: - Subviews
-
-    @ViewBuilder
-    private var intensitySliderBar: some View {
-        HStack(spacing: 8) {
-            Text("CƯỜNG ĐỘ")
-                .font(.system(size: 9.2, weight: .semibold, design: .monospaced))
-                .foregroundColor(AlignTheme.studioInkSecondary)
-                .fixedSize()
-
-            Slider(value: $viewModel.filmSimulationIntensity, in: 0.1...1.0, step: 0.05)
-                .tint(AlignTheme.studioAccent)
-                .controlSize(.mini)
-
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    viewModel.filmSimulationIntensity = 1.0
-                }
-            }) {
-                Text("\(Int(round(viewModel.filmSimulationIntensity * 100)))%")
-                    .font(.system(size: 9.2, weight: .semibold, design: .monospaced))
-                    .foregroundColor(AlignTheme.studioAccent)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(
-                        Capsule()
-                            .fill(AlignTheme.studioAccentSoft)
-                    )
-                    .fixedSize()
-            }
-            .buttonStyle(PlainButtonStyle())
-            .accessibilityLabel("Đặt lại cường độ 100%")
-
-            Button(action: {
-                HapticFeedbackService.shared.triggerSelectionChange()
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.84)) {
-                    isShowingFilmTuning.toggle()
-                }
-            }) {
-                HStack(spacing: 3.5) {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 9.0, weight: .semibold))
-                    Text("Chỉnh")
-                        .font(.system(size: 9.2, weight: .semibold, design: .rounded))
-                    if !viewModel.filmTuning.isIdentity {
-                        Circle()
-                            .fill(isShowingFilmTuning ? .black : AlignTheme.studioAccent)
-                            .frame(width: 4, height: 4)
-                    }
-                }
-                .foregroundColor(isShowingFilmTuning ? .black : AlignTheme.studioInkPrimary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3.5)
-                .background(
-                    Capsule()
-                        .fill(isShowingFilmTuning ? AlignTheme.studioAccent : Color.white.opacity(0.10))
-                )
-                .fixedSize()
-            }
-            .buttonStyle(PlainButtonStyle())
-            .accessibilityLabel("Tinh chỉnh thông số màu giả lập")
-        }
-        .padding(.horizontal, 12)
-        .transition(.opacity)
-    }
-
-    @ViewBuilder
-    private var filmTuningBar: some View {
-        let axes = FilmTuningAxis.allCases.filter { $0 != .intensity }
-        let activeAxis = axes.contains(selectedAxis) ? selectedAxis : .contrast
-
-        VStack(spacing: 6) {
-            HStack(spacing: 6) {
-                Text(activeAxis.rawValue.uppercased())
-                    .font(.system(size: 9.0, weight: .bold, design: .monospaced))
-                    .foregroundColor(AlignTheme.studioInkSecondary)
-
-                Text(activeAxis.displayValue(intensity: viewModel.filmSimulationIntensity, tuning: viewModel.filmTuning))
-                    .font(.system(size: 10.0, weight: .bold, design: .monospaced))
-                    .foregroundColor(AlignTheme.studioAccent)
-
-                Spacer()
-
-                if !viewModel.filmTuning.isIdentity {
-                    Button(action: {
-                        viewModel.resetFilmTuning()
-                    }) {
-                        Text("Đặt lại")
-                            .font(.system(size: 9.0, weight: .semibold, design: .rounded))
-                            .foregroundColor(AlignTheme.studioInkPrimary)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2.5)
-                            .background(Capsule().fill(Color.white.opacity(0.10)))
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-            }
-
-            ProPrecisionRulerDial(
-                normalizedValue: activeAxis.normalizedValue(intensity: viewModel.filmSimulationIntensity, tuning: viewModel.filmTuning),
-                tickCount: 31,
-                majorEvery: 5,
-                centerHighlight: activeAxis.isBipolar,
-                onChanged: { newNorm in
-                    activeAxis.applyNormalized(newNorm, to: viewModel)
-                }
-            )
-            .frame(height: 26)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    ForEach(axes) { axis in
-                        let isSelected = (axis == activeAxis)
-                        let isEdited = axis.isModified(
-                            intensity: viewModel.filmSimulationIntensity,
-                            tuning: viewModel.filmTuning,
-                            isFilmActive: viewModel.isFilmSimulationActive
-                        )
-                        Button(action: {
-                            HapticFeedbackService.shared.triggerSelectionChange()
-                            selectedAxis = axis
-                        }) {
-                            HStack(spacing: 3) {
-                                if isEdited {
-                                    Circle()
-                                        .fill(isSelected ? .black : AlignTheme.studioAccent)
-                                        .frame(width: 4, height: 4)
-                                }
-                                Text(axis.rawValue)
-                                    .font(.system(size: 9.2, weight: isSelected ? .bold : .medium, design: .rounded))
-                            }
-                            .foregroundColor(isSelected ? .black : AlignTheme.studioInkPrimary.opacity(0.84))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(
-                                Capsule()
-                                    .fill(isSelected ? AlignTheme.studioAccent : Color.white.opacity(0.08))
-                            )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.black.opacity(0.24))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(Color.white.opacity(0.08), lineWidth: 0.6)
-                )
-        )
-        .padding(.horizontal, 10)
-    }
-
-    @ViewBuilder
-    private var headerBar: some View {
-        HStack(spacing: 8) {
-            Button(action: {
-                if viewModel.isFilmSimulationActive {
-                    viewModel.resetToNaturalColor()
-                } else {
-                    viewModel.enableFilmSimulation(preset: viewModel.selectedFilmCategory.presets.first)
-                }
-            }) {
-                HStack(spacing: 4.5) {
-                    Circle()
-                        .fill(viewModel.isFilmSimulationActive ? AlignTheme.studioAccent : AlignTheme.studioInkTertiary)
-                        .frame(width: 6, height: 6)
-
-                    Text(viewModel.isFilmSimulationActive ? "MÀU BẬT" : "MÀU TẮT")
-                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                        .foregroundColor(viewModel.isFilmSimulationActive ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule()
-                        .fill(viewModel.isFilmSimulationActive ? AlignTheme.studioAccentSoft : Color.white.opacity(0.06))
-                )
-                .overlay(
-                    Capsule()
-                        .stroke(viewModel.isFilmSimulationActive ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: 0.6)
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .padding(.leading, 10)
-            .accessibilityLabel("Bật tắt màu giả lập")
-
-            Rectangle()
-                .fill(Color.white.opacity(0.14))
-                .frame(width: 0.6, height: 14)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(FilmPresetCategory.allCases) { category in
-                        let isSelected = viewModel.selectedFilmCategory == category
-                        Button(action: {
-                            viewModel.selectFilmCategory(category)
-                        }) {
-                            VStack(spacing: 3) {
-                                Text(category.displayName)
-                                    .font(.system(size: 11.0, weight: isSelected ? .semibold : .medium, design: .rounded))
-                                    .foregroundColor(isSelected ? AlignTheme.studioInkPrimary : AlignTheme.studioInkSecondary)
-
-                                Rectangle()
-                                    .fill(isSelected ? AlignTheme.studioAccent : Color.clear)
-                                    .frame(height: 1.5)
-                                    .cornerRadius(1)
-                            }
-                            .padding(.horizontal, 1)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
-                }
-                .padding(.horizontal, 4)
-                .padding(.vertical, 2)
-            }
-
-            Button(action: {
-                withAnimation(.spring(response: 0.30, dampingFraction: 0.78)) {
-                    viewModel.isShowingFilmDrawer = false
-                }
-            }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(AlignTheme.studioInkSecondary)
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(Color.white.opacity(0.08)))
-                    .padding(.trailing, 10)
-            }
-            .buttonStyle(PlainButtonStyle())
-            .accessibilityLabel("Đóng bảng màu máy ảnh")
-        }
-    }
-
-    @ViewBuilder
-    private var filmstripTrack: some View {
-        VStack(spacing: 3) {
-            SprocketPerforationsRow()
-
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        Button(action: {
-                            viewModel.disableFilmSimulation()
-                        }) {
-                            RawCleanCardView(isSelected: !viewModel.isFilmSimulationActive)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .id("raw_off_card")
-
-                        ForEach(viewModel.selectedFilmCategory.presets) { preset in
-                            let isSelected = viewModel.isFilmSimulationActive && viewModel.selectedFilmPreset == preset
-
-                            Button(action: {
-                                viewModel.selectPreset(preset)
-                            }) {
-                                CameraCardView(preset: preset, isSelected: isSelected)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .id(preset.id)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 2)
-                }
-                .onAppear {
-                    if viewModel.isFilmSimulationActive {
-                        proxy.scrollTo(viewModel.selectedFilmPreset.id, anchor: .center)
-                    } else {
-                        proxy.scrollTo("raw_off_card", anchor: .center)
-                    }
-                }
-            }
-
-            SprocketPerforationsRow()
-        }
-        .padding(.vertical, 2)
-        .background(Color.black.opacity(0.24))
-    }
-
-    private var drawerBackground: some View {
-        StudioGlassRoundedSurface(cornerRadius: 20, tintOpacity: 0.76, borderOpacity: 0.15)
-            .shadow(color: Color.black.opacity(0.55), radius: 18, y: 4)
-    }
-
-    private var dismissDragGesture: some Gesture {
-        DragGesture(minimumDistance: 15)
-            .onEnded { value in
-                if value.translation.height > 20 {
-                    withAnimation(.spring(response: 0.30, dampingFraction: 0.75)) {
-                        viewModel.isShowingFilmDrawer = false
-                    }
-                }
-            }
+        VintageCameraDrawerView(viewModel: viewModel)
     }
 }

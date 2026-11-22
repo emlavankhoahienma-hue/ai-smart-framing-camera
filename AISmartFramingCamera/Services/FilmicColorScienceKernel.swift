@@ -439,9 +439,7 @@ private final class FilmicMatteFadeExposureKernel: CIImageProcessorKernel {
 
 // MARK: - Public Facade (Single-Pass Metal với Fallback CoreImage an toàn)
 public enum FilmicColorScience {
-    public static var isMetalAvailable: Bool {
-        FilmicColorSciencePipelineCache.shared.isMetalComputeAvailable
-    }
+    public static let isMetalAvailable: Bool = FilmicColorSciencePipelineCache.shared.isMetalComputeAvailable
 
     /// Nén gamut âm Display P3 + bo mượt C1 vùng cháy sáng trước khi đưa vào 3D LUT `[0, 1]`.
     public static func applyPreLUTGamutAndHighlightProtection(

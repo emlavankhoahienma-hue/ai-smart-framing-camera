@@ -320,6 +320,17 @@ public struct CameraMainView: View {
                             }
                             .padding(.top, layout.viewfinderTopInset)
                         }
+                        // Live 35mm Glowing Quartz Date Stamp Overlay in Viewfinder Bottom-Right Corner
+                        .overlay(alignment: .bottomTrailing) {
+                            if !viewModel.isCameraHibernating && viewModel.effectiveVintageDateStampStyle.isEnabled {
+                                let stampBottomPadding: CGFloat = (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo)
+                                    ? max(82, layout.viewfinderBottomInset + 72)
+                                    : (isPhotoStylePadActive ? 16 : max(50, layout.viewfinderBottomInset + 40))
+                                VintageDateStampViewfinderOverlay(viewModel: viewModel)
+                                    .padding(.trailing, 14)
+                                    .padding(.bottom, stampBottomPadding)
+                            }
+                        }
                         // Bottom In-Viewfinder Smoked Glass Zoom Capsule / Pro Photo Manual Deck
                         .overlay(alignment: .bottom) {
                             if !viewModel.isWindowedZoomActive && !isPhotoStylePadActive {

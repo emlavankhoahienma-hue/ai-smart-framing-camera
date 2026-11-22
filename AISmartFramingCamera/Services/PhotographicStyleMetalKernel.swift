@@ -317,9 +317,7 @@ private final class PhotographicStylePipelineCache: @unchecked Sendable {
 public final class PhotographicStyleMetalKernel: CIImageProcessorKernel {
     private static let styleArgumentKey = "photographicStyleState"
 
-    public static var isMetalAvailable: Bool {
-        PhotographicStylePipelineCache.shared.hasDefaultMetalPipeline
-    }
+    public static let isMetalAvailable: Bool = PhotographicStylePipelineCache.shared.hasDefaultMetalPipeline
 
     public override class func formatForInput(at input: Int32) -> CIFormat {
         .RGBAh

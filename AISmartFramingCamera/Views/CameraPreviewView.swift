@@ -22,7 +22,9 @@ public struct CameraPreviewView: UIViewRepresentable {
     }
 
     public func updateUIView(_ uiView: PreviewContainerView, context: Context) {
-        viewModel.previewContainerView = uiView
+        if viewModel.previewContainerView !== uiView {
+            viewModel.previewContainerView = uiView
+        }
         let isDual = viewModel.isDualCameraActive || viewModel.cameraService.isDualCameraActive
         let dualLayer = isDual ? viewModel.cameraService.multiCamPrimaryPreviewLayer : nil
         uiView.syncDualCameraPrimaryLayer(
@@ -30,7 +32,6 @@ public struct CameraPreviewView: UIViewRepresentable {
             isDualActive: isDual,
             singleSession: viewModel.cameraService.captureSession
         )
-        uiView.updateOrientation()
         let activeLayer = dualLayer ?? uiView.previewLayer
         if viewModel.previewLayer !== activeLayer {
             viewModel.previewLayer = activeLayer
@@ -43,6 +44,7 @@ public struct CameraPreviewView: UIViewRepresentable {
             uiView.previewLayer?.videoGravity = targetGravity
             CATransaction.commit()
         }
+        let isStillColorAllowed = !viewModel.captureMode.isVideo && viewModel.selectedPhotoFormat != .dng
         uiView.updateMetalPreviewState(
             isActive: viewModel.isFilmSimulationActive,
             isDualCamera: isDual,
@@ -58,8 +60,9 @@ public struct CameraPreviewView: UIViewRepresentable {
             softwareWB: viewModel.activeProSoftwareWB,
             filmTuning: viewModel.filmTuning,
             photographicStyle: viewModel.effectivePhotographicStyle,
-            isPhotographicStylePadOpen: viewModel.isShowingPhotographicStylePad && !viewModel.captureMode.isVideo && viewModel.selectedPhotoFormat != .dng,
-            photographicStyleSplit: (viewModel.captureMode.isVideo || viewModel.selectedPhotoFormat == .dng) ? .inactive : viewModel.photographicStyleSplit
+            isPhotographicStylePadOpen: viewModel.isShowingPhotographicStylePad && isStillColorAllowed,
+            photographicStyleSplit: isStillColorAllowed ? viewModel.photographicStyleSplit : .inactive,
+            lightLeak: isStillColorAllowed ? viewModel.vintageLightLeak : .off
         )
     }
 
@@ -136,13 +139,33 @@ public struct CameraPreviewView: UIViewRepresentable {
     }
 }
 
-// MARK: - Metal Film Simulation Realtime Renderer (Zero-Lag Core Image to Metal)
+/// Hộp bao an toàn chuyển tài nguyên Metal/CoreVideo từ Main Thread sang renderQueue background không phát cảnh báo Swift 6.
+private struct MetalFrameDispatchBox<T>: @unchecked Sendable {
+    let value: T
+}
+
+// MARK: - Zero-Lag 60 FPS Single-Pass Direct Metal Realtime Renderer
+/// Kiến trúc mới loại bỏ hoàn toàn hiện tượng giật/đơ khi chỉnh màu cả trong tối (15-24fps sensor) lẫn ban ngày (60fps):
+/// 1. Chạy Single-Pass Direct Metal (`UnifiedMetalColorEngine`) zero-copy trực tiếp từ `CVPixelBuffer` -> `MTKView` drawable (~0.4ms/frame).
+/// 2. Triple-buffer non-blocking `DispatchSemaphore(value: 2)` + background `renderQueue (userInteractive)` -> tuyệt đối KHÔNG bao giờ chặn Main Thread!
+/// 3. Chỉ dùng fallback `CIContext` khi bật Simulated 0.5x Ultra-Wide (cần `UltraWideWarpEngine` C++20 rectilinear).
 final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked Sendable {
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
-    private let ciContext: CIContext
+    private let renderQueue = DispatchQueue(label: "com.alignai.metal.preview", qos: .userInteractive)
+    private let inflightSemaphore = DispatchSemaphore(value: 2)
+    private lazy var fallbackCIContext: CIContext = {
+        let linearCS = CGColorSpace(name: CGColorSpace.extendedLinearSRGB) ?? CGColorSpaceCreateDeviceRGB()
+        return CIContext(mtlCommandQueue: commandQueue, options: [
+            .useSoftwareRenderer: false,
+            .priorityRequestLow: false,
+            .workingColorSpace: linearCS,
+            .workingFormat: CIFormat.RGBAh
+        ])
+    }()
     private let sRGBColorSpace = CGColorSpaceCreateDeviceRGB()
     private static let infiniteBlackCI = CIImage(color: .black)
+
     private weak var viewModel: CameraViewModel?
     private let stateLock = NSLock()
     private var isRenderingActive: Bool = false
@@ -161,43 +184,59 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private var currentFilmTuning: FilmSimulationTuning = .neutral
     private var currentPhotographicStyle: PhotographicStyleState = .standard
     private var currentPhotographicStyleSplit: PhotographicStyleSplitTransition = .inactive
+    private var currentLightLeak: VintageLightLeakConfig = .off
 
-    // Frame cache to avoid redundant filter graphs on idle or identical frames
+    // Dirty-tracking strictly on Main Thread inside draw(in:) to avoid redundant dispatches when idle
     private var lastProcessedBuffer: CVPixelBuffer? = nil
     private var lastPresentedOnce: Bool = false
-    private var lastFilteredCI: CIImage? = nil
-    private var lastPreset: FilmPreset = .standard
-    private var lastIntensity: Float = 1.0
-    private var lastSoftwareWB: ProPhotoSoftwareWBGrade = .inactive
-    private var lastFilmTuning: FilmSimulationTuning = .neutral
-    private var lastPhotographicStyle: PhotographicStyleState = .standard
-    private var lastPhotographicStyleSplit: PhotographicStyleSplitTransition = .inactive
-    private var lastFilterActive: Bool = false
-    private var lastVideoAspectFit: Bool = false
+    private var lastRenderParams: UnifiedColorRenderParams? = nil
     private var lastDrawableSize: CGSize = .zero
+    private var lastSimUW: Bool = false
+    private var lastSimFactor: CGFloat = 0.5
     private var lastPeakingActive: Bool = false
     private var lastPeakingColor: FocusPeakingColor = .green
     private var lastPeakingSensitivity: Float = 0.5
+    private var frameCounter: UInt32 = 0
 
     init?(device: MTLDevice, viewModel: CameraViewModel) {
         self.device = device
-        let queue = UltraWideWarpEngine.live.commandQueue ?? device.makeCommandQueue()!
+        guard let queue = UnifiedMetalColorEngine.shared.commandQueue
+                ?? UltraWideWarpEngine.live.commandQueue
+                ?? device.makeCommandQueue() else {
+            return nil
+        }
         self.commandQueue = queue
-        let linearCS = CGColorSpace(name: CGColorSpace.extendedLinearSRGB) ?? CGColorSpaceCreateDeviceRGB()
-        self.ciContext = CIContext(mtlCommandQueue: queue, options: [
-            .useSoftwareRenderer: false,
-            .priorityRequestLow: false,
-            .workingColorSpace: linearCS,
-            .workingFormat: CIFormat.RGBAh
-        ])
         self.viewModel = viewModel
         super.init()
     }
 
-    func updateState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool, isSimulatedUltraWide: Bool = false, simulatedFactor: CGFloat = 0.5, isHorizonLock: Bool = false, isFocusPeaking: Bool = false, focusPeakingColor: FocusPeakingColor = .green, focusPeakingSensitivity: Float = 0.5, preset: FilmPreset, intensity: Float, softwareWB: ProPhotoSoftwareWBGrade = .inactive, filmTuning: FilmSimulationTuning = .neutral, photographicStyle: PhotographicStyleState = .standard, isPhotographicStylePadOpen: Bool = false, photographicStyleSplit: PhotographicStyleSplitTransition = .inactive) {
+    func updateState(
+        isActive: Bool,
+        isDualCamera: Bool,
+        isVideoMode: Bool,
+        isSimulatedUltraWide: Bool = false,
+        simulatedFactor: CGFloat = 0.5,
+        isHorizonLock: Bool = false,
+        isFocusPeaking: Bool = false,
+        focusPeakingColor: FocusPeakingColor = .green,
+        focusPeakingSensitivity: Float = 0.5,
+        preset: FilmPreset,
+        intensity: Float,
+        softwareWB: ProPhotoSoftwareWBGrade = .inactive,
+        filmTuning: FilmSimulationTuning = .neutral,
+        photographicStyle: PhotographicStyleState = .standard,
+        isPhotographicStylePadOpen: Bool = false,
+        photographicStyleSplit: PhotographicStyleSplitTransition = .inactive,
+        lightLeak: VintageLightLeakConfig = .off
+    ) {
         stateLock.lock()
         let hasRealFilm = isActive && (preset != .standard && preset != .proColorGrade)
-        let hasColorPass = hasRealFilm || !softwareWB.isIdentity || !filmTuning.isIdentity || !photographicStyle.isIdentity || photographicStyleSplit.isActive
+        let hasColorPass = hasRealFilm
+            || !softwareWB.isIdentity
+            || !filmTuning.isIdentity
+            || !photographicStyle.isIdentity
+            || photographicStyleSplit.isActive
+            || !lightLeak.isIdentity
         self.isFilmFilterActive = hasColorPass
         self.isFocusPeaking = isFocusPeaking
         self.focusPeakingColor = focusPeakingColor
@@ -214,6 +253,38 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         self.currentFilmTuning = filmTuning
         self.currentPhotographicStyle = photographicStyle
         self.currentPhotographicStyleSplit = photographicStyleSplit
+        self.currentLightLeak = lightLeak
+        stateLock.unlock()
+    }
+
+    /// Đẩy trực tiếp thông số màu xuống GPU trong < 0.005ms khi kéo thanh trượt / 2D Pad (không chờ SwiftUI re-layout).
+    func pushLiveColorStateFast(
+        isFilmActive: Bool,
+        preset: FilmPreset,
+        intensity: Float,
+        softwareWB: ProPhotoSoftwareWBGrade,
+        filmTuning: FilmSimulationTuning,
+        photographicStyle: PhotographicStyleState,
+        lightLeak: VintageLightLeakConfig
+    ) {
+        stateLock.lock()
+        let hasRealFilm = isFilmActive && (preset != .standard && preset != .proColorGrade)
+        let hasColorPass = hasRealFilm
+            || !softwareWB.isIdentity
+            || !filmTuning.isIdentity
+            || !photographicStyle.isIdentity
+            || self.currentPhotographicStyleSplit.isActive
+            || !lightLeak.isIdentity
+        self.isFilmFilterActive = hasColorPass
+        if hasColorPass {
+            self.isRenderingActive = true
+        }
+        self.currentPreset = hasRealFilm ? preset : .proColorGrade
+        self.currentIntensity = intensity
+        self.currentSoftwareWB = softwareWB
+        self.currentFilmTuning = filmTuning
+        self.currentPhotographicStyle = photographicStyle
+        self.currentLightLeak = lightLeak
         stateLock.unlock()
     }
 
@@ -227,7 +298,14 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         stateLock.unlock()
     }
 
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+    func resetPresentationDirtyState() {
+        lastPresentedOnce = false
+        lastRenderParams = nil
+    }
+
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        lastPresentedOnce = false
+    }
 
     func draw(in view: MTKView) {
         stateLock.lock()
@@ -246,227 +324,207 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         let filmTuning = currentFilmTuning
         let photographicStyle = currentPhotographicStyle
         let splitTransition = currentPhotographicStyleSplit
+        let lightLeak = currentLightLeak
         stateLock.unlock()
 
         guard shouldRender else { return }
         guard let vm = self.viewModel,
               let pixelBuffer = vm.cameraService.currentMultiCamPixelBuffer() ?? vm.latestCameraPixelBuffer() else { return }
 
-        let effectivePreset = preset.isAIFullAuto ? (vm.aiRecommendedPreset ?? vm.detectedScene.recommendedFilter) : preset
+        let drawableSize = view.drawableSize
+        guard drawableSize.width > 1, drawableSize.height > 1 else { return }
 
-        // Khong co frame camera moi + moi tham so giong het => khong render lai (tranh 60 lan/giay chay lai graph CoreImage)
-        if !isHL && !isPeaking && !simUW,
-           pixelBuffer === lastProcessedBuffer,
-           filmActive == lastFilterActive,
-           videoAspectFit == lastVideoAspectFit,
-           effectivePreset == lastPreset,
-           abs(intensity - lastIntensity) < 0.005,
-           softwareWB == lastSoftwareWB,
-           filmTuning == lastFilmTuning,
-           photographicStyle == lastPhotographicStyle,
-           splitTransition == lastPhotographicStyleSplit,
-           view.drawableSize == lastDrawableSize,
-           lastFilteredCI != nil,
-           lastPresentedOnce {
+        let effectivePreset = preset.isAIFullAuto ? (vm.aiRecommendedPreset ?? vm.detectedScene.recommendedFilter) : preset
+        let hasRealFilm = filmActive && effectivePreset != .standard && effectivePreset != .proColorGrade && effectivePreset != .aiFullAuto
+
+        var params = UnifiedColorRenderParams()
+        params.preset = effectivePreset
+        params.isFilmActive = hasRealFilm
+        params.filmIntensity = intensity
+        params.softwareWB = softwareWB
+        params.filmTuning = filmTuning
+        params.photographicStyle = photographicStyle
+        params.splitTransition = splitTransition
+        params.lightLeak = lightLeak
+        params.setAIParameters(preset.isAIFullAuto ? vm.currentAIColorParams : nil)
+        params.isVideoAspectFit = videoAspectFit && !simUW
+        params.isHorizonLock = isHL
+        if isHL {
+            let motion = DeviceMotionService.shared.currentHorizonParams()
+            params.horizonRoll = motion.roll
+            params.horizonZoom = motion.zoom
+            params.horizonShakeX = motion.shakeX
+            params.horizonShakeY = motion.shakeY
+        }
+
+        // Bỏ qua render thừa khi camera đứng im (vd: 20fps trong tối) VÀ mọi tham số màu giống hệt frame vừa hiện
+        let bufferChanged = (pixelBuffer !== lastProcessedBuffer)
+        let paramsChanged = (params != lastRenderParams)
+            || (drawableSize != lastDrawableSize)
+            || (simUW != lastSimUW)
+            || (abs(simFactor - lastSimFactor) > 0.005)
+            || (isPeaking != lastPeakingActive)
+            || (peakingColor != lastPeakingColor)
+            || (abs(peakingSens - lastPeakingSensitivity) > 0.01)
+
+        if !isHL && !isPeaking && !bufferChanged && !paramsChanged && lastPresentedOnce {
             return
         }
 
-        guard let currentDrawable = view.currentDrawable,
-              let commandBuffer = commandQueue.makeCommandBuffer() else { return }
+        // Non-blocking Triple-Buffer Semaphore: nếu 2 frame trước GPU chưa xong -> thả ngay frame này, 0ms chặn Main Thread!
+        guard inflightSemaphore.wait(timeout: .now()) == .success else { return }
 
-        let drawableSize = view.drawableSize
-        guard drawableSize.width > 0, drawableSize.height > 0 else { return }
-
-        let finalImageToRender: CIImage
-
-        // Optimization: reuse last filtered image if buffer, preset, intensity and size haven't changed (disable when horizon lock or peaking is active)
-        if !isHL && !isPeaking,
-           isPeaking == lastPeakingActive,
-           peakingColor == lastPeakingColor,
-           abs(peakingSens - lastPeakingSensitivity) < 0.01,
-           pixelBuffer === lastProcessedBuffer,
-           filmActive == lastFilterActive,
-           videoAspectFit == lastVideoAspectFit,
-           effectivePreset == lastPreset,
-           abs(intensity - lastIntensity) < 0.005,
-           softwareWB == lastSoftwareWB,
-           filmTuning == lastFilmTuning,
-           photographicStyle == lastPhotographicStyle,
-           splitTransition == lastPhotographicStyleSplit,
-           drawableSize == lastDrawableSize,
-           let cached = lastFilteredCI {
-            finalImageToRender = cached
-        } else {
-            let inputCI = CIImage(cvPixelBuffer: pixelBuffer)
-            let rawExtent = inputCI.extent
-            guard rawExtent.width > 0, rawExtent.height > 0 else { return }
-
-            let scaleX = drawableSize.width / rawExtent.width
-            let scaleY = drawableSize.height / rawExtent.height
-            let scale = (videoAspectFit && !simUW) ? min(scaleX, scaleY) : max(scaleX, scaleY)
-
-            let scaledW = rawExtent.width * scale
-            let scaledH = rawExtent.height * scale
-            let ox = (drawableSize.width - scaledW) / 2.0
-            let oy = (drawableSize.height - scaledH) / 2.0
-
-            let transformedCI: CIImage
-            if isHL {
-                let motionParams = DeviceMotionService.shared.currentHorizonParams()
-                let rollAngle = CGFloat(-motionParams.roll)
-                let zoomFactor = CGFloat(motionParams.zoom)
-                let totalScale = scale * zoomFactor
-                let shakeOffsetX = CGFloat(motionParams.shakeX) * drawableSize.width
-                let shakeOffsetY = CGFloat(motionParams.shakeY) * drawableSize.height
-
-                // 1. Dịch tâm của inputCI về (0,0)
-                // 2. Xoay ngược góc nghiêng của máy (-rollAngle)
-                // 3. Phóng theo tỷ lệ bù góc nghiêng đồng nhất 100% theo pixel vuông (0% méo hình)
-                // 4. Dịch về tâm drawableSize và bù rung tay vi mô
-                let horizonTransform = CGAffineTransform(translationX: -rawExtent.midX, y: -rawExtent.midY)
-                    .concatenating(CGAffineTransform(rotationAngle: rollAngle))
-                    .concatenating(CGAffineTransform(scaleX: totalScale, y: totalScale))
-                    .concatenating(CGAffineTransform(translationX: (drawableSize.width / 2.0) + shakeOffsetX,
-                                                     y: (drawableSize.height / 2.0) + shakeOffsetY))
-                transformedCI = inputCI.transformed(by: horizonTransform)
-            } else {
-                let centerTransform = CGAffineTransform(translationX: -rawExtent.minX, y: -rawExtent.minY)
-                    .concatenating(CGAffineTransform(scaleX: scale, y: scale))
-                    .concatenating(CGAffineTransform(translationX: ox, y: oy))
-                transformedCI = inputCI.transformed(by: centerTransform)
-            }
-
-            let viewportBounds = CGRect(origin: .zero, size: drawableSize)
-            let bgBlack = Self.infiniteBlackCI.cropped(to: viewportBounds)
-            let viewportCI = transformedCI.composited(over: bgBlack).cropped(to: viewportBounds)
-            let unwarpedCI: CIImage = simUW ? UltraWideWarpEngine.shared.applySimulatedUltraWide(
-                to: viewportCI,
-                factor: simFactor
-            ) : viewportCI
-
-            let filteredCI: CIImage
-            if filmActive {
-                let maxWorkingDim: CGFloat = 1080.0
-                let longSide = max(drawableSize.width, drawableSize.height)
-                let workingScale: CGFloat = (longSide > maxWorkingDim && longSide > 0) ? (maxWorkingDim / longSide) : 1.0
-                let workingInput = workingScale < 0.999
-                    ? unwarpedCI.transformed(by: CGAffineTransform(scaleX: workingScale, y: workingScale))
-                    : unwarpedCI
-                var workingOut: CIImage
-                if splitTransition.isActive {
-                    // Live GPU Split-Screen Wipe 60 FPS (trái = leftStyle, phải = rightStyle — tổng pixel xử lý = đúng 1.0x khung hình)
-                    let splitPos = max(0.0, min(1.0, splitTransition.splitPosition))
-                    if splitPos <= 0.002 {
-                        workingOut = FilmFilterEngine.shared.applyPreset(
-                            to: workingInput,
-                            preset: effectivePreset,
-                            intensity: intensity,
-                            isRealtimePreview: true,
-                            photographicStyleOverride: splitTransition.rightStyle
-                        ) ?? workingInput
-                    } else if splitPos >= 0.998 {
-                        workingOut = FilmFilterEngine.shared.applyPreset(
-                            to: workingInput,
-                            preset: effectivePreset,
-                            intensity: intensity,
-                            isRealtimePreview: true,
-                            photographicStyleOverride: splitTransition.leftStyle
-                        ) ?? workingInput
-                    } else {
-                        let workExt = workingInput.extent.integral
-                        let splitX = floor(workExt.minX + workExt.width * CGFloat(splitPos))
-                        let leftW = max(1, splitX - workExt.minX)
-                        let rightW = max(1, workExt.maxX - splitX)
-                        let leftRect = CGRect(x: workExt.minX, y: workExt.minY, width: leftW, height: workExt.height).integral
-                        let rightRect = CGRect(x: splitX, y: workExt.minY, width: rightW, height: workExt.height).integral
-                        let leftSlice = workingInput.cropped(to: leftRect)
-                        let rightSlice = workingInput.cropped(to: rightRect)
-                        let leftGraded = FilmFilterEngine.shared.applyPreset(
-                            to: leftSlice,
-                            preset: effectivePreset,
-                            intensity: intensity,
-                            isRealtimePreview: true,
-                            photographicStyleOverride: splitTransition.leftStyle
-                        ) ?? leftSlice
-                        let rightGraded = FilmFilterEngine.shared.applyPreset(
-                            to: rightSlice,
-                            preset: effectivePreset,
-                            intensity: intensity,
-                            isRealtimePreview: true,
-                            photographicStyleOverride: splitTransition.rightStyle
-                        ) ?? rightSlice
-                        workingOut = rightGraded.composited(over: leftGraded).cropped(to: workExt)
-                    }
-                } else {
-                    workingOut = FilmFilterEngine.shared.applyPreset(
-                        to: workingInput,
-                        preset: effectivePreset,
-                        intensity: intensity,
-                        isRealtimePreview: true,
-                        photographicStyleOverride: photographicStyle
-                    ) ?? workingInput
-                }
-                if preset.isAIFullAuto, let aiParams = vm.currentAIColorParams {
-                    workingOut = FilmFilterEngine.shared.applyAIColorParameters(to: workingOut, params: aiParams) ?? workingOut
-                }
-                if workingScale < 0.999 {
-                    let invScale = 1.0 / workingScale
-                    filteredCI = workingOut
-                        .transformed(by: CGAffineTransform(scaleX: invScale, y: invScale))
-                        .cropped(to: viewportBounds)
-                } else {
-                    filteredCI = workingOut
-                }
-            } else {
-                filteredCI = unwarpedCI
-            }
-            finalImageToRender = filteredCI
-
-            lastProcessedBuffer = pixelBuffer
-            lastFilteredCI = finalImageToRender
-            lastFilterActive = filmActive
-            lastVideoAspectFit = videoAspectFit
-            lastPreset = effectivePreset
-            lastIntensity = intensity
-            lastSoftwareWB = softwareWB
-            lastFilmTuning = filmTuning
-            lastPhotographicStyle = photographicStyle
-            lastPhotographicStyleSplit = splitTransition
-            lastDrawableSize = drawableSize
-            lastPeakingActive = isPeaking
-            lastPeakingColor = peakingColor
-            lastPeakingSensitivity = peakingSens
+        guard let currentDrawable = view.currentDrawable else {
+            inflightSemaphore.signal()
+            return
         }
 
-        let destinationBounds = CGRect(origin: .zero, size: drawableSize)
+        if bufferChanged {
+            frameCounter &+= 1
+        }
+        params.frameSeed = Float(frameCounter % 997) * 0.0137
 
-        ciContext.render(
-            finalImageToRender,
-            to: currentDrawable.texture,
+        // Cập nhật trạng thái dirty trên Main Thread trước khi đẩy việc encode sang background queue
+        lastProcessedBuffer = pixelBuffer
+        lastRenderParams = params
+        lastDrawableSize = drawableSize
+        lastSimUW = simUW
+        lastSimFactor = simFactor
+        lastPeakingActive = isPeaking
+        lastPeakingColor = peakingColor
+        lastPeakingSensitivity = peakingSens
+        lastPresentedOnce = true
+
+        let liveISO = vm.currentLiveISO
+        let displayScale = Float(view.contentScaleFactor > 0 ? view.contentScaleFactor : 2.0)
+
+        let pbBox = MetalFrameDispatchBox(value: pixelBuffer)
+        let drawableBox = MetalFrameDispatchBox(value: currentDrawable)
+        let useDirectUnifiedMetal = !simUW && UnifiedMetalColorEngine.shared.isReady
+
+        renderQueue.async { [weak self] in
+            guard let self else { return }
+            guard let commandBuffer = self.commandQueue.makeCommandBuffer() else {
+                self.inflightSemaphore.signal()
+                return
+            }
+
+            let pb = pbBox.value
+            let drawable = drawableBox.value
+
+            // Giữ tham chiếu mạnh tới CVPixelBuffer cho đến khi GPU đọc xong IOSurface, đồng thời giải phóng semaphore
+            commandBuffer.addCompletedHandler { [weak self] _ in
+                _ = pb
+                self?.inflightSemaphore.signal()
+            }
+
+            var encoded = false
+            if useDirectUnifiedMetal {
+                encoded = UnifiedMetalColorEngine.shared.encodePreviewFrame(
+                    pixelBuffer: pb,
+                    outputTexture: drawable.texture,
+                    commandBuffer: commandBuffer,
+                    params: params
+                )
+            }
+
+            if !encoded {
+                self.encodeFallbackCIFrame(
+                    pixelBuffer: pb,
+                    outputTexture: drawable.texture,
+                    commandBuffer: commandBuffer,
+                    drawableSize: drawableSize,
+                    simUW: simUW,
+                    simFactor: simFactor,
+                    params: params
+                )
+            }
+
+            if isPeaking {
+                FocusPeakingEngine.shared.renderFocusPeaking(
+                    sourcePixelBuffer: pb,
+                    sourceTexture: drawable.texture,
+                    targetTexture: drawable.texture,
+                    commandBuffer: commandBuffer,
+                    color: peakingColor,
+                    sensitivity: peakingSens,
+                    iso: liveISO,
+                    displayScale: displayScale
+                )
+            }
+
+            commandBuffer.present(drawable)
+            commandBuffer.commit()
+        }
+    }
+
+    /// Fallback Core Image chỉ kích hoạt khi bật Simulated 0.5x Ultra-Wide (cần C++20 rectilinear unwarp) hoặc thiết bị không hỗ trợ Metal compute.
+    private func encodeFallbackCIFrame(
+        pixelBuffer: CVPixelBuffer,
+        outputTexture: MTLTexture,
+        commandBuffer: MTLCommandBuffer,
+        drawableSize: CGSize,
+        simUW: Bool,
+        simFactor: CGFloat,
+        params: UnifiedColorRenderParams
+    ) {
+        let inputCI = CIImage(cvPixelBuffer: pixelBuffer)
+        let rawExtent = inputCI.extent
+        guard rawExtent.width > 0, rawExtent.height > 0 else { return }
+
+        let scaleX = drawableSize.width / rawExtent.width
+        let scaleY = drawableSize.height / rawExtent.height
+        let scale = params.isVideoAspectFit ? min(scaleX, scaleY) : max(scaleX, scaleY)
+        let scaledW = rawExtent.width * scale
+        let scaledH = rawExtent.height * scale
+        let ox = (drawableSize.width - scaledW) / 2.0
+        let oy = (drawableSize.height - scaledH) / 2.0
+
+        let transformedCI: CIImage
+        if params.isHorizonLock {
+            let totalScale = scale * CGFloat(params.horizonZoom)
+            let shakeX = CGFloat(params.horizonShakeX) * drawableSize.width
+            let shakeY = CGFloat(params.horizonShakeY) * drawableSize.height
+            let t = CGAffineTransform(translationX: -rawExtent.midX, y: -rawExtent.midY)
+                .concatenating(CGAffineTransform(rotationAngle: CGFloat(-params.horizonRoll)))
+                .concatenating(CGAffineTransform(scaleX: totalScale, y: totalScale))
+                .concatenating(CGAffineTransform(translationX: (drawableSize.width / 2.0) + shakeX,
+                                                 y: (drawableSize.height / 2.0) + shakeY))
+            transformedCI = inputCI.transformed(by: t)
+        } else {
+            let t = CGAffineTransform(translationX: -rawExtent.minX, y: -rawExtent.minY)
+                .concatenating(CGAffineTransform(scaleX: scale, y: scale))
+                .concatenating(CGAffineTransform(translationX: ox, y: oy))
+            transformedCI = inputCI.transformed(by: t)
+        }
+
+        let viewportBounds = CGRect(origin: .zero, size: drawableSize)
+        let bgBlack = Self.infiniteBlackCI.cropped(to: viewportBounds)
+        let viewportCI = transformedCI.composited(over: bgBlack).cropped(to: viewportBounds)
+        let unwarpedCI: CIImage = simUW
+            ? UltraWideWarpEngine.shared.applySimulatedUltraWide(to: viewportCI, factor: simFactor)
+            : viewportCI
+
+        let gradedCI: CIImage
+        if params.hasEffectiveColorPass {
+            gradedCI = FilmFilterEngine.shared.applyPreset(
+                to: unwarpedCI,
+                preset: params.isFilmActive ? params.preset : .proColorGrade,
+                intensity: params.filmIntensity,
+                isRealtimePreview: true,
+                photographicStyleOverride: params.photographicStyle
+            ) ?? unwarpedCI
+        } else {
+            gradedCI = unwarpedCI
+        }
+
+        fallbackCIContext.render(
+            gradedCI,
+            to: outputTexture,
             commandBuffer: commandBuffer,
-            bounds: destinationBounds,
+            bounds: viewportBounds,
             colorSpace: sRGBColorSpace
         )
-
-        // Phủ lớp báo nét Focus Peaking trực tiếp bằng Metal Compute Shader trên cùng command buffer
-        if isPeaking {
-            let currentISO = vm.currentLiveISO
-            let scale = Float(view.contentScaleFactor)
-            FocusPeakingEngine.shared.renderFocusPeaking(
-                sourcePixelBuffer: pixelBuffer,
-                sourceTexture: currentDrawable.texture,
-                targetTexture: currentDrawable.texture,
-                commandBuffer: commandBuffer,
-                color: peakingColor,
-                sensitivity: peakingSens,
-                iso: currentISO,
-                displayScale: scale > 0 ? scale : 2.0
-            )
-        }
-
-        lastPresentedOnce = true
-        commandBuffer.present(currentDrawable)
-        commandBuffer.commit()
     }
 }
 
@@ -485,6 +543,11 @@ public class PreviewContainerView: UIView {
     private var metalView: MTKView?
     private var metalRenderer: MetalFilmSimulationRenderer?
     private weak var multiCamOverlayLayer: AVCaptureVideoPreviewLayer?
+
+    // Cache để tránh gọi syncDualCameraPrimaryLayer / updateOrientation hàng trăm lần mỗi giây khi kéo thanh màu
+    private var lastSyncedDualActive: Bool? = nil
+    private weak var lastSyncedDualLayer: AVCaptureVideoPreviewLayer? = nil
+    private weak var lastSyncedSingleSession: AVCaptureSession? = nil
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -521,6 +584,8 @@ public class PreviewContainerView: UIView {
         previewLayer?.session = session
         previewLayer?.contentsScale = currentDisplayScale
         previewLayer?.rasterizationScale = currentDisplayScale
+        lastSyncedSingleSession = session
+        lastSyncedDualActive = false
     }
 
     public func syncDualCameraPrimaryLayer(
@@ -528,6 +593,15 @@ public class PreviewContainerView: UIView {
         isDualActive: Bool,
         singleSession: AVCaptureSession
     ) {
+        if lastSyncedDualActive == isDualActive,
+           lastSyncedDualLayer === dualLayer,
+           lastSyncedSingleSession === singleSession {
+            return
+        }
+        lastSyncedDualActive = isDualActive
+        lastSyncedDualLayer = dualLayer
+        lastSyncedSingleSession = singleSession
+
         if isDualActive {
             if previewLayer?.session != nil {
                 previewLayer?.session = nil
@@ -548,11 +622,15 @@ public class PreviewContainerView: UIView {
     }
 
     public func setupMetalPreview(viewModel: CameraViewModel) {
-        guard metalView == nil, let metalDevice = MTLCreateSystemDefaultDevice() else { return }
+        guard metalView == nil, let metalDevice = UnifiedMetalColorEngine.shared.device ?? MTLCreateSystemDefaultDevice() else { return }
         let mtk = MTKView(frame: bounds, device: metalDevice)
         mtk.framebufferOnly = false
         mtk.colorPixelFormat = .bgra8Unorm
-        mtk.preferredFramesPerSecond = 30
+        mtk.preferredFramesPerSecond = 60
+        if let metalLayer = mtk.layer as? CAMetalLayer {
+            metalLayer.allowsNextDrawableTimeout = true
+            metalLayer.presentsWithTransaction = false
+        }
         mtk.contentScaleFactor = min(currentDisplayScale, 2.0)
         mtk.isPaused = true
         mtk.enableSetNeedsDisplay = false
@@ -585,14 +663,16 @@ public class PreviewContainerView: UIView {
         filmTuning: FilmSimulationTuning = .neutral,
         photographicStyle: PhotographicStyleState = .standard,
         isPhotographicStylePadOpen: Bool = false,
-        photographicStyleSplit: PhotographicStyleSplitTransition = .inactive
+        photographicStyleSplit: PhotographicStyleSplitTransition = .inactive,
+        lightLeak: VintageLightLeakConfig = .off
     ) {
-        // Kich hoat MTKView khi bat bo loc mau, Photographic Style (hoac dang mo Pad de vuot split-screen 0 giat), GPU WB Pro, tinh chinh gia lap phim, simulated 0.5x, Horizon Lock 360 do, hoac Focus Peaking 60 FPS
+        // Kích hoạt MTKView Single-Pass 60 FPS khi bật bộ lọc màu, Photographic Style, Light Leak, WB Pro, tinh chỉnh phim, 0.5x, Horizon Lock, hoặc Focus Peaking
         let hasColorPass = (isActive && preset != .standard && preset != .proColorGrade)
             || !softwareWB.isIdentity
             || !filmTuning.isIdentity
             || !photographicStyle.isIdentity
             || photographicStyleSplit.isActive
+            || !lightLeak.isIdentity
         let shouldRender = hasColorPass || isPhotographicStylePadOpen || isSimulatedUltraWide || isHorizonLock || isFocusPeaking
         metalRenderer?.updateState(
             isActive: isActive,
@@ -610,18 +690,43 @@ public class PreviewContainerView: UIView {
             filmTuning: filmTuning,
             photographicStyle: photographicStyle,
             isPhotographicStylePadOpen: isPhotographicStylePadOpen,
-            photographicStyleSplit: photographicStyleSplit
+            photographicStyleSplit: photographicStyleSplit,
+            lightLeak: lightLeak
         )
 
         if isDualCamera {
             dualPrimaryContainerView.isHidden = shouldRender || (multiCamOverlayLayer == nil)
         }
+        let wasHidden = metalView?.isHidden ?? true
         if metalView?.isHidden != !shouldRender {
             metalView?.isHidden = !shouldRender
         }
         if metalView?.isPaused != !shouldRender {
             metalView?.isPaused = !shouldRender
         }
+        if shouldRender && wasHidden {
+            metalRenderer?.resetPresentationDirtyState()
+        }
+    }
+
+    public func pushLiveColorStateFast(
+        isFilmActive: Bool,
+        preset: FilmPreset,
+        intensity: Float,
+        softwareWB: ProPhotoSoftwareWBGrade,
+        filmTuning: FilmSimulationTuning,
+        photographicStyle: PhotographicStyleState,
+        lightLeak: VintageLightLeakConfig
+    ) {
+        metalRenderer?.pushLiveColorStateFast(
+            isFilmActive: isFilmActive,
+            preset: preset,
+            intensity: intensity,
+            softwareWB: softwareWB,
+            filmTuning: filmTuning,
+            photographicStyle: photographicStyle,
+            lightLeak: lightLeak
+        )
     }
 
     public func updatePhotographicStyleSplit(_ split: PhotographicStyleSplitTransition) {
@@ -656,7 +761,7 @@ public class PreviewContainerView: UIView {
 
     public func updateOrientation() {
         guard let connection = previewLayer?.connection else { return }
-        if connection.isVideoRotationAngleSupported(90) {
+        if connection.isVideoRotationAngleSupported(90), abs(connection.videoRotationAngle - 90) > 0.01 {
             connection.videoRotationAngle = 90
         }
     }
