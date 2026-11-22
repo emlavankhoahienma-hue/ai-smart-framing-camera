@@ -178,6 +178,7 @@ public struct CapturedPhotoPreviewView: View {
     @State private var lastZoomScale: CGFloat = 1.0
     @State private var panOffset: CGSize = .zero
     @State private var lastPanOffset: CGSize = .zero
+    @State private var dismissDragOffsetY: CGFloat = 0.0
 
     private static let detailCIContext = CIContext(options: [
         .useSoftwareRenderer: false,
@@ -225,6 +226,7 @@ public struct CapturedPhotoPreviewView: View {
                 }
             }
             .navigationBarHidden(true)
+            .interactiveDismissDisabled(zoomScale > 1.02 || isSplitCompareMode)
             .sheet(isPresented: $isShowingInfoSheet) {
                 photoInfoInspectorSheet
                     .presentationDetents([.medium, .large])
@@ -361,58 +363,98 @@ public struct CapturedPhotoPreviewView: View {
     @ViewBuilder
     private func zoomableHeroCanvas(in size: CGSize) -> some View {
         let displayCG = isPeekingOriginal ? item.originalImage : currentProcessedImage
-        Image(uiImage: UIImage(cgImage: displayCG))
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-            .frame(width: size.width, height: size.height)
-            .scaleEffect(zoomScale)
-            .offset(panOffset)
-            .contentShape(Rectangle())
-            .gesture(
-                MagnificationGesture()
-                    .onChanged { val in
-                        zoomScale = min(max(lastZoomScale * val, 1.0), 8.0)
-                        if zoomScale <= 1.02 { panOffset = .zero }
+        let isZoomedIn = zoomScale > 1.02
+
+        // Gắn toàn bộ cử chỉ trên vùng chứa tĩnh (coordinateSpace cố định) để kéo xuống xem vùng trên khi zoom
+        // hoàn toàn mượt mà, không bị lệch tọa độ và không bao giờ xung đột với cử chỉ đóng sheet.
+        ZStack {
+            Color.clear
+
+            Image(uiImage: UIImage(cgImage: displayCG))
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: size.width, height: size.height)
+                .scaleEffect(zoomScale)
+                .offset(
+                    x: panOffset.width,
+                    y: isZoomedIn ? panOffset.height : dismissDragOffsetY
+                )
+        }
+        .frame(width: size.width, height: size.height)
+        .coordinateSpace(name: "capturedPhotoHeroSpace")
+        .contentShape(Rectangle())
+        .gesture(
+            MagnificationGesture()
+                .onChanged { val in
+                    let nextScale = min(max(lastZoomScale * val, 1.0), 8.0)
+                    zoomScale = nextScale
+                    dismissDragOffsetY = 0
+                    if nextScale <= 1.02 {
+                        panOffset = .zero
+                    } else {
+                        let scaleRatio = nextScale / max(1.0, lastZoomScale)
+                        let scaledPan = CGSize(
+                            width: lastPanOffset.width * scaleRatio,
+                            height: lastPanOffset.height * scaleRatio
+                        )
+                        panOffset = clampPanOffset(scaledPan, in: size, scale: nextScale)
                     }
-                    .onEnded { _ in
-                        if zoomScale < 1.05 {
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
-                                resetZoomAndPan()
-                            }
-                        } else {
-                            lastZoomScale = zoomScale
-                            panOffset = clampPanOffset(panOffset, in: size, scale: zoomScale)
-                            lastPanOffset = panOffset
+                }
+                .onEnded { _ in
+                    if zoomScale < 1.05 {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+                            resetZoomAndPan()
                         }
+                    } else {
+                        lastZoomScale = zoomScale
+                        panOffset = clampPanOffset(panOffset, in: size, scale: zoomScale)
+                        lastPanOffset = panOffset
                     }
-            )
-            .simultaneousGesture(
-                DragGesture(minimumDistance: zoomScale > 1.02 ? 2 : 1000)
-                    .onChanged { val in
-                        guard zoomScale > 1.02 else { return }
+                }
+        )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 2, coordinateSpace: .named("capturedPhotoHeroSpace"))
+                .onChanged { val in
+                    if zoomScale > 1.02 {
+                        // Đang phóng to: toàn quyền kéo 4 hướng (kéo xuống để xem mép trên ảnh mượt 100%)
+                        dismissDragOffsetY = 0
                         let raw = CGSize(
                             width: lastPanOffset.width + val.translation.width,
                             height: lastPanOffset.height + val.translation.height
                         )
                         panOffset = clampPanOffset(raw, in: size, scale: zoomScale)
+                    } else if !isEditDrawerOpen && val.translation.height > 12 && abs(val.translation.height) > abs(val.translation.width) * 1.35 {
+                        // Chỉ cho vuốt xuống để đóng khi đang ở 1.0x nguyên bản (không zoom)
+                        dismissDragOffsetY = max(0, val.translation.height * 0.72)
                     }
-                    .onEnded { _ in
-                        guard zoomScale > 1.02 else { return }
-                        lastPanOffset = panOffset
-                    }
-            )
-            .highPriorityGesture(
-                SpatialTapGesture(count: 2)
-                    .onEnded { event in
-                        handleDoubleTap(at: event.location, in: size)
-                    }
-            )
-            .onLongPressGesture(minimumDuration: 0.28, pressing: { pressing in
-                guard item.saveFormat != .dng, zoomScale <= 1.05 else { return }
-                withAnimation(.easeInOut(duration: 0.14)) {
-                    isPeekingOriginal = pressing
                 }
-            }, perform: {})
+                .onEnded { val in
+                    if zoomScale > 1.02 {
+                        lastPanOffset = panOffset
+                    } else if dismissDragOffsetY > 0 {
+                        if val.translation.height > 110 || val.predictedEndTranslation.height > 190 {
+                            dismiss()
+                        } else {
+                            withAnimation(.spring(response: 0.26, dampingFraction: 0.82)) {
+                                dismissDragOffsetY = 0
+                            }
+                        }
+                    }
+                }
+        )
+        .highPriorityGesture(
+            SpatialTapGesture(count: 2)
+                .onEnded { event in
+                    dismissDragOffsetY = 0
+                    handleDoubleTap(at: event.location, in: size)
+                }
+        )
+        .onLongPressGesture(minimumDuration: 0.28, pressing: { pressing in
+            guard item.saveFormat != .dng, zoomScale <= 1.05 else { return }
+            withAnimation(.easeInOut(duration: 0.14)) {
+                isPeekingOriginal = pressing
+            }
+        }, perform: {})
     }
 
     @ViewBuilder

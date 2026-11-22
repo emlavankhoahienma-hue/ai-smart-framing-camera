@@ -72,6 +72,7 @@ private struct UnifiedColorUniforms {
     var styleA_skinLab: SIMD4<Float>
     var styleA_shTint: SIMD4<Float>
     var styleA_hiTint: SIMD4<Float>
+    var styleA_semantic: SIMD4<Float>
 
     // Photographic Style B (Right during Live Split-Screen Wipe)
     var styleB_control: SIMD4<Float>
@@ -83,6 +84,10 @@ private struct UnifiedColorUniforms {
     var styleB_skinLab: SIMD4<Float>
     var styleB_shTint: SIMD4<Float>
     var styleB_hiTint: SIMD4<Float>
+    var styleB_semantic: SIMD4<Float>
+
+    // Photographic Styles 3 Texture & Grain (textureMode, textureIntensity, grainAmount, grainSize)
+    var styleTexture: SIMD4<Float>
 
     // Vintage Camera / Film Optical Recipe
     var filmFlags: SIMD4<Float>         // (hasFilmPreset, hasLUT, lutSize, specialMode)
@@ -155,7 +160,10 @@ private struct UnifiedColorUniforms {
         let rA = styleA.preset.recipe
         let rB = styleB.preset.recipe
 
-        self.styleA_control = SIMD4(styleA.tone, styleA.color, styleA.isIdentity ? 0.0 : styleA.palette, rA.presetKind)
+        let styleAHasColor = !(styleA.preset == .standard && abs(styleA.tone) < 0.005 && abs(styleA.color) < 0.005)
+        let styleBHasColor = !(styleB.preset == .standard && abs(styleB.tone) < 0.005 && abs(styleB.color) < 0.005)
+
+        self.styleA_control = SIMD4(styleA.tone, styleA.color, styleAHasColor ? styleA.palette : 0.0, rA.presetKind)
         self.styleA_gradeA = SIMD4(rA.baseContrast, rA.baseShadowLift, rA.baseHighlightRoll, rA.isMonochrome)
         self.styleA_gradeB = SIMD4(rA.baseVibrance, rA.baseSaturation, rA.undertoneStrength, rA.splitStrength)
         self.styleA_m0 = rA.matrixRow0
@@ -164,8 +172,9 @@ private struct UnifiedColorUniforms {
         self.styleA_skinLab = rA.skinShiftLab
         self.styleA_shTint = rA.shadowTint
         self.styleA_hiTint = rA.highlightTint
+        self.styleA_semantic = rA.semanticBoost
 
-        self.styleB_control = SIMD4(styleB.tone, styleB.color, styleB.isIdentity ? 0.0 : styleB.palette, rB.presetKind)
+        self.styleB_control = SIMD4(styleB.tone, styleB.color, styleBHasColor ? styleB.palette : 0.0, rB.presetKind)
         self.styleB_gradeA = SIMD4(rB.baseContrast, rB.baseShadowLift, rB.baseHighlightRoll, rB.isMonochrome)
         self.styleB_gradeB = SIMD4(rB.baseVibrance, rB.baseSaturation, rB.undertoneStrength, rB.splitStrength)
         self.styleB_m0 = rB.matrixRow0
@@ -174,6 +183,15 @@ private struct UnifiedColorUniforms {
         self.styleB_skinLab = rB.skinShiftLab
         self.styleB_shTint = rB.shadowTint
         self.styleB_hiTint = rB.highlightTint
+        self.styleB_semantic = rB.semanticBoost
+
+        let activeTexStyle = params.photographicStyle
+        self.styleTexture = SIMD4(
+            activeTexStyle.textureMode.shaderCode,
+            activeTexStyle.textureMode == .standard ? 0.0 : activeTexStyle.textureIntensity,
+            activeTexStyle.grainEnabled ? activeTexStyle.grainAmount : 0.0,
+            activeTexStyle.grainSize
+        )
 
         let recipe = hasFilm ? params.preset.metalOpticalRecipe : .identity
         self.filmFlags = SIMD4(
@@ -703,6 +721,7 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
         float4 styleA_skinLab;
         float4 styleA_shTint;
         float4 styleA_hiTint;
+        float4 styleA_semantic;
 
         float4 styleB_control;
         float4 styleB_gradeA;
@@ -713,6 +732,9 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
         float4 styleB_skinLab;
         float4 styleB_shTint;
         float4 styleB_hiTint;
+        float4 styleB_semantic;
+
+        float4 styleTexture;
 
         float4 filmFlags;
         float4 filmM0;
@@ -788,6 +810,32 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
         return clamp(hueMask * chromaMask * lumaMask, 0.0f, 1.0f);
     }
 
+    inline float computeSkyMaskOkLab(float3 lab) {
+        float chroma = length(lab.yz);
+        float hue = atan2(lab.z, lab.y);
+        float hueMask = smoothstep(-2.75f, -2.25f, hue) * (1.0f - smoothstep(-1.15f, -0.75f, hue));
+        float chromaMask = smoothstep(0.020f, 0.055f, chroma);
+        float lumaMask = smoothstep(0.32f, 0.56f, lab.x);
+        return clamp(hueMask * chromaMask * lumaMask, 0.0f, 1.0f);
+    }
+
+    inline float computeFoliageMaskOkLab(float3 lab) {
+        float chroma = length(lab.yz);
+        float hue = atan2(lab.z, lab.y);
+        float hueMask = smoothstep(1.48f, 1.95f, hue) * (1.0f - smoothstep(2.65f, 3.02f, hue));
+        float chromaMask = smoothstep(0.022f, 0.060f, chroma);
+        float lumaMask = smoothstep(0.12f, 0.28f, lab.x);
+        return clamp(hueMask * chromaMask * lumaMask, 0.0f, 1.0f);
+    }
+
+    inline float computeWarmRedMaskOkLab(float3 lab) {
+        float chroma = length(lab.yz);
+        float hue = atan2(lab.z, lab.y);
+        float hueMask = smoothstep(-0.22f, 0.18f, hue) * (1.0f - smoothstep(0.75f, 1.15f, hue));
+        float chromaMask = smoothstep(0.045f, 0.105f, chroma);
+        return clamp(hueMask * chromaMask, 0.0f, 1.0f);
+    }
+
     inline float applyHighlightShoulder(float y, float knee, float strength) {
         if (y <= knee || strength <= 0.001f) {
             return y;
@@ -857,10 +905,12 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
         float4 m0, float4 m1, float4 m2,
         float4 skinShiftLab,
         float4 shadowTint,
-        float4 highlightTint
+        float4 highlightTint,
+        float4 semanticBoost
     ) {
+        bool isMono = gradeA.w > 0.5f;
         float palette = clamp(control.z, 0.0f, 1.0f);
-        if (palette <= 0.001f) {
+        if (!isMono && palette <= 0.001f) {
             return origLinear;
         }
         float tone = clamp(control.x, -1.0f, 1.0f);
@@ -870,7 +920,6 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
         float baseContrast = gradeA.x;
         float baseShadowLift = gradeA.y;
         float baseHighlightRoll = gradeA.z;
-        bool isMono = gradeA.w > 0.5f;
         float baseVibrance = gradeB.x;
         float baseSaturation = gradeB.y;
         float undertoneStrength = gradeB.z;
@@ -879,15 +928,19 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
         float3 origLab = linearSRGBToOkLab(origLinear);
         float origChroma = length(origLab.yz);
         float skinMask = computeSkinMaskOkLab(origLab);
+        float skyMask = computeSkyMaskOkLab(origLab);
+        float foliageMask = computeFoliageMaskOkLab(origLab);
+        float warmRedMask = computeWarmRedMaskOkLab(origLab);
         float nonNeutralMask = smoothstep(0.010f, 0.032f, origChroma);
         float midtoneMask = smoothstep(0.04f, 0.28f, origLab.x) * (1.0f - smoothstep(0.78f, 0.96f, origLab.x));
+        float skinProtect = clamp(skinShiftLab.w, 0.0f, 0.85f);
 
         float3 graded = origLinear;
         if (!isMono) {
             float3 matRGB = float3(dot(graded, m0.xyz), dot(graded, m1.xyz), dot(graded, m2.xyz));
             if (presetKind > 0.5f && presetKind < 1.5f) {
-                float blueSkyGuard = smoothstep(-0.09f, -0.02f, origLab.z);
-                float matrixMix = clamp((0.28f + 0.72f * max(skinMask, nonNeutralMask * 0.65f)) * blueSkyGuard, 0.15f, 1.0f);
+                float blueSkyGuard = 1.0f - skyMask * 0.72f;
+                float matrixMix = clamp((0.36f + 0.64f * max(skinMask, nonNeutralMask * 0.70f)) * blueSkyGuard, 0.18f, 1.0f);
                 graded = mix(graded, matRGB, matrixMix);
             } else {
                 graded = matRGB;
@@ -898,73 +951,127 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
         float yOut = yIn;
 
         if (abs(baseShadowLift) > 0.001f) {
-            float shadowWeight = 1.0f - smoothstep(0.02f, 0.42f, yOut);
-            yOut = max(0.0f, yOut + baseShadowLift * 0.10f * shadowWeight * (0.25f + yOut));
+            float shadowWeight = 1.0f - smoothstep(0.015f, 0.45f, yOut);
+            float shDelta = baseShadowLift * 0.115f * shadowWeight * (0.22f + yOut);
+            yOut = max(yOut * 0.45f, yOut + shDelta);
         }
         if (abs(baseContrast) > 0.001f) {
             float pivot = 0.18f;
-            float power = max(0.65f, 1.0f + baseContrast * 0.72f);
+            float power = max(0.62f, 1.0f + baseContrast * 0.68f);
             float yPivot = pivot * pow(max(yOut / pivot, 1e-6f), power);
             yOut = mix(yOut, yPivot, 0.85f);
         }
 
+        // Skin-Protected Local HDR Tone Mapping (trục Y: -1 sâu bóng film có chi tiết | +1 nâng bóng thoáng sáng)
         if (tone < -0.001f) {
             float neg = -tone;
-            float gamma = 1.0f + 0.58f * neg;
-            float yDeep = pow(max(yOut, 1e-6f), gamma) * exp(-0.18f * neg);
-            float toeKeep = exp(-yOut * 16.0f) * 0.24f;
-            yOut = mix(yDeep, yOut * 0.72f, toeKeep);
+            float effNeg = neg * (1.0f - skinMask * skinProtect * 0.54f);
+            float gamma = 1.0f + 0.60f * effNeg;
+            float yDeep = pow(max(yOut, 1e-6f), gamma) * exp(-0.15f * effNeg);
+            float toeKeep = exp(-yOut * 11.5f) * 0.36f;
+            yOut = mix(yDeep, yOut * 0.66f, toeKeep);
         } else if (tone > 0.001f) {
-            float gamma = 1.0f - 0.36f * tone;
-            float yLifted = pow(max(yOut, 1e-6f), gamma) * (1.0f + 0.20f * tone);
-            float shLift = (1.0f - smoothstep(0.01f, 0.35f, yOut)) * 0.032f * tone;
+            float gamma = 1.0f - 0.44f * tone;
+            float yLifted = pow(max(yOut, 1e-6f), gamma) * (1.0f + 0.26f * tone);
+            float shLift = (1.0f - smoothstep(0.01f, 0.38f, yOut)) * 0.052f * tone;
             yOut = yLifted + shLift;
         }
 
-        float shoulderStrength = clamp(baseHighlightRoll + max(0.0f, tone) * 0.72f, 0.0f, 0.95f);
-        yOut = applyHighlightShoulder(yOut, 0.72f, shoulderStrength);
+        float skyProtect = clamp(highlightTint.w, 0.0f, 0.85f);
+        float shoulderKnee = mix(0.72f, 0.58f, skyMask * skyProtect);
+        float shoulderStrength = clamp(baseHighlightRoll + max(0.0f, tone) * 0.78f + skyMask * skyProtect * 0.55f, 0.0f, 0.96f);
+        yOut = applyHighlightShoulder(yOut, shoulderKnee, shoulderStrength);
 
         if (isMono) {
-            float monoLum = max(0.0f, dot(max(graded, 0.0f), float3(0.30f, 0.58f, 0.12f)));
+            // Đơn sắc phim bạc thuần: Color = bộ lọc kính quang học (Blue <-> Panchromatic <-> Red #25) + Silver Split Tone
+            // Palette trên B&W điều khiển độ sáng & độ gắt highlight (giữ 100% đơn sắc, không pha lại màu gốc)
+            float3 filterW = (colorCtrl >= 0.0f)
+                ? mix(float3(0.31f, 0.58f, 0.11f), float3(0.56f, 0.38f, 0.06f), colorCtrl)
+                : mix(float3(0.31f, 0.58f, 0.11f), float3(0.16f, 0.48f, 0.36f), -colorCtrl);
+            float monoLum = max(0.0f, dot(max(origLinear, 0.0f), filterW));
             float lumScale = yOut / max(yIn, 1e-5f);
-            float monoTone = clamp(monoLum * clamp(lumScale, 0.0f, 3.2f), 0.0f, 4.0f);
-            float shW = (1.0f - smoothstep(0.04f, 0.55f, monoTone)) * smoothstep(0.005f, 0.08f, monoTone);
-            float hiW = smoothstep(0.35f, 0.90f, monoTone);
+            float monoTone = clamp(monoLum * clamp(lumScale, 0.0f, 3.6f), 0.0f, 4.0f);
+            monoTone = max(0.0f, monoTone + semanticBoost.x * skinMask * 0.25f);
+
+            float hiMaskBW = smoothstep(0.26f, 0.92f, monoTone);
+            float bwHiGain = 1.0f + (palette - 0.5f) * 0.56f * hiMaskBW;
+            monoTone = applyHighlightShoulder(clamp(monoTone * bwHiGain, 0.0f, 3.8f), 0.78f, 0.55f);
+
+            float shW = (1.0f - smoothstep(0.03f, 0.52f, monoTone)) * smoothstep(0.004f, 0.07f, monoTone);
+            float hiW = smoothstep(0.36f, 0.92f, monoTone);
             float3 splitTone = shadowTint.xyz * shW * splitStrength + highlightTint.xyz * hiW * splitStrength;
             float3 silverShift = (colorCtrl >= 0.0f)
-                ? float3(0.045f, 0.022f, -0.038f) * colorCtrl
-                : float3(-0.026f, 0.004f, 0.046f) * (-colorCtrl);
-            graded = float3(monoTone) + splitTone + silverShift * (0.25f + 0.75f * midtoneMask) * clamp(monoTone * 1.4f, 0.0f, 1.0f);
-        } else {
-            float ratio = clamp(yOut / max(yIn, 1e-5f), 0.0f, 3.2f);
-            graded *= ratio;
-            float hiDesat = smoothstep(0.82f, 1.35f, yOut) * 0.18f;
-            graded = mix(graded, float3(yOut), hiDesat);
-
-            if (splitStrength > 0.001f) {
-                float shW = (1.0f - smoothstep(0.04f, 0.46f, yOut)) * smoothstep(0.004f, 0.05f, yOut);
-                float hiW = smoothstep(0.45f, 0.92f, yOut) * (1.0f - smoothstep(0.96f, 1.25f, yOut));
-                graded += (shadowTint.xyz * shW + highlightTint.xyz * hiW) * splitStrength;
-            }
-
-            float3 lab = linearSRGBToOkLab(graded);
-            float cMag = length(lab.yz);
-            if (undertoneStrength > 0.001f) {
-                float skinWeight = (0.16f + 0.84f * skinMask) * midtoneMask * nonNeutralMask;
-                lab.x += skinShiftLab.x * skinWeight * undertoneStrength;
-                lab.yz += skinShiftLab.yz * skinWeight * undertoneStrength;
-            }
-            float satRoll = 1.0f - smoothstep(0.075f, 0.235f, cMag);
-            float skinProtection = 1.0f - 0.42f * skinMask;
-            float chromaScale = baseSaturation + baseVibrance * satRoll * skinProtection;
-            if (colorCtrl > 0.001f) {
-                chromaScale *= (1.0f + colorCtrl * (0.66f * satRoll + 0.18f) * skinProtection);
-            } else if (colorCtrl < -0.001f) {
-                chromaScale *= mix(1.0f, 0.08f, -colorCtrl);
-            }
-            lab.yz *= clamp(chromaScale, 0.0f, 1.95f);
-            graded = okLabToLinearSRGB(lab);
+                ? float3(0.042f, 0.020f, -0.034f) * colorCtrl
+                : float3(-0.024f, 0.006f, 0.042f) * (-colorCtrl);
+            graded = float3(monoTone) + splitTone + silverShift * (0.22f + 0.78f * midtoneMask) * clamp(monoTone * 1.35f, 0.0f, 1.0f);
+            return max(graded, float3(0.0f));
         }
+
+        float ratio = clamp(yOut / max(yIn, 1e-5f), 0.0f, 3.5f);
+        graded *= ratio;
+        float hiDesat = smoothstep(0.82f, 1.35f, yOut) * 0.18f;
+        graded = mix(graded, float3(yOut), hiDesat);
+
+        if (splitStrength > 0.001f) {
+            float shW = (1.0f - smoothstep(0.03f, 0.48f, yOut)) * smoothstep(0.003f, 0.045f, yOut);
+            float hiW = smoothstep(0.42f, 0.92f, yOut) * (1.0f - smoothstep(0.95f, 1.28f, yOut));
+            float3 effShadowTint = shadowTint.xyz;
+            if (presetKind > 2.5f) {
+                // Dramatic: thanh Palette dịch chuyển mượt sắc bóng từ slate ấm nhẹ sang xanh cyan Bắc Âu sâu
+                float3 warmSlate = float3(0.018f, 0.008f, -0.012f);
+                effShadowTint = mix(warmSlate, shadowTint.xyz * 1.28f, smoothstep(0.15f, 0.85f, palette));
+            }
+            graded += (effShadowTint * shW + highlightTint.xyz * hiW) * splitStrength;
+        }
+
+        float blueShCut = semanticBoost.w;
+        if (blueShCut > 0.005f) {
+            float shMidW = 1.0f - smoothstep(0.08f, 0.62f, yOut);
+            graded.b *= max(0.72f, 1.0f - blueShCut * 0.28f * shMidW);
+        }
+
+        float3 lab = linearSRGBToOkLab(max(graded, float3(-0.08f)));
+        float cMag = length(lab.yz);
+        if (undertoneStrength > 0.001f) {
+            float skinWeight = (0.18f + 0.82f * skinMask) * midtoneMask * nonNeutralMask;
+            lab.x += (skinShiftLab.x + semanticBoost.x * skinMask) * skinWeight * undertoneStrength;
+            lab.yz += skinShiftLab.yz * skinWeight * undertoneStrength;
+        } else if (abs(semanticBoost.x) > 0.002f) {
+            lab.x += semanticBoost.x * skinMask * midtoneMask;
+        }
+
+        // Semantic 4-band grading: tán lá xanh, bầu trời lam và dải đỏ ấm
+        float foliagePop = semanticBoost.y;
+        if (abs(foliagePop) > 0.005f) {
+            lab.x += foliagePop * 0.018f * foliageMask;
+            lab.yz *= (1.0f + foliagePop * 0.45f * foliageMask);
+            lab.y -= foliagePop * 0.014f * foliageMask;
+        }
+        float skyShift = semanticBoost.z;
+        if (abs(skyShift) > 0.005f) {
+            lab.z -= skyShift * 0.026f * skyMask;
+            lab.y -= skyShift * 0.008f * skyMask;
+            if (skyShift > 0.0f) {
+                lab.x -= skyShift * 0.016f * skyMask * smoothstep(0.55f, 0.90f, lab.x);
+            }
+        }
+        float warmRedPop = shadowTint.w;
+        if (abs(warmRedPop) > 0.005f) {
+            float redW = warmRedMask * (1.0f - skinMask * 0.65f);
+            lab.yz *= (1.0f + warmRedPop * 0.42f * redW);
+            lab.x += warmRedPop * 0.012f * redW;
+        }
+
+        float satRoll = 1.0f - smoothstep(0.068f, 0.245f, cMag);
+        float skinProtection = 1.0f - 0.46f * skinMask;
+        float chromaScale = baseSaturation + baseVibrance * satRoll * skinProtection;
+        if (colorCtrl > 0.001f) {
+            chromaScale *= (1.0f + colorCtrl * (0.76f * satRoll + 0.22f) * skinProtection);
+        } else if (colorCtrl < -0.001f) {
+            chromaScale *= mix(1.0f, 0.08f, -colorCtrl);
+        }
+        lab.yz *= clamp(chromaScale, 0.0f, 2.15f);
+        graded = okLabToLinearSRGB(lab);
 
         return max(mix(origLinear, graded, palette), float3(0.0f));
     }
@@ -1052,6 +1159,7 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
         float3 srcSRGB,
         float3 halationSampleSum,
         float3 diffusionSampleSum,
+        float3 softSkinSample,
         float2 dstUV,
         uint2 gid,
         texture3d<float, access::sample> lutTex,
@@ -1061,6 +1169,15 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
 
         // 1. Decode sRGB -> Linear RGB
         float3 lin = srgbToLinearExact(srcSRGB);
+
+        // 1b. Photographic Styles 3 — Soft Skin (Semantic Skin-Only Bilateral Smoothing, giữ nguyên độ nét mắt/tóc/nền)
+        float texMode = u.styleTexture.x;
+        float texInt = clamp(u.styleTexture.y, 0.0f, 1.0f);
+        if (texMode > 0.5f && texMode < 1.5f && texInt > 0.005f) {
+            float skinM = computeSkinMaskOkLab(linearSRGBToOkLab(lin));
+            float3 softLin = srgbToLinearExact(softSkinSample);
+            lin = mix(lin, softLin, skinM * texInt * 0.72f);
+        }
 
         // 2. Pro Software White Balance
         if (u.wbParams.x > 0.5f) {
@@ -1073,20 +1190,28 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
             lin = applyPhotographicStylePass(
                 lin, u.styleB_control, u.styleB_gradeA, u.styleB_gradeB,
                 u.styleB_m0, u.styleB_m1, u.styleB_m2,
-                u.styleB_skinLab, u.styleB_shTint, u.styleB_hiTint
+                u.styleB_skinLab, u.styleB_shTint, u.styleB_hiTint, u.styleB_semantic
             );
         } else {
             lin = applyPhotographicStylePass(
                 lin, u.styleA_control, u.styleA_gradeA, u.styleA_gradeB,
                 u.styleA_m0, u.styleA_m1, u.styleA_m2,
-                u.styleA_skinLab, u.styleA_shTint, u.styleA_hiTint
+                u.styleA_skinLab, u.styleA_shTint, u.styleA_hiTint, u.styleA_semantic
             );
+        }
+
+        // 3b. Photographic Styles 3 — Film Texture gentle highlight rolloff (khi chọn Kết cấu Film)
+        if (texMode > 2.5f && texInt > 0.005f) {
+            float yF = max(0.0f, dot(lin, float3(0.2126f, 0.7152f, 0.0722f)));
+            float yFOut = applyHighlightShoulder(yF, 0.70f, texInt * 0.45f);
+            lin *= clamp(yFOut / max(yF, 1e-5f), 0.0f, 2.0f);
         }
 
         // 4. Vintage Camera / Film Emulsion Emulation (76 Presets + Hardware .rgba16Float 3D LUT)
         float filmIntensity = u.wbParams.w;
-        float totalGrain = u.tuningB.y;
-        float grainSize = 1.25f;
+        float styleGrain = clamp(u.styleTexture.z, 0.0f, 1.0f);
+        float totalGrain = clamp(u.tuningB.y + styleGrain, 0.0f, 1.0f);
+        float grainSize = (styleGrain > 0.005f) ? clamp(u.styleTexture.w, 0.7f, 1.8f) : 1.25f;
         float totalVignette = u.tuningB.z;
         float totalFade = u.tuningB.w;
 
@@ -1298,16 +1423,18 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
             srgb = applyVintageMatteFadeSRGB(srgb, totalFade);
         }
 
-        // 8. Single-Pass Remjet Halation (fiery red-orange highlight ring) & Optical Diffusion Mist
-        float totalHalation = clamp(u.tuningC.x + (u.filmFlags.x > 0.5f ? u.filmOpticalParams.x * filmIntensity : 0.0f), 0.0f, 1.0f);
-        float totalDiffusion = clamp((u.filmFlags.x > 0.5f ? u.filmOpticalParams.y * filmIntensity : 0.0f), 0.0f, 1.0f);
+        // 8. Single-Pass Remjet Halation (fiery red-orange highlight ring) & Optical Diffusion Mist (Film + Styles 3 Glow/Film)
+        float styleHalo = (texMode > 2.5f) ? (texInt * 0.74f) : 0.0f;
+        float styleDiff = (texMode > 1.5f && texMode < 2.5f) ? (texInt * 0.68f) : ((texMode > 2.5f) ? (texInt * 0.24f) : 0.0f);
+        float totalHalation = clamp(u.tuningC.x + styleHalo + (u.filmFlags.x > 0.5f ? u.filmOpticalParams.x * filmIntensity : 0.0f), 0.0f, 1.0f);
+        float totalDiffusion = clamp(styleDiff + (u.filmFlags.x > 0.5f ? u.filmOpticalParams.y * filmIntensity : 0.0f), 0.0f, 1.0f);
         if (totalHalation > 0.005f) {
             float3 haloGlow = halationSampleSum * float3(1.00f, 0.25f, 0.06f) * (totalHalation * 0.85f);
             srgb = 1.0f - (1.0f - srgb) * (1.0f - clamp(haloGlow, 0.0f, 0.92f));
         }
         if (totalDiffusion > 0.005f) {
-            float3 mistGlow = diffusionSampleSum * float3(1.00f, 0.98f, 0.94f) * (totalDiffusion * 0.52f);
-            srgb = 1.0f - (1.0f - srgb) * (1.0f - clamp(mistGlow, 0.0f, 0.72f));
+            float3 mistGlow = diffusionSampleSum * float3(1.00f, 0.98f, 0.94f) * (totalDiffusion * 0.54f);
+            srgb = 1.0f - (1.0f - srgb) * (1.0f - clamp(mistGlow, 0.0f, 0.74f));
         }
 
         // 9. Adjustable Organic Analog Light Leak (Screen-blended 8-pattern cassette seal flare)
@@ -1344,16 +1471,19 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
         return clamp(srgb, 0.0f, 1.0f);
     }
 
-    // 8-Tap Golden-Angle Ring Helper for Zero-Allocation Remjet Halation & Optical Diffusion
+    // 8-Tap Golden-Angle Ring Helper for Zero-Allocation Remjet Halation, Optical Diffusion & Bilateral Soft Skin
     inline void accumulateOpticalGlowYUV(
         texture2d<float, access::sample> texY,
         texture2d<float, access::sample> texUV,
         sampler s,
         float2 uv,
+        float3 centerSRGB,
         float isVideoRange,
         float radiusUV,
+        bool computeSoftSkin,
         thread float3& outHalation,
-        thread float3& outDiffusion
+        thread float3& outDiffusion,
+        thread float3& outSoftSkin
     ) {
         constexpr float2 offsets[8] = {
             float2( 1.000f,  0.000f),
@@ -1367,6 +1497,8 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
         };
         float3 haloAcc = float3(0.0f);
         float3 diffAcc = float3(0.0f);
+        float3 skinAcc = centerSRGB;
+        float skinWAcc = 1.0f;
         for (int i = 0; i < 8; ++i) {
             float ringScale = (i & 1) == 0 ? 1.0f : 0.52f;
             float2 suv = clamp(uv + offsets[i] * (radiusUV * ringScale), 0.0f, 1.0f);
@@ -1374,18 +1506,28 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
             float lum = dot(c, float3(0.299f, 0.587f, 0.114f));
             haloAcc += c * smoothstep(0.68f, 0.98f, lum);
             diffAcc += c * smoothstep(0.55f, 0.95f, lum);
+            if (computeSoftSkin) {
+                float3 diff = c - centerSRGB;
+                float bw = exp(-dot(diff, diff) * 85.0f) * (ringScale < 0.7f ? 1.0f : 0.65f);
+                skinAcc += c * bw;
+                skinWAcc += bw;
+            }
         }
         outHalation = haloAcc * 0.125f;
         outDiffusion = diffAcc * 0.125f;
+        outSoftSkin = skinAcc / max(skinWAcc, 1e-4f);
     }
 
     inline void accumulateOpticalGlowBGRA(
         texture2d<float, access::sample> texBGRA,
         sampler s,
         float2 uv,
+        float3 centerSRGB,
         float radiusUV,
+        bool computeSoftSkin,
         thread float3& outHalation,
-        thread float3& outDiffusion
+        thread float3& outDiffusion,
+        thread float3& outSoftSkin
     ) {
         constexpr float2 offsets[8] = {
             float2( 1.000f,  0.000f),
@@ -1399,6 +1541,8 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
         };
         float3 haloAcc = float3(0.0f);
         float3 diffAcc = float3(0.0f);
+        float3 skinAcc = centerSRGB;
+        float skinWAcc = 1.0f;
         for (int i = 0; i < 8; ++i) {
             float ringScale = (i & 1) == 0 ? 1.0f : 0.52f;
             float2 suv = clamp(uv + offsets[i] * (radiusUV * ringScale), 0.0f, 1.0f);
@@ -1406,9 +1550,16 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
             float lum = dot(c, float3(0.299f, 0.587f, 0.114f));
             haloAcc += c * smoothstep(0.68f, 0.98f, lum);
             diffAcc += c * smoothstep(0.55f, 0.95f, lum);
+            if (computeSoftSkin) {
+                float3 diff = c - centerSRGB;
+                float bw = exp(-dot(diff, diff) * 85.0f) * (ringScale < 0.7f ? 1.0f : 0.65f);
+                skinAcc += c * bw;
+                skinWAcc += bw;
+            }
         }
         outHalation = haloAcc * 0.125f;
         outDiffusion = diffAcc * 0.125f;
+        outSoftSkin = skinAcc / max(skinWAcc, 1e-4f);
     }
 
     // Kernel 1: Zero-Copy Bi-Planar YUV Camera Buffer -> Graded Output Texture
@@ -1456,13 +1607,17 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
 
         float3 haloSum = float3(0.0f);
         float3 diffSum = float3(0.0f);
+        float3 softSkin = srcSRGB;
+        bool needSoftSkin = (u.styleTexture.x > 0.5f && u.styleTexture.x < 1.5f && u.styleTexture.y > 0.005f);
+        bool needStyleGlow = (u.styleTexture.x > 1.5f && u.styleTexture.y > 0.005f);
         float needGlow = u.tuningC.x + (u.filmFlags.x > 0.5f ? (u.filmOpticalParams.x + u.filmOpticalParams.y) * u.wbParams.w : 0.0f);
-        if (needGlow > 0.008f) {
-            accumulateOpticalGlowYUV(texY, texUV, linSampler, srcUV, isVideoRange, 0.0115f, haloSum, diffSum);
+        if (needGlow > 0.008f || needStyleGlow || needSoftSkin) {
+            float sampleRadius = (needSoftSkin && needGlow <= 0.008f && !needStyleGlow) ? 0.0046f : 0.0115f;
+            accumulateOpticalGlowYUV(texY, texUV, linSampler, srcUV, srcSRGB, isVideoRange, sampleRadius, needSoftSkin, haloSum, diffSum, softSkin);
         }
 
         float2 dstUV = (float2(gid) + 0.5f) / float2(float(outW), float(outH));
-        float3 outSRGB = runUnifiedColorScience(srcSRGB, haloSum, diffSum, dstUV, gid, lutTex, u);
+        float3 outSRGB = runUnifiedColorScience(srcSRGB, haloSum, diffSum, softSkin, dstUV, gid, lutTex, u);
         outTex.write(float4(outSRGB, 1.0f), gid);
     }
 
@@ -1505,13 +1660,17 @@ public final class UnifiedMetalColorEngine: @unchecked Sendable {
 
         float3 haloSum = float3(0.0f);
         float3 diffSum = float3(0.0f);
+        float3 softSkin = srcSRGB;
+        bool needSoftSkin = (u.styleTexture.x > 0.5f && u.styleTexture.x < 1.5f && u.styleTexture.y > 0.005f);
+        bool needStyleGlow = (u.styleTexture.x > 1.5f && u.styleTexture.y > 0.005f);
         float needGlow = u.tuningC.x + (u.filmFlags.x > 0.5f ? (u.filmOpticalParams.x + u.filmOpticalParams.y) * u.wbParams.w : 0.0f);
-        if (needGlow > 0.008f) {
-            accumulateOpticalGlowBGRA(texBGRA, linSampler, srcUV, 0.0115f, haloSum, diffSum);
+        if (needGlow > 0.008f || needStyleGlow || needSoftSkin) {
+            float sampleRadius = (needSoftSkin && needGlow <= 0.008f && !needStyleGlow) ? 0.0046f : 0.0115f;
+            accumulateOpticalGlowBGRA(texBGRA, linSampler, srcUV, srcSRGB, sampleRadius, needSoftSkin, haloSum, diffSum, softSkin);
         }
 
         float2 dstUV = (float2(gid) + 0.5f) / float2(float(outW), float(outH));
-        float3 outSRGB = runUnifiedColorScience(srcSRGB, haloSum, diffSum, dstUV, gid, lutTex, u);
+        float3 outSRGB = runUnifiedColorScience(srcSRGB, haloSum, diffSum, softSkin, dstUV, gid, lutTex, u);
         outTex.write(float4(outSRGB, 1.0f), gid);
     }
     """

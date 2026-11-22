@@ -803,6 +803,96 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         self.assertIn("let defaultRigidity: Float = 0.85", uw)
         self.assertIn("let rigidity = max(0.85, sceneMetrics.architecturalLineStrength)", uw)
 
+    def test_21_photo_review_zoom_pan_and_photographic_styles_v3(self):
+        # 1. Post-capture photo review uses fullScreenCover + interactiveDismissDisabled + stationary gesture space
+        main_view = source("Views/CameraMainView.swift")
+        gallery = source("Views/PhotoGallerySheetView.swift")
+        preview_sheet = source("Views/CapturedPhotoPreviewView.swift")
+        self.assertIn(".fullScreenCover(isPresented: $viewModel.isShowingPhotoDetail)", main_view)
+        self.assertIn(".fullScreenCover(item: $selectedPreviewItem)", gallery)
+        for token in [
+            ".interactiveDismissDisabled(zoomScale > 1.02 || isSplitCompareMode)",
+            ".coordinateSpace(name: \"capturedPhotoHeroSpace\")",
+            "@State private var dismissDragOffsetY: CGFloat = 0.0",
+            "if zoomScale > 1.02 {",
+        ]:
+            self.assertIn(token, preview_sheet)
+
+        # 2. Full 16 Photographic Styles + Styles 3 Texture/Grain + Saved Custom Recipes
+        models = source("Models/PhotographicStyleModels.swift")
+        for preset_case in [
+            "case coolMood", "case neutral", "case bright", "case softRose", "case gold", "case warmAmber",
+            "case standard",
+            "case vibrant", "case naturalMood", "case luminous", "case richContrast",
+            "case quiet", "case cozy", "case ethereal", "case mutedBW", "case starkBW",
+        ]:
+            self.assertIn(preset_case, models)
+        for token in [
+            "public enum PhotographicTextureMode",
+            "case softSkin", "case glow", "case film",
+            "public struct PhotographicStyleCustomRecipe",
+            "public enum PhotographicStyleRecipeStore",
+            "if !preset.isMonochrome && palette < 0.005",
+        ]:
+            self.assertIn(token, models)
+
+        # 3. Single-Pass Metal 4-Band Semantic OkLab + Live Styles 3 Soft Skin/Glow/Film/Grain + 1:1 Uniform Parity
+        unified = source("Services/UnifiedMetalColorEngine.swift")
+        kernel = source("Services/PhotographicStyleMetalKernel.swift")
+        for token in [
+            "computeSkyMaskOkLab",
+            "computeFoliageMaskOkLab",
+            "computeWarmRedMaskOkLab",
+            "styleA_semantic",
+            "styleB_semantic",
+            "styleTexture",
+            "thread float3& outSoftSkin",
+            "bool computeSoftSkin",
+        ]:
+            self.assertIn(token, unified)
+
+        for path_src, struct_name, expected_count in [
+            (unified, "UnifiedColorUniforms", 41),
+            (kernel, "PhotographicStyleUniforms", 10),
+        ]:
+            m_sw = re.search(rf"struct {struct_name}\s*\{{(.*?)\n\s*(?:init|\}})", path_src, re.S)
+            m_msl = re.search(rf"struct {struct_name}\s*\{{(.*?)\n\s*\}};", path_src, re.S)
+            self.assertIsNotNone(m_sw)
+            self.assertIsNotNone(m_msl)
+            sw_fields = re.findall(r"var\s+(\w+)\s*:\s*SIMD4<Float>", m_sw.group(1))
+            msl_fields = re.findall(r"float4\s+(\w+)\s*;", m_msl.group(1))
+            self.assertEqual(sw_fields, msl_fields)
+            self.assertEqual(len(sw_fields), expected_count)
+
+        # 4. Tight clipped cursor orb (no 70pt overflow fog) + Tap-to-Edit HUD + Hold-to-Compare + Texture Deck + Recipes
+        pad = source("Views/PhotographicStylesPadView.swift")
+        self.assertNotIn("34.0 + 36.0 * g", pad)
+        for token in [
+            "private enum PhotographicStyleNudgeMetric",
+            "precisionNudgeBar(for:",
+            "setPhotographicStyleHoldCompare(true)",
+            "PhotographicStyleTextureDeckView",
+            "PhotographicStyleRecipesSheet",
+            "defaultTone: preset.defaultTone",
+            "defaultColor: preset.defaultColor",
+            "let outerAuraDiameter: CGFloat = coreDiameter + 5.0 + 4.5 * g",
+            ".clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))",
+        ]:
+            self.assertIn(token, pad)
+
+        # 5. CameraViewModel exposes Texture, Grain, Hold-to-Compare, Nudge, and Recipe actions
+        vm = source("ViewModels/CameraViewModel.swift")
+        for token in [
+            "isHoldingCompareOriginalStyle",
+            "savedPhotographicRecipes",
+            "public func nudgePhotographicStyle(",
+            "public func selectPhotographicTextureMode(",
+            "public func togglePhotographicGrain()",
+            "public func saveCurrentPhotographicRecipe(",
+            "public func applyPhotographicRecipe(",
+        ]:
+            self.assertIn(token, vm)
+
 
 if __name__ == "__main__":
     unittest.main()

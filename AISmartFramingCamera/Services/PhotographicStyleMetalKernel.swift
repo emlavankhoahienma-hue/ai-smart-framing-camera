@@ -3,7 +3,7 @@ import CoreImage
 import Metal
 import simd
 
-/// Uniforms căn lề 16-byte khớp tuyệt đối 1:1 giữa Swift và Metal Shading Language (9 × SIMD4<Float> = 144 bytes).
+/// Uniforms căn lề 16-byte khớp tuyệt đối 1:1 giữa Swift và Metal Shading Language (10 × SIMD4<Float> = 160 bytes).
 private struct PhotographicStyleUniforms {
     var control: SIMD4<Float>       // (tone, color, palette, presetKind)
     var gradeA: SIMD4<Float>        // (baseContrast, baseShadowLift, baseHighlightRoll, isMonochrome)
@@ -14,6 +14,7 @@ private struct PhotographicStyleUniforms {
     var skinShiftLab: SIMD4<Float>
     var shadowTint: SIMD4<Float>
     var highlightTint: SIMD4<Float>
+    var semanticBoost: SIMD4<Float>
 
     init(style: PhotographicStyleState) {
         let r = style.preset.recipe
@@ -26,6 +27,7 @@ private struct PhotographicStyleUniforms {
         self.skinShiftLab = r.skinShiftLab
         self.shadowTint = r.shadowTint
         self.highlightTint = r.highlightTint
+        self.semanticBoost = r.semanticBoost
     }
 }
 
@@ -54,6 +56,7 @@ private final class PhotographicStylePipelineCache: @unchecked Sendable {
         float4 skinShiftLab;
         float4 shadowTint;
         float4 highlightTint;
+        float4 semanticBoost;
     };
 
     // Signed cube root: an toàn tuyệt đối cho giá trị âm nhẹ của Display P3 trong Extended Linear sRGB (tránh NaN).
@@ -104,6 +107,32 @@ private final class PhotographicStylePipelineCache: @unchecked Sendable {
         return clamp(hueMask * chromaMask * lumaMask, 0.0f, 1.0f);
     }
 
+    inline float computeSkyMaskOkLab(float3 lab) {
+        float chroma = length(lab.yz);
+        float hue = atan2(lab.z, lab.y);
+        float hueMask = smoothstep(-2.75f, -2.25f, hue) * (1.0f - smoothstep(-1.15f, -0.75f, hue));
+        float chromaMask = smoothstep(0.020f, 0.055f, chroma);
+        float lumaMask = smoothstep(0.32f, 0.56f, lab.x);
+        return clamp(hueMask * chromaMask * lumaMask, 0.0f, 1.0f);
+    }
+
+    inline float computeFoliageMaskOkLab(float3 lab) {
+        float chroma = length(lab.yz);
+        float hue = atan2(lab.z, lab.y);
+        float hueMask = smoothstep(1.48f, 1.95f, hue) * (1.0f - smoothstep(2.65f, 3.02f, hue));
+        float chromaMask = smoothstep(0.022f, 0.060f, chroma);
+        float lumaMask = smoothstep(0.12f, 0.28f, lab.x);
+        return clamp(hueMask * chromaMask * lumaMask, 0.0f, 1.0f);
+    }
+
+    inline float computeWarmRedMaskOkLab(float3 lab) {
+        float chroma = length(lab.yz);
+        float hue = atan2(lab.z, lab.y);
+        float hueMask = smoothstep(-0.22f, 0.18f, hue) * (1.0f - smoothstep(0.75f, 1.15f, hue));
+        float chromaMask = smoothstep(0.045f, 0.105f, chroma);
+        return clamp(hueMask * chromaMask, 0.0f, 1.0f);
+    }
+
     // Filmic highlight shoulder liên tục C1 nén mượt vùng sáng > knee (chống cháy trắng trời/đèn).
     inline float applyHighlightShoulder(float y, float knee, float strength) {
         if (y <= knee || strength <= 0.001f) {
@@ -145,7 +174,8 @@ private final class PhotographicStylePipelineCache: @unchecked Sendable {
         float palette = clamp(u.control.z, 0.0f, 1.0f);
         float presetKind = u.control.w;
 
-        if (palette <= 0.001f) {
+        bool isMono = u.gradeA.w > 0.5f;
+        if (!isMono && palette <= 0.001f) {
             outTexture.write(raw, gid);
             return;
         }
@@ -153,130 +183,167 @@ private final class PhotographicStylePipelineCache: @unchecked Sendable {
         float baseContrast = u.gradeA.x;
         float baseShadowLift = u.gradeA.y;
         float baseHighlightRoll = u.gradeA.z;
-        bool isMono = u.gradeA.w > 0.5f;
         float baseVibrance = u.gradeB.x;
         float baseSaturation = u.gradeB.y;
         float undertoneStrength = u.gradeB.z;
         float splitStrength = u.gradeB.w;
 
-        // 2. Phân tích OkLab gốc để lấy Skin-Tone Protection Mask & Neutral White Protection.
+        // 2. Phân tích OkLab gốc để lấy Skin / Sky / Foliage / WarmRed Semantic Masks.
         float3 origLab = linearSRGBToOkLab(origLinear);
         float origChroma = length(origLab.yz);
         float skinMask = computeSkinMaskOkLab(origLab);
-        // Tránh nhuộm bẩn vùng trắng trung tính / tường xám nhạt (chroma rất thấp).
+        float skyMask = computeSkyMaskOkLab(origLab);
+        float foliageMask = computeFoliageMaskOkLab(origLab);
+        float warmRedMask = computeWarmRedMaskOkLab(origLab);
         float nonNeutralMask = smoothstep(0.010f, 0.032f, origChroma);
         float midtoneMask = smoothstep(0.04f, 0.28f, origLab.x) * (1.0f - smoothstep(0.78f, 0.96f, origLab.x));
+        float skinProtect = clamp(u.skinShiftLab.w, 0.0f, 0.85f);
 
         float3 graded = origLinear;
 
-        // 3. Per-Preset 3x3 Optical Color Matrix + Split Toning
+        // 3. Per-Preset 3x3 Optical Color Matrix
         if (!isMono) {
             float3 matRGB = float3(
                 dot(graded, u.matrixRow0.xyz),
                 dot(graded, u.matrixRow1.xyz),
                 dot(graded, u.matrixRow2.xyz)
             );
-            // Với nhóm Undertone (presetKind == 1): hãm dịch màu trên vùng trắng trung tính & trời xanh
             if (presetKind > 0.5f && presetKind < 1.5f) {
-                float blueSkyGuard = smoothstep(-0.09f, -0.02f, origLab.z);
-                float matrixMix = clamp((0.28f + 0.72f * max(skinMask, nonNeutralMask * 0.65f)) * blueSkyGuard, 0.15f, 1.0f);
+                float blueSkyGuard = 1.0f - skyMask * 0.72f;
+                float matrixMix = clamp((0.36f + 0.64f * max(skinMask, nonNeutralMask * 0.70f)) * blueSkyGuard, 0.18f, 1.0f);
                 graded = mix(graded, matRGB, matrixMix);
             } else {
                 graded = matRGB;
             }
         }
 
-        // 4. Non-Linear Filmic Tone Mapping (Trục Y: Tone -1 ... +1 kết hợp Base Contrast/Shadow/Highlight)
+        // 4. Skin-Protected Local HDR Tone Mapping (Trục Y: Tone -1 ... +1)
         float yIn = max(0.0f, dot(graded, float3(0.2126f, 0.7152f, 0.0722f)));
         float yOut = yIn;
 
-        // 4a. Đường cong nền của preset (Shadow Lift + S-Curve Contrast quanh điểm neo 0.18 middle-grey)
         if (abs(baseShadowLift) > 0.001f) {
-            float shadowWeight = 1.0f - smoothstep(0.02f, 0.42f, yOut);
-            yOut = max(0.0f, yOut + baseShadowLift * 0.10f * shadowWeight * (0.25f + yOut));
+            float shadowWeight = 1.0f - smoothstep(0.015f, 0.45f, yOut);
+            float shDelta = baseShadowLift * 0.115f * shadowWeight * (0.22f + yOut);
+            yOut = max(yOut * 0.45f, yOut + shDelta);
         }
         if (abs(baseContrast) > 0.001f) {
             float pivot = 0.18f;
-            float power = max(0.65f, 1.0f + baseContrast * 0.72f);
+            float power = max(0.62f, 1.0f + baseContrast * 0.68f);
             float yPivot = pivot * pow(max(yOut / pivot, 1e-6f), power);
             yOut = mix(yOut, yPivot, 0.85f);
         }
 
-        // 4b. Trục Tone của Control Pad (-1: sâu tối điện ảnh | +1: mở bóng thoáng sáng có Filmic Shoulder)
         if (tone < -0.001f) {
             float neg = -tone;
-            float gamma = 1.0f + 0.58f * neg;
-            float yDeep = pow(max(yOut, 1e-6f), gamma) * exp(-0.18f * neg);
-            // Bảo vệ vùng toe sát đen để giữ chi tiết bóng tối không bết
-            float toeKeep = exp(-yOut * 16.0f) * 0.24f;
-            yOut = mix(yDeep, yOut * 0.72f, toeKeep);
+            float effNeg = neg * (1.0f - skinMask * skinProtect * 0.54f);
+            float gamma = 1.0f + 0.60f * effNeg;
+            float yDeep = pow(max(yOut, 1e-6f), gamma) * exp(-0.15f * effNeg);
+            float toeKeep = exp(-yOut * 11.5f) * 0.36f;
+            yOut = mix(yDeep, yOut * 0.66f, toeKeep);
         } else if (tone > 0.001f) {
-            float gamma = 1.0f - 0.36f * tone;
-            float yLifted = pow(max(yOut, 1e-6f), gamma) * (1.0f + 0.20f * tone);
-            // Shadow lift mềm bổ sung ở vùng tối
-            float shLift = (1.0f - smoothstep(0.01f, 0.35f, yOut)) * 0.032f * tone;
+            float gamma = 1.0f - 0.44f * tone;
+            float yLifted = pow(max(yOut, 1e-6f), gamma) * (1.0f + 0.26f * tone);
+            float shLift = (1.0f - smoothstep(0.01f, 0.38f, yOut)) * 0.052f * tone;
             yOut = yLifted + shLift;
         }
 
-        // 4c. Filmic Highlight Shoulder nén mềm vùng sáng > 0.72 chống cháy trắng
-        float shoulderStrength = clamp(baseHighlightRoll + max(0.0f, tone) * 0.72f, 0.0f, 0.95f);
-        yOut = applyHighlightShoulder(yOut, 0.72f, shoulderStrength);
+        float skyProtect = clamp(u.highlightTint.w, 0.0f, 0.85f);
+        float shoulderKnee = mix(0.72f, 0.58f, skyMask * skyProtect);
+        float shoulderStrength = clamp(baseHighlightRoll + max(0.0f, tone) * 0.78f + skyMask * skyProtect * 0.55f, 0.0f, 0.96f);
+        yOut = applyHighlightShoulder(yOut, shoulderKnee, shoulderStrength);
 
         if (isMono) {
-            // Đơn sắc phim bạc: kênh trộn nhiếp ảnh + micro-contrast + Silver-Gelatin Split Toning qua trục Color
-            float monoLum = max(0.0f, dot(max(graded, 0.0f), float3(0.30f, 0.58f, 0.12f)));
+            float3 filterW = (colorCtrl >= 0.0f)
+                ? mix(float3(0.31f, 0.58f, 0.11f), float3(0.56f, 0.38f, 0.06f), colorCtrl)
+                : mix(float3(0.31f, 0.58f, 0.11f), float3(0.16f, 0.48f, 0.36f), -colorCtrl);
+            float monoLum = max(0.0f, dot(max(origLinear, 0.0f), filterW));
             float lumScale = yOut / max(yIn, 1e-5f);
-            float monoTone = clamp(monoLum * clamp(lumScale, 0.0f, 3.2f), 0.0f, 4.0f);
-            // Split tone phim bạc: color < 0 -> Selenium lạnh | color > 0 -> Warmtone ấm
-            float shW = (1.0f - smoothstep(0.04f, 0.55f, monoTone)) * smoothstep(0.005f, 0.08f, monoTone);
-            float hiW = smoothstep(0.35f, 0.90f, monoTone);
+            float monoTone = clamp(monoLum * clamp(lumScale, 0.0f, 3.6f), 0.0f, 4.0f);
+            monoTone = max(0.0f, monoTone + u.semanticBoost.x * skinMask * 0.25f);
+
+            float hiMaskBW = smoothstep(0.26f, 0.92f, monoTone);
+            float bwHiGain = 1.0f + (palette - 0.5f) * 0.56f * hiMaskBW;
+            monoTone = applyHighlightShoulder(clamp(monoTone * bwHiGain, 0.0f, 3.8f), 0.78f, 0.55f);
+
+            float shW = (1.0f - smoothstep(0.03f, 0.52f, monoTone)) * smoothstep(0.004f, 0.07f, monoTone);
+            float hiW = smoothstep(0.36f, 0.92f, monoTone);
             float3 splitTone = u.shadowTint.xyz * shW * splitStrength + u.highlightTint.xyz * hiW * splitStrength;
             float3 silverShift = (colorCtrl >= 0.0f)
-                ? float3(0.045f, 0.022f, -0.038f) * colorCtrl
-                : float3(-0.026f, 0.004f, 0.046f) * (-colorCtrl);
-            graded = float3(monoTone) + splitTone + silverShift * (0.25f + 0.75f * midtoneMask) * clamp(monoTone * 1.4f, 0.0f, 1.0f);
+                ? float3(0.042f, 0.020f, -0.034f) * colorCtrl
+                : float3(-0.024f, 0.006f, 0.042f) * (-colorCtrl);
+            graded = float3(monoTone) + splitTone + silverShift * (0.22f + 0.78f * midtoneMask) * clamp(monoTone * 1.35f, 0.0f, 1.0f);
         } else {
-            // Bảo toàn tỷ lệ sắc độ theo Y'/Y kèm highlight desaturation tự nhiên trên vùng rất sáng
-            float ratio = clamp(yOut / max(yIn, 1e-5f), 0.0f, 3.2f);
+            float ratio = clamp(yOut / max(yIn, 1e-5f), 0.0f, 3.5f);
             graded *= ratio;
             float hiDesat = smoothstep(0.82f, 1.35f, yOut) * 0.18f;
             graded = mix(graded, float3(yOut), hiDesat);
 
-            // Split Toning cho Shadows & Highlights (không làm ám trắng tinh/đen tuyệt đối)
             if (splitStrength > 0.001f) {
-                float shW = (1.0f - smoothstep(0.04f, 0.46f, yOut)) * smoothstep(0.004f, 0.05f, yOut);
-                float hiW = smoothstep(0.45f, 0.92f, yOut) * (1.0f - smoothstep(0.96f, 1.25f, yOut));
-                graded += (u.shadowTint.xyz * shW + u.highlightTint.xyz * hiW) * splitStrength;
+                float shW = (1.0f - smoothstep(0.03f, 0.48f, yOut)) * smoothstep(0.003f, 0.045f, yOut);
+                float hiW = smoothstep(0.42f, 0.92f, yOut) * (1.0f - smoothstep(0.95f, 1.28f, yOut));
+                float3 effShadowTint = u.shadowTint.xyz;
+                if (presetKind > 2.5f) {
+                    float3 warmSlate = float3(0.018f, 0.008f, -0.012f);
+                    effShadowTint = mix(warmSlate, u.shadowTint.xyz * 1.28f, smoothstep(0.15f, 0.85f, palette));
+                }
+                graded += (effShadowTint * shW + u.highlightTint.xyz * hiW) * splitStrength;
             }
 
-            // 5. Perceptual Color / Adaptive Vibrance + Skin-Weighted Undertone trong OkLab (giữ nguyên L!)
-            float3 lab = linearSRGBToOkLab(graded);
+            float blueShCut = u.semanticBoost.w;
+            if (blueShCut > 0.005f) {
+                float shMidW = 1.0f - smoothstep(0.08f, 0.62f, yOut);
+                graded.b *= max(0.72f, 1.0f - blueShCut * 0.28f * shMidW);
+            }
+
+            // 5. Perceptual Color / 4-Band Semantic OkLab Grading
+            float3 lab = linearSRGBToOkLab(max(graded, float3(-0.08f)));
             float cMag = length(lab.yz);
 
-            // Undertone shift tập trung vào da & midtone, không nhuộm bẩn vùng trắng trung tính
             if (undertoneStrength > 0.001f) {
-                float skinWeight = (0.16f + 0.84f * skinMask) * midtoneMask * nonNeutralMask;
-                lab.x += u.skinShiftLab.x * skinWeight * undertoneStrength;
+                float skinWeight = (0.18f + 0.82f * skinMask) * midtoneMask * nonNeutralMask;
+                lab.x += (u.skinShiftLab.x + u.semanticBoost.x * skinMask) * skinWeight * undertoneStrength;
                 lab.yz += u.skinShiftLab.yz * skinWeight * undertoneStrength;
+            } else if (abs(u.semanticBoost.x) > 0.002f) {
+                lab.x += u.semanticBoost.x * skinMask * midtoneMask;
             }
 
-            // Adaptive Vibrance (tăng mạnh màu nhạt, hãm màu đã rực & bảo vệ sắc da chống bết cam)
-            float satRoll = 1.0f - smoothstep(0.075f, 0.235f, cMag);
-            float skinProtection = 1.0f - 0.42f * skinMask;
+            float foliagePop = u.semanticBoost.y;
+            if (abs(foliagePop) > 0.005f) {
+                lab.x += foliagePop * 0.018f * foliageMask;
+                lab.yz *= (1.0f + foliagePop * 0.45f * foliageMask);
+                lab.y -= foliagePop * 0.014f * foliageMask;
+            }
+            float skyShift = u.semanticBoost.z;
+            if (abs(skyShift) > 0.005f) {
+                lab.z -= skyShift * 0.026f * skyMask;
+                lab.y -= skyShift * 0.008f * skyMask;
+                if (skyShift > 0.0f) {
+                    lab.x -= skyShift * 0.016f * skyMask * smoothstep(0.55f, 0.90f, lab.x);
+                }
+            }
+            float warmRedPop = u.shadowTint.w;
+            if (abs(warmRedPop) > 0.005f) {
+                float redW = warmRedMask * (1.0f - skinMask * 0.65f);
+                lab.yz *= (1.0f + warmRedPop * 0.42f * redW);
+                lab.x += warmRedPop * 0.012f * redW;
+            }
+
+            float satRoll = 1.0f - smoothstep(0.068f, 0.245f, cMag);
+            float skinProtection = 1.0f - 0.46f * skinMask;
             float chromaScale = baseSaturation + baseVibrance * satRoll * skinProtection;
 
             if (colorCtrl > 0.001f) {
-                chromaScale *= (1.0f + colorCtrl * (0.66f * satRoll + 0.18f) * skinProtection);
+                chromaScale *= (1.0f + colorCtrl * (0.76f * satRoll + 0.22f) * skinProtection);
             } else if (colorCtrl < -0.001f) {
                 chromaScale *= mix(1.0f, 0.08f, -colorCtrl);
             }
 
-            lab.yz *= clamp(chromaScale, 0.0f, 1.95f);
+            lab.yz *= clamp(chromaScale, 0.0f, 2.15f);
             graded = okLabToLinearSRGB(lab);
         }
 
-        // 6. True Optical Linear Palette Blend + Soft Gamut Safety + Re-Premultiply Alpha
-        float3 finalLinear = mix(origLinear, graded, palette);
+        // 6. True Optical Linear Palette Blend (giữ 100% đơn sắc trên B&W) + Soft Gamut Safety + Re-Premultiply Alpha
+        float3 finalLinear = isMono ? graded : mix(origLinear, graded, palette);
         finalLinear = max(finalLinear, float3(-0.22f));
         if (!all(isfinite(finalLinear))) {
             finalLinear = origLinear;

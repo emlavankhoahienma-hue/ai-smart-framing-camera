@@ -72,7 +72,7 @@ public struct PhotoGallerySheetView: View {
                 }
             }
             .navigationBarHidden(true)
-            .sheet(item: $selectedPreviewItem) { item in
+            .fullScreenCover(item: $selectedPreviewItem) { item in
                 CapturedPhotoPreviewView(item: item, viewModel: viewModel)
             }
             .confirmationDialog(

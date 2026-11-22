@@ -523,7 +523,7 @@ public struct CameraMainView: View {
         .sheet(isPresented: $viewModel.isShowingGallerySheet) {
             PhotoGallerySheetView(viewModel: viewModel)
         }
-        .sheet(isPresented: $viewModel.isShowingPhotoDetail) {
+        .fullScreenCover(isPresented: $viewModel.isShowingPhotoDetail) {
             if let latest = viewModel.latestCapturedPhoto {
                 CapturedPhotoPreviewView(item: latest, viewModel: viewModel)
             }

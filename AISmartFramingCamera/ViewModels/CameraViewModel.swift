@@ -410,9 +410,12 @@ public final class CameraViewModel: ObservableObject {
 
     /// Trạng thái Photographic Styles 2D Control Pad (mặc định Tiêu chuẩn khi khởi chạy; lưu bộ nhớ theo từng preset trong phiên).
     private var photographicStyleMemory: [PhotographicStylePreset: PhotographicStyleState] = [:]
-    /// Tự động đưa về `.standard` khi đang ở chế độ Video hoặc chụp RAW DNG để đảm bảo Live Preview khớp 100% file xuất ra.
+    /// Tự động đưa về `.standard` khi đang ở chế độ Video, chụp RAW DNG hoặc người dùng đang nhấn giữ so sánh ảnh gốc.
     public var effectivePhotographicStyle: PhotographicStyleState {
-        (captureMode.isVideo || selectedPhotoFormat == .dng) ? .standard : photographicStyle
+        if captureMode.isVideo || selectedPhotoFormat == .dng || isHoldingCompareOriginalStyle {
+            return .standard
+        }
+        return photographicStyle
     }
     public var effectiveVintageLightLeak: VintageLightLeakConfig {
         (captureMode.isVideo || selectedPhotoFormat == .dng) ? .off : vintageLightLeak
@@ -428,6 +431,14 @@ public final class CameraViewModel: ObservableObject {
             pushLiveColorStateFastToPreview()
         }
     }
+    @Published public var isHoldingCompareOriginalStyle: Bool = false {
+        didSet {
+            guard isHoldingCompareOriginalStyle != oldValue else { return }
+            FilmFilterEngine.shared.activePhotographicStyle = effectivePhotographicStyle
+            pushLiveColorStateFastToPreview()
+        }
+    }
+    @Published public var savedPhotographicRecipes: [PhotographicStyleCustomRecipe] = PhotographicStyleRecipeStore.loadUserRecipes()
     @Published public var isShowingPhotographicStylePad: Bool = false {
         didSet {
             if isShowingPhotographicStylePad {
@@ -436,6 +447,9 @@ public final class CameraViewModel: ObservableObject {
             } else {
                 if activePhotographicStyleAxis != .none {
                     activePhotographicStyleAxis = .none
+                }
+                if isHoldingCompareOriginalStyle {
+                    isHoldingCompareOriginalStyle = false
                 }
                 cancelPhotographicStyleSwipe()
             }
@@ -548,6 +562,117 @@ public final class CameraViewModel: ObservableObject {
     public func hasSessionEditsForPhotographicStyle(_ preset: PhotographicStylePreset) -> Bool {
         guard let stored = photographicStyleMemory[preset] else { return false }
         return stored.isModifiedFromPresetDefault
+    }
+
+    public func setPhotographicStyleHoldCompare(_ holding: Bool) {
+        if holding && !isHoldingCompareOriginalStyle {
+            haptics.triggerLight()
+        }
+        isHoldingCompareOriginalStyle = holding
+    }
+
+    /// Tăng/giảm chính xác từng bước (-10 / -1 / +1 / +10) khi người dùng chạm vào số trên Top HUD.
+    public func nudgePhotographicStyle(toneDelta: Float = 0, colorDelta: Float = 0, paletteDelta: Float = 0) {
+        var next = photographicStyle
+        if toneDelta != 0 {
+            next.tone = max(-1.0, min(1.0, next.tone + toneDelta))
+        }
+        if colorDelta != 0 {
+            next.color = max(-1.0, min(1.0, next.color + colorDelta))
+        }
+        if paletteDelta != 0 {
+            next.palette = max(0.0, min(1.0, next.palette + paletteDelta))
+        }
+        haptics.triggerSelectionChange()
+        photographicStyle = next
+    }
+
+    /// Styles 3: Chọn chế độ Kết cấu (Chuẩn / Mịn da / Rạng rỡ / Film). Chọn Film tự bật Hạt phim nhưng vẫn cho tắt lẻ.
+    public func selectPhotographicTextureMode(_ mode: PhotographicTextureMode) {
+        var next = photographicStyle
+        let previousMode = next.textureMode
+        next.textureMode = mode
+        if mode == .standard {
+            next.textureIntensity = 0.0
+        } else if previousMode == .standard || next.textureIntensity < 0.05 {
+            next.textureIntensity = mode.defaultIntensity
+        }
+        if mode == .film && previousMode != .film {
+            next.grainEnabled = true
+        }
+        haptics.triggerSelectionChange()
+        photographicStyle = next
+    }
+
+    public func updatePhotographicTextureIntensity(_ intensity: Float) {
+        var next = photographicStyle
+        next.textureIntensity = intensity.isFinite ? max(0.0, min(1.0, intensity)) : 0.0
+        photographicStyle = next
+    }
+
+    public func togglePhotographicGrain() {
+        var next = photographicStyle
+        next.grainEnabled.toggle()
+        if next.grainEnabled && next.grainAmount < 0.05 {
+            next.grainAmount = 0.36
+        }
+        haptics.triggerLight()
+        photographicStyle = next
+    }
+
+    public func updatePhotographicGrain(amount: Float? = nil, size: Float? = nil) {
+        var next = photographicStyle
+        if let amount {
+            next.grainAmount = amount.isFinite ? max(0.0, min(1.0, amount)) : 0.36
+        }
+        if let size {
+            next.grainSize = size.isFinite ? max(0.7, min(1.8, size)) : 1.20
+        }
+        photographicStyle = next
+    }
+
+    public func saveCurrentPhotographicRecipe(name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let s = photographicStyle
+        var parts = [
+            s.preset.displayName,
+            "Tone \(s.toneDisplayText)",
+            "Color \(s.colorDisplayText)",
+            "Pal \(s.palettePercent)"
+        ]
+        if s.textureMode != .standard {
+            parts.append("\(s.textureMode.displayName) \(s.texturePercent)")
+        }
+        if s.grainEnabled {
+            parts.append("Hạt")
+        }
+        let recipe = PhotographicStyleCustomRecipe(
+            name: trimmed,
+            subtitle: parts.joined(separator: " · "),
+            state: s,
+            isBuiltIn: false
+        )
+        var updated = savedPhotographicRecipes
+        updated.insert(recipe, at: 0)
+        savedPhotographicRecipes = updated
+        PhotographicStyleRecipeStore.saveUserRecipes(updated)
+        haptics.triggerMedium()
+    }
+
+    public func deletePhotographicRecipe(id: String) {
+        let updated = savedPhotographicRecipes.filter { $0.id != id }
+        savedPhotographicRecipes = updated
+        PhotographicStyleRecipeStore.saveUserRecipes(updated)
+        haptics.triggerLight()
+    }
+
+    public func applyPhotographicRecipe(_ recipe: PhotographicStyleCustomRecipe) {
+        cancelPhotographicStyleSwipe()
+        haptics.triggerSelectionChange()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+            photographicStyle = recipe.state
+        }
     }
 
     /// Tham số tinh chỉnh giả lập phim theo thời gian thực (Tương phản, Bão hòa, Độ ấm, Sáng/Tối, Hạt phim, Viền tối, Độ phai, Quầng sáng).
