@@ -68,8 +68,14 @@ public struct CameraControlsView: View {
         .frame(height: deckHeight)
         .frame(maxWidth: .infinity)
         .background(
-            AlignTheme.studioCanvas
-                .ignoresSafeArea(edges: .bottom)
+            Group {
+                if viewModel.captureMode.isVideo {
+                    Color.clear
+                } else {
+                    AlignTheme.studioCanvas
+                        .ignoresSafeArea(edges: .bottom)
+                }
+            }
         )
         .overlay(alignment: .bottom) {
             if viewModel.isShowingFilmDrawer {

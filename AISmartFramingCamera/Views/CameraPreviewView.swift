@@ -36,8 +36,10 @@ public struct CameraPreviewView: UIViewRepresentable {
         if viewModel.previewLayer !== activeLayer {
             viewModel.previewLayer = activeLayer
         }
-        // Che do Quay Video (16:9 / 9:16): dung .resizeAspect trong khung ngam de hien thi tron ven 100% khung hinh 1.0x dung nhu file video quay ra, khong bi phong dai 1.33x do .resizeAspectFill cat vao khung 4:3!
-        let targetGravity: AVLayerVideoGravity = (viewModel.captureMode.isVideo && !isDual && !viewModel.isSimulatedUltraWideActive) ? .resizeAspect : .resizeAspectFill
+        // Khung ngắm giờ luôn khớp chính xác tỷ lệ cảm biến thực tế:
+        // - Chụp ảnh / Pro: khung 3:4 <-> cảm biến 3:4 (1.000x, 0px viền đen)
+        // - Quay video: khung 9:16 toàn chiều rộng <-> video 9:16 (1.000x, 0px viền đen, không crop phóng đại 1.33x-1.6x!)
+        let targetGravity: AVLayerVideoGravity = .resizeAspectFill
         if uiView.previewLayer?.videoGravity != targetGravity {
             CATransaction.begin()
             CATransaction.setAnimationDuration(0.20)
@@ -48,7 +50,7 @@ public struct CameraPreviewView: UIViewRepresentable {
         uiView.updateMetalPreviewState(
             isActive: viewModel.isFilmSimulationActive,
             isDualCamera: isDual,
-            isVideoMode: viewModel.captureMode.isVideo && !isDual && !viewModel.isSimulatedUltraWideActive,
+            isVideoMode: false,
             isSimulatedUltraWide: viewModel.isSimulatedUltraWideActive,
             simulatedFactor: viewModel.simulatedUltraWideFactor,
             isHorizonLock: viewModel.isHorizonLockEnabled,

@@ -19,21 +19,85 @@ struct CameraFormFactorLayout {
     var bottomComfort: CGFloat {
         safeAreaInsets.bottom >= 20 ? (isCompact ? 8 : 14) : (isCompact ? 6 : 10)
     }
-    var viewfinderSize: CGSize {
+    var photoViewfinderSize: CGSize {
         let widthLimit = max(1, availableSize.width - 12)
         let heightLimit = max(1, availableSize.height - 44 - topVerticalPadding -
                               topBottomPadding - controlDeckHeight - bottomComfort - minimumGap)
-        // Giữ cố định khung viewfinder 4:3 chuẩn trong cả chế độ Chụp ảnh và Quay video
-        // để thanh công cụ phía trên (TopCameraBar) và cụm điều khiển dưới đứng yên tuyệt đối,
-        // không bị nhảy vị trí hoặc tràn màn hình khi chuyển sang Quay video.
         let height = min(widthLimit * 4.0 / 3.0, heightLimit)
         return CGSize(width: height * 3.0 / 4.0, height: height)
     }
+
+    /// Khung hình 9:16 toàn chiều rộng cho chế độ Quay Video (chuẩn iOS Camera gốc):
+    /// Khớp chính xác tỷ lệ 9:16 (0.5625) của video 1080p/4K -> 0px viền đen 2 bên, 1.000x đúng tiêu cự (không crop ảo 1.33x-1.6x).
+    var videoViewfinderSize: CGSize {
+        let targetAspect: CGFloat = 9.0 / 16.0
+        let fullScreenHeight = max(1, availableSize.height + safeAreaInsets.top + safeAreaInsets.bottom)
+        let width = max(1, availableSize.width)
+        let idealHeight = width / targetAspect
+        if idealHeight <= fullScreenHeight + 1.0 {
+            return CGSize(width: width, height: idealHeight)
+        } else {
+            return CGSize(width: fullScreenHeight * targetAspect, height: fullScreenHeight)
+        }
+    }
+
+    var viewfinderSize: CGSize {
+        isVideo ? videoViewfinderSize : photoViewfinderSize
+    }
+
+    var topBarBottomY: CGFloat {
+        topVerticalPadding + 44 + topBottomPadding
+    }
+
+    var deckTopY: CGFloat {
+        availableSize.height - controlDeckHeight - bottomComfort
+    }
+
+    var viewfinderTopY: CGFloat {
+        if isVideo {
+            let vidH = videoViewfinderSize.height
+            // Trên iPhone hiện đại (X/XS/12-16/Pro Max): đặt ngay dưới thanh Top Bar (không bị Top Bar che)
+            if topBarBottomY + vidH <= availableSize.height + safeAreaInsets.bottom * 0.35 {
+                return topBarBottomY
+            }
+            // Trên màn hình 16:9 ngắn (iPhone SE): căn giữa trọn màn hình 9:16, thanh trên và dưới nổi mờ phía trên
+            let fullScreenHeight = availableSize.height + safeAreaInsets.top + safeAreaInsets.bottom
+            return (fullScreenHeight - vidH) * 0.5 - safeAreaInsets.top
+        } else {
+            let middleSpan = max(0, deckTopY - topBarBottomY)
+            return topBarBottomY + max(0, (middleSpan - photoViewfinderSize.height) * 0.5)
+        }
+    }
+
+    var videoOverlapsTopBar: Bool {
+        isVideo && (topBarBottomY > viewfinderTopY + 1.0)
+    }
+
+    var viewfinderCornerRadius: CGFloat {
+        if isVideo {
+            return videoOverlapsTopBar ? 0 : 18
+        }
+        return 20
+    }
+
     var histogramWidth: CGFloat {
         availableSize.width < 380 ? 46 : min(62, availableSize.width * 0.15)
     }
     var viewfinderTopInset: CGFloat { max(6, min(12, viewfinderSize.height * 0.02)) }
     var viewfinderBottomInset: CGFloat { max(8, min(14, viewfinderSize.height * 0.025)) }
+
+    /// Tự động bù phần chồng lấn thanh Top Bar (trên iPhone SE 16:9) để HUD trên-trong-khung-ngắm luôn lộ rõ.
+    var viewfinderTopOverlayInset: CGFloat {
+        let topOverlap = max(0, topBarBottomY - viewfinderTopY)
+        return topOverlap + viewfinderTopInset
+    }
+
+    /// Tự động đẩy nút Zoom (.5 | 1x | 2 | 3) lên ngay phía trên Bottom Control Deck khi quay Video 9:16 toàn chiều rộng.
+    var viewfinderBottomOverlayInset: CGFloat {
+        let vfBottomY = viewfinderTopY + viewfinderSize.height
+        let deckOverlap = max(0, vfBottomY - deckTopY)
+        return deckOverlap + viewfinderBottomInset
+    }
 }
 
 extension View {
@@ -100,27 +164,8 @@ public struct CameraMainView: View {
                         && !viewModel.captureMode.isVideo
                         && !viewModel.isCameraHibernating
 
-                    VStack(spacing: 0) {
-                        // 2. Balanced Twin Smoked-Glass Top Toolbar / Photographic Styles Telemetry Capsule
-                        Group {
-                            if isPhotoStylePadActive {
-                                PhotographicStylesTopHUDBar(viewModel: viewModel, compact: layout.isCompact)
-                                    .transition(.opacity)
-                            } else {
-                                TopCameraBar(viewModel: viewModel, histogramWidth: layout.histogramWidth)
-                                    .transition(.opacity)
-                            }
-                        }
-                        .frame(height: 44)
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, layout.topHorizontalPadding)
-                        .padding(.top, layout.topVerticalPadding)
-                        .padding(.bottom, layout.topBottomPadding)
-                        .animation(.easeInOut(duration: 0.22), value: isPhotoStylePadActive)
-
-                        Spacer(minLength: layout.minimumGap / 2)
-
-                        // 3. Viewfinder Frame (4:3 Precision Optical Window)
+                    ZStack(alignment: .top) {
+                        // 1. Single Persistent Viewfinder (3:4 in Photo/Pro, Full-Width Exact 9:16 in Video — 0 black bars, 1.000x true FOV)
                         ZStack {
                             if Self.isUISnapshotMode {
                                 UISnapshotBackdropView(imagePath: Self.snapshotBackdropPath)
@@ -137,16 +182,11 @@ public struct CameraMainView: View {
                             // AR AI Framing Lines & Reticle
                             ARFramingOverlayView(viewModel: viewModel)
 
-                            // Rangefinder Windowed Zoom Overlay (Khớp đúng vùng khung hình 9:16 thực tế trong chế độ Video!)
+                            // Rangefinder Windowed Zoom Overlay (Khớp trực tiếp 1:1 khung ngắm 3:4 Photo hoặc 9:16 Video)
                             if viewModel.isWindowedZoomActive {
                                 GeometryReader { proxy in
-                                    let isAspectFitVideo = viewModel.captureMode.isVideo && !viewModel.isDualCameraActive && !viewModel.isSimulatedUltraWideActive
-                                    let activeSize = isAspectFitVideo
-                                        ? CGSize(width: min(proxy.size.width, proxy.size.height * (9.0 / 16.0)), height: proxy.size.height)
-                                        : proxy.size
-                                    WindowedZoomOverlayView(viewModel: viewModel, containerSize: activeSize)
-                                        .frame(width: activeSize.width, height: activeSize.height)
-                                        .position(x: proxy.size.width / 2.0, y: proxy.size.height / 2.0)
+                                    WindowedZoomOverlayView(viewModel: viewModel, containerSize: proxy.size)
+                                        .frame(width: proxy.size.width, height: proxy.size.height)
                                 }
                                 .transition(.opacity.animation(.easeInOut(duration: 0.25)))
                             }
@@ -173,7 +213,7 @@ public struct CameraMainView: View {
                                         .padding(.horizontal, 9)
                                         .padding(.vertical, 4.5)
                                         .background(StudioGlassCapsule(tintOpacity: 0.52, borderOpacity: 0.14))
-                                        .padding(.top, (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 72 : 12)
+                                        .padding(.top, (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 72 : max(12, layout.viewfinderTopOverlayInset))
                                         .padding(.trailing, 12)
                                     }
                                     Spacer()
@@ -195,7 +235,7 @@ public struct CameraMainView: View {
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 6)
                                     .background(StudioGlassCapsule(tintOpacity: 0.54, borderOpacity: 0.14))
-                                    .padding(.top, (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 74 : 14)
+                                    .padding(.top, (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 74 : max(14, layout.viewfinderTopOverlayInset + 2))
                                     Spacer()
                                 }
                                 .transition(.scale(scale: 0.92).combined(with: .opacity))
@@ -228,7 +268,7 @@ public struct CameraMainView: View {
                                     .padding(.trailing, 8)
                                     .padding(.vertical, 6.5)
                                     .background(StudioGlassCapsule(tintOpacity: 0.60, borderOpacity: 0.16))
-                                    .padding(.top, 14)
+                                    .padding(.top, max(14, layout.viewfinderTopOverlayInset + 2))
                                     Spacer()
                                 }
                                 .transition(.scale(scale: 0.94).combined(with: .opacity))
@@ -249,29 +289,30 @@ public struct CameraMainView: View {
                                         }
                                         .buttonStyle(.bordered)
                                         .tint(.white)
-                                        .padding(.bottom, 32)
+                                        .padding(.bottom, max(32, layout.viewfinderBottomOverlayInset + 20))
                                     }
                                 }
                             }
                         }
                         .frame(width: layout.viewfinderSize.width,
                                height: layout.viewfinderSize.height)
-                        .animation(.easeInOut(duration: 0.28), value: viewModel.captureMode.isVideo)
-                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: layout.viewfinderCornerRadius, style: .continuous))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                .stroke(Color.white.opacity(0.10), lineWidth: 0.65)
+                            if !layout.videoOverlapsTopBar {
+                                RoundedRectangle(cornerRadius: layout.viewfinderCornerRadius, style: .continuous)
+                                    .stroke(Color.white.opacity(0.10), lineWidth: 0.65)
+                            }
                         }
                         // In-Viewfinder Stereo Audio VU Level Meter (Top Leading)
                         .overlay(alignment: .topLeading) {
                             if viewModel.showAudioLevelMeter && !viewModel.isCameraHibernating && viewModel.captureMode.isVideo {
                                 AudioVULevelMeterView(levels: viewModel.audioLevels)
-                                    .padding(.top, layout.viewfinderTopInset)
+                                    .padding(.top, layout.viewfinderTopOverlayInset)
                                     .padding(.leading, 10)
                                     .transition(.opacity)
                             }
                         }
-                        // Expanded Pro RGB + Luma Scope HUD / Photographic Styles 3x3 Quick Trigger (Top Trailing)
+                        // Expanded Pro RGB + Luma Scope HUD / Photographic Styles 5x5 Quick Trigger (Top Trailing)
                         .overlay(alignment: .topTrailing) {
                             let proTopOffset: CGFloat = (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 64 : 0
                             let horizonOffset: CGFloat = viewModel.isHorizonLockEnabled ? 34 : 0
@@ -279,14 +320,14 @@ public struct CameraMainView: View {
                             if !isPhotoStylePadActive {
                                 if viewModel.showHistogramInViewfinder && viewModel.isHistogramBarExpanded && !viewModel.isCameraHibernating {
                                     ProHistogramExpandedHUDView(viewModel: viewModel)
-                                        .padding(.top, layout.viewfinderTopInset + proTopOffset + horizonOffset)
+                                        .padding(.top, layout.viewfinderTopOverlayInset + proTopOffset + horizonOffset)
                                         .padding(.trailing, 10)
                                         .transition(.scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity))
                                 } else if !viewModel.captureMode.isVideo &&
                                           !viewModel.isCameraHibernating &&
                                           !viewModel.isWindowedZoomActive {
                                     PhotographicStyleQuickTriggerButton(viewModel: viewModel)
-                                        .padding(.top, layout.viewfinderTopInset + proTopOffset + horizonOffset)
+                                        .padding(.top, layout.viewfinderTopOverlayInset + proTopOffset + horizonOffset)
                                         .padding(.trailing, 10)
                                         .transition(.scale(scale: 0.90, anchor: .topTrailing).combined(with: .opacity))
                                 }
@@ -297,8 +338,8 @@ public struct CameraMainView: View {
                             if isPhotoStylePadActive {
                                 PhotographicStylesViewfinderOverlay(
                                     viewModel: viewModel,
-                                    topInset: layout.viewfinderTopInset,
-                                    bottomInset: layout.viewfinderBottomInset
+                                    topInset: layout.viewfinderTopOverlayInset,
+                                    bottomInset: layout.viewfinderBottomOverlayInset
                                 )
                                 .transition(.opacity)
                             }
@@ -318,14 +359,14 @@ public struct CameraMainView: View {
 
                                 AIStatusHUDView(viewModel: viewModel)
                             }
-                            .padding(.top, layout.viewfinderTopInset)
+                            .padding(.top, layout.viewfinderTopOverlayInset)
                         }
                         // Live 35mm Glowing Quartz Date Stamp Overlay in Viewfinder Bottom-Right Corner
                         .overlay(alignment: .bottomTrailing) {
                             if !viewModel.isCameraHibernating && viewModel.effectiveVintageDateStampStyle.isEnabled {
                                 let stampBottomPadding: CGFloat = (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo)
-                                    ? max(82, layout.viewfinderBottomInset + 72)
-                                    : (isPhotoStylePadActive ? 16 : max(50, layout.viewfinderBottomInset + 40))
+                                    ? max(82, layout.viewfinderBottomOverlayInset + 72)
+                                    : (isPhotoStylePadActive ? 16 : max(50, layout.viewfinderBottomOverlayInset + 40))
                                 VintageDateStampViewfinderOverlay(viewModel: viewModel)
                                     .padding(.trailing, 14)
                                     .padding(.bottom, stampBottomPadding)
@@ -336,35 +377,86 @@ public struct CameraMainView: View {
                             if !viewModel.isWindowedZoomActive && !isPhotoStylePadActive {
                                 if viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo && !viewModel.isCameraHibernating {
                                     ProPhotoManualDeckView(viewModel: viewModel)
-                                        .padding(.bottom, max(6, layout.viewfinderBottomInset - 2))
+                                        .padding(.bottom, max(6, layout.viewfinderBottomOverlayInset - 2))
                                         .transition(.move(edge: .bottom).combined(with: .opacity))
                                 } else {
                                     ViewfinderZoomSelectorPill(viewModel: viewModel)
-                                        .padding(.bottom, layout.viewfinderBottomInset)
+                                        .padding(.bottom, layout.viewfinderBottomOverlayInset)
                                 }
                             }
                         }
-                        .padding(.horizontal, 6)
+                        .position(
+                            x: geometry.size.width * 0.5,
+                            y: layout.viewfinderTopY + layout.viewfinderSize.height * 0.5
+                        )
+                        .animation(.easeInOut(duration: 0.24), value: viewModel.captureMode.isVideo)
+                        .zIndex(0)
 
-                        Spacer(minLength: layout.minimumGap / 2)
-
-                        // 4. Unified Tactile Bottom Control Deck (hoặc Photographic Styles Control Pad khi đang bật)
-                        Group {
-                            if isPhotoStylePadActive {
-                                PhotographicStylesBottomControlDeck(viewModel: viewModel, compact: layout.isCompact)
-                                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                            } else {
-                                CameraControlsView(viewModel: viewModel, compact: layout.isCompact)
-                                    .transition(.opacity)
+                        // 2. Persistent Top Toolbar + Bottom Control Deck Chrome (Stands Still, Translucent over 9:16 Video)
+                        VStack(spacing: 0) {
+                            Group {
+                                if isPhotoStylePadActive {
+                                    PhotographicStylesTopHUDBar(viewModel: viewModel, compact: layout.isCompact)
+                                        .transition(.opacity)
+                                } else {
+                                    TopCameraBar(viewModel: viewModel, histogramWidth: layout.histogramWidth)
+                                        .transition(.opacity)
+                                }
                             }
+                            .frame(height: 44)
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, layout.topHorizontalPadding)
+                            .padding(.top, layout.topVerticalPadding)
+                            .padding(.bottom, layout.topBottomPadding)
+                            .background(
+                                Group {
+                                    if layout.videoOverlapsTopBar {
+                                        LinearGradient(
+                                            colors: [Color.black.opacity(0.55), Color.black.opacity(0.0)],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                        .ignoresSafeArea(edges: .top)
+                                    }
+                                }
+                            )
+                            .animation(.easeInOut(duration: 0.22), value: isPhotoStylePadActive)
+
+                            Spacer(minLength: 0)
+
+                            // Unified Tactile Bottom Control Deck (hoặc Photographic Styles Control Pad khi đang bật)
+                            Group {
+                                if isPhotoStylePadActive {
+                                    PhotographicStylesBottomControlDeck(viewModel: viewModel, compact: layout.isCompact)
+                                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                                } else {
+                                    CameraControlsView(viewModel: viewModel, compact: layout.isCompact)
+                                        .transition(.opacity)
+                                }
+                            }
+                            .frame(height: layout.controlDeckHeight)
+                            .frame(maxWidth: .infinity)
+                            .padding(.bottom, layout.bottomComfort)
+                            .background(
+                                Group {
+                                    if viewModel.captureMode.isVideo && !isPhotoStylePadActive {
+                                        LinearGradient(
+                                            colors: [
+                                                Color.black.opacity(0.30),
+                                                Color.black.opacity(0.58)
+                                            ],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                        .ignoresSafeArea(edges: .bottom)
+                                    }
+                                }
+                            )
+                            .animation(.spring(response: 0.30, dampingFraction: 0.84), value: isPhotoStylePadActive)
                         }
-                        .frame(height: layout.controlDeckHeight)
-                        .frame(maxWidth: .infinity)
-                        .padding(.bottom, layout.bottomComfort)
-                        .animation(.spring(response: 0.30, dampingFraction: 0.84), value: isPhotoStylePadActive)
+                        .zIndex(20)
                     }
-                    .frame(width: geometry.size.width)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
                 } else {
                     CameraPermissionPlaceholderView(viewModel: viewModel)
                         .frame(width: geometry.size.width)

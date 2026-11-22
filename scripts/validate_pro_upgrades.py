@@ -771,6 +771,38 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             self.assertIn(f"/* {filename} */", pbx)
             self.assertIn(f"/* {filename} in Sources */", pbx)
 
+    def test_20_full_width_9_16_video_viewfinder_zero_black_bars_and_gentle_05x(self):
+        # 1. CameraMainView must size Video viewfinder to true full-width 9:16 (0 black bars, 1.000x exact FOV)
+        main_view = source("Views/CameraMainView.swift")
+        for token in [
+            "var photoViewfinderSize: CGSize",
+            "var videoViewfinderSize: CGSize",
+            "let targetAspect: CGFloat = 9.0 / 16.0",
+            "isVideo ? videoViewfinderSize : photoViewfinderSize",
+            "var viewfinderTopY: CGFloat",
+            "var viewfinderTopOverlayInset: CGFloat",
+            "var viewfinderBottomOverlayInset: CGFloat",
+            ".padding(.bottom, layout.viewfinderBottomOverlayInset)",
+        ]:
+            self.assertIn(token, main_view)
+        self.assertNotIn("let isAspectFitVideo =", main_view)
+
+        # 2. CameraPreviewView must never pillarbox Video inside 3:4 (.resizeAspect) or set isVideoMode aspect-fit
+        preview = source("Views/CameraPreviewView.swift")
+        self.assertIn("let targetGravity: AVLayerVideoGravity = .resizeAspectFill", preview)
+        self.assertNotIn("? .resizeAspect : .resizeAspectFill", preview)
+        self.assertIn("isVideoMode: false", preview)
+
+        # 3. CameraControlsView leaves transparent background in Video mode so translucent scrim shows full 9:16 frame
+        controls = source("Views/CameraControlsView.swift")
+        self.assertIn("if viewModel.captureMode.isVideo", controls)
+
+        # 4. UltraWideWarpEngine calibrates simulated 0.5x anti-distortion identically for Liveview & Still Photo
+        uw = source("Services/UltraWideWarpEngine.swift")
+        self.assertIn("private static func calibratedAntiDistortionZoom(for rawFactor: CGFloat) -> Float", uw)
+        self.assertIn("let defaultRigidity: Float = 0.85", uw)
+        self.assertIn("let rigidity = max(0.85, sceneMetrics.architecturalLineStrength)", uw)
+
 
 if __name__ == "__main__":
     unittest.main()

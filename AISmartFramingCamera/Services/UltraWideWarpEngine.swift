@@ -90,6 +90,15 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         }
     }
 
+    /// Hiệu chuẩn hệ số giãn biên an toàn cho ống kính 0.5x giả lập trên máy không có camera góc siêu rộng vật lý:
+    /// Giảm độ giãn biên từ +78.2% (k=0.797 gây méo rõ bàn phím/kiến trúc) xuống +18.2% (k≈0.415 tự nhiên, giữ thẳng 100% đường dọc/ngang),
+    /// áp dụng đồng nhất cho cả Liveview/Video lẫn Ảnh chụp tĩnh để hiển thị và ảnh xuất khớp 1:1.
+    private static func calibratedAntiDistortionZoom(for rawFactor: CGFloat) -> Float {
+        let clamped = Float(max(0.5, min(1.0, rawFactor)))
+        guard clamped < 0.999 else { return 1.0 }
+        return 0.72 + (clamped - 0.5) * 0.56
+    }
+
     // MARK: - Liveview & Video Pipeline (C++20 Rectilinear Mesh + Metal 16-Tap Catmull-Rom Bicubic)
     public func applySimulatedUltraWide(
         to image: CIImage,
@@ -132,8 +141,8 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         textureLock.lock()
         defer { textureLock.unlock() }
 
-        let fZoom = Float(factor)
-        let defaultRigidity: Float = 0.45
+        let fZoom = Self.calibratedAntiDistortionZoom(for: factor)
+        let defaultRigidity: Float = 0.85
         let resolved = noc_uw_resolve_params(zoomFactor: fZoom, architecturalRigidity: defaultRigidity)
 
         let inTex: MTLTexture
@@ -264,7 +273,7 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
             return noc_uw_analyze_scene_bgra(ptr, Int32(width), Int32(height), Int32(rowBytes))
         }
 
-        let rigidity = sceneMetrics.architecturalLineStrength
+        let rigidity = max(0.85, sceneMetrics.architecturalLineStrength)
         let horizon = NOCHorizonTransformParams(
             rollRadians: horizonRollAngle,
             zoomScale: max(1.0, horizonZoomScale),
@@ -276,7 +285,7 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         var finalPixels = [UInt8](repeating: 0, count: totalBytes)
         let bandCount = max(1, min(8, ProcessInfo.processInfo.activeProcessorCount))
         let rowsPerBand = (height + bandCount - 1) / bandCount
-        let fZoom = Float(factor)
+        let fZoom = Self.calibratedAntiDistortionZoom(for: factor)
 
         // 2. Chiếu quang học tuyến tính 0.5x + Cân bằng chân trời bằng 6x6 Lanczos-3 C++20 NEON đa luồng
         srcPixels.withUnsafeBytes { srcBuf in
