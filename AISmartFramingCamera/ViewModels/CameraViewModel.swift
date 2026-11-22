@@ -962,26 +962,36 @@ public final class CameraViewModel: ObservableObject {
             return
         }
         PHPhotoLibrary.requestAuthorization(for: .readWrite) { [weak self] status in
-            guard status == .authorized || status == .limited else {
-                Task { @MainActor in completion(false) }
-                return
-            }
-            PHPhotoLibrary.shared().performChanges({
-                let req = PHAssetCreationRequest.forAsset()
-                let opts = PHAssetResourceCreationOptions()
-                opts.uniformTypeIdentifier = UTType.jpeg.identifier
-                opts.originalFilename = "AlignAI_Photobooth_\(Int(Date().timeIntervalSince1970)).jpg"
-                req.addResource(with: .photo, data: jpegData, options: opts)
-            }) { success, _ in
-                Task { @MainActor in
-                    if success {
-                        self?.haptics.triggerSuccess()
-                        self?.latestAlbumThumbnail = uiImg
-                        self?.showHUDNotice("Đã lưu dải ảnh Photobooth 300 DPI!")
-                    } else {
-                        self?.haptics.triggerError()
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    completion(false)
+                    return
+                }
+                guard status == .authorized || status == .limited else {
+                    completion(false)
+                    return
+                }
+                PHPhotoLibrary.shared().performChanges({
+                    let req = PHAssetCreationRequest.forAsset()
+                    let opts = PHAssetResourceCreationOptions()
+                    opts.uniformTypeIdentifier = UTType.jpeg.identifier
+                    opts.originalFilename = "AlignAI_Photobooth_\(Int(Date().timeIntervalSince1970)).jpg"
+                    req.addResource(with: .photo, data: jpegData, options: opts)
+                }) { [weak self] success, _ in
+                    Task { @MainActor [weak self] in
+                        guard let self else {
+                            completion(false)
+                            return
+                        }
+                        if success {
+                            self.haptics.triggerSuccess()
+                            self.latestAlbumThumbnail = uiImg
+                            self.showHUDNotice("Đã lưu dải ảnh Photobooth 300 DPI!")
+                        } else {
+                            self.haptics.triggerError()
+                        }
+                        completion(success)
                     }
-                    completion(success)
                 }
             }
         }
