@@ -893,6 +893,99 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         ]:
             self.assertIn(token, vm)
 
+    def test_22_photobooth_studio_and_mechanical_shutter_engine(self):
+        # 1. Verify all 6 new Swift files exist and are registered in Xcode project.pbxproj
+        pbx = PBXPROJ.read_text(encoding="utf-8")
+        new_files = [
+            "Services/MechanicalShutterEngine.swift",
+            "Models/PhotoboothModels.swift",
+            "Services/PhotoboothAssetManager.swift",
+            "Services/PhotoboothStripRenderer.swift",
+            "Views/PhotoboothCameraOverlayView.swift",
+            "Views/PhotoboothEditorSheetView.swift",
+        ]
+        for rel in new_files:
+            fname = rel.split("/")[-1]
+            self.assertTrue((ROOT / rel).exists(), f"Missing {rel}")
+            self.assertIn(f"/* {fname} */", pbx)
+            self.assertIn(f"/* {fname} in Sources */", pbx)
+
+        # 2. Verify all 24 bundled transparent PNG stickers exist + CI copies PhotoboothAssets/
+        pb_dir = ROOT / "Resources" / "PhotoboothAssets"
+        pngs = list(pb_dir.glob("pb_*.png"))
+        self.assertEqual(len(pngs), 24, f"Expected 24 bundled stickers, found {len(pngs)}")
+        for p in pngs:
+            head = p.read_bytes()[:8]
+            self.assertEqual(head, b"\x89PNG\r\n\x1a\n", f"Invalid PNG header in {p.name}")
+
+        yml = (ROOT.parent / ".github" / "workflows" / "ios-build.yml").read_text(encoding="utf-8")
+        self.assertIn("PhotoboothAssets", yml)
+
+        # 3. Verify Mechanical Shutter Engine & CoreHaptics wiring
+        shutter = source("Services/MechanicalShutterEngine.swift")
+        for token in [
+            "public enum MechanicalShutterProfile",
+            "case autoMatch", "case leicaM", "case nikonFM2", "case contaxT2",
+            "case hasselblad500", "case polaroidSX70", "case silentHaptic",
+            "AVAudioEngine", "CHHapticEngine", "mixWithOthers",
+            "public func fireShutter()",
+            "public func fireShutterHalfPress()",
+            "public func fireMechanicalDialTick()",
+            "public func fireCountdownTick(",
+        ]:
+            self.assertIn(token, shutter)
+
+        haptics = source("Services/HapticFeedbackService.swift")
+        self.assertIn("MechanicalShutterEngine.shared.fireShutter()", haptics)
+        self.assertIn("MechanicalShutterEngine.shared.fireShutterHalfPress()", haptics)
+
+        # 4. Verify Photobooth Asset Manager (bundled + online + Gemini + Pollinations + Vision Cutout)
+        assets_mgr = source("Services/PhotoboothAssetManager.swift")
+        for token in [
+            "VNGenerateForegroundInstanceMaskRequest",
+            "gemini-2.5-flash-image",
+            "gemini-nano-banana-2.1",
+            "image.pollinations.ai/prompt",
+            "downloadOnlinePack",
+            "generateAISticker",
+            "generateAIFrameTexture",
+            "stylizeBoothPhotoWithAI",
+            "renderOfflineProceduralSticker",
+        ]:
+            self.assertIn(token, assets_mgr)
+
+        # 5. Verify Photobooth Layouts & 16 Editorial Frames + 300 DPI Compositor
+        pb_models = source("Models/PhotoboothModels.swift")
+        for layout_case in [
+            "case strip4x1", "case grid2x2", "case strip3x1",
+            "case couple2x1", "case mini6Cut", "case polaroidSingle",
+        ]:
+            self.assertIn(layout_case, pb_models)
+
+        renderer = source("Services/PhotoboothStripRenderer.swift")
+        for frame_tok in [
+            ".kodak35mmSprocket", ".dailyNewspaper", ".vintageCinemaTicket",
+            ".thermalReceipt", ".cafeGingham", ".y2kBrushedChrome",
+            ".customAITexture", "drawEditorialFrameBackground",
+        ]:
+            self.assertIn(frame_tok, renderer)
+
+        # 6. Verify CameraViewModel, Controls, MainView & Settings UI integration
+        vm = source("ViewModels/CameraViewModel.swift")
+        main_view = source("Views/CameraMainView.swift")
+        overlay_view = source("Views/PhotoboothCameraOverlayView.swift")
+        settings = source("Views/SettingsSheetView.swift")
+        gate = source("Models/CameraFeatureGate.swift")
+
+        self.assertIn("case photobooth", gate)
+        for token in ["enterPhotoboothMode", "exitPhotoboothMode", "startPhotoboothCaptureOrSequence", "savePhotoboothStripToLibrary"]:
+            self.assertIn(token, vm)
+        self.assertIn("PhotoboothQuickTriggerButton", main_view)
+        self.assertIn("struct PhotoboothQuickTriggerButton", overlay_view)
+        self.assertIn("PhotoboothTopBar", main_view)
+        self.assertIn("PhotoboothEditorSheetView", main_view)
+        self.assertIn("mechanicalShutterCard", settings)
+
 
 if __name__ == "__main__":
     unittest.main()

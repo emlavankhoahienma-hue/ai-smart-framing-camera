@@ -150,6 +150,7 @@ struct CameraModeSegmentedSwitcher: View {
                     generator.prepare()
                     generator.selectionChanged()
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+                        if viewModel.isPhotoboothModeActive { viewModel.exitPhotoboothMode() }
                         switch item {
                         case .photo:
                             viewModel.selectCaptureMode(.photo)
@@ -267,8 +268,13 @@ struct MainCaptureButton: View {
                 .offset(x: dragOffset)
                 .scaleEffect((isTouchingShutter || viewModel.isShutterPressing) ? 0.91 : 1.0)
 
-            // Progress Indicator when Capturing
-            if case .capturing = viewModel.aiSessionState {
+            // Progress Indicator when Capturing or Photobooth Sequence Countdown
+            if viewModel.isPhotoboothSequenceRunning {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(AlignTheme.studioRecordRed)
+                    .frame(width: 22, height: 22)
+                    .offset(x: dragOffset)
+            } else if case .capturing = viewModel.aiSessionState {
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: AlignTheme.studioCanvas))
                     .scaleEffect(0.92)
@@ -313,9 +319,12 @@ struct MainCaptureButton: View {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 let transX = value.translation.width
-                isTouchingShutter = true
+                if !isTouchingShutter {
+                    isTouchingShutter = true
+                    HapticFeedbackService.shared.triggerShutterHalfPress()
+                }
 
-                if !isForVideo && transX < -6 && viewModel.featureAvailability(.aiComposition).isAvailable {
+                if !isForVideo && !viewModel.isPhotoboothModeActive && transX < -6 && viewModel.featureAvailability(.aiComposition).isAvailable {
                     isDraggingToAI = true
                     if transX < -56 {
                         dragOffset = -56 + (transX + 56) * 0.25
@@ -363,6 +372,8 @@ struct MainCaptureButton: View {
                     // Regular Tap
                     if isForVideo {
                         viewModel.toggleVideoRecording()
+                    } else if viewModel.isPhotoboothModeActive {
+                        viewModel.startPhotoboothCaptureOrSequence()
                     } else {
                         if viewModel.aiSessionState != .capturing {
                             if viewModel.isUltraSharpEnabled && viewModel.captureMode == .photo && viewModel.featureAvailability(.ultraSharp).isAvailable {

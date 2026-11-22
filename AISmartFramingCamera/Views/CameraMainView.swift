@@ -303,13 +303,25 @@ public struct CameraMainView: View {
                                     .stroke(Color.white.opacity(0.10), lineWidth: 0.65)
                             }
                         }
-                        // In-Viewfinder Stereo Audio VU Level Meter (Top Leading)
+                        // In-Viewfinder Stereo Audio VU Level Meter / Photobooth Quick Trigger (Top Leading)
                         .overlay(alignment: .topLeading) {
+                            let proTopOffset: CGFloat = (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 64 : 0
+                            let horizonOffset: CGFloat = viewModel.isHorizonLockEnabled ? 34 : 0
+
                             if viewModel.showAudioLevelMeter && !viewModel.isCameraHibernating && viewModel.captureMode.isVideo {
                                 AudioVULevelMeterView(levels: viewModel.audioLevels)
                                     .padding(.top, layout.viewfinderTopOverlayInset)
                                     .padding(.leading, 10)
                                     .transition(.opacity)
+                            } else if !viewModel.captureMode.isVideo &&
+                                      !viewModel.isCameraHibernating &&
+                                      !isPhotoStylePadActive &&
+                                      !viewModel.isPhotoboothModeActive &&
+                                      !viewModel.isWindowedZoomActive {
+                                PhotoboothQuickTriggerButton(viewModel: viewModel)
+                                    .padding(.top, layout.viewfinderTopOverlayInset + proTopOffset + horizonOffset)
+                                    .padding(.leading, 10)
+                                    .transition(.scale(scale: 0.90, anchor: .topLeading).combined(with: .opacity))
                             }
                         }
                         // Expanded Pro RGB + Luma Scope HUD / Photographic Styles 5x5 Quick Trigger (Top Trailing)
@@ -317,7 +329,7 @@ public struct CameraMainView: View {
                             let proTopOffset: CGFloat = (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 64 : 0
                             let horizonOffset: CGFloat = viewModel.isHorizonLockEnabled ? 34 : 0
 
-                            if !isPhotoStylePadActive {
+                            if !isPhotoStylePadActive && !viewModel.isPhotoboothModeActive {
                                 if viewModel.showHistogramInViewfinder && viewModel.isHistogramBarExpanded && !viewModel.isCameraHibernating {
                                     ProHistogramExpandedHUDView(viewModel: viewModel)
                                         .padding(.top, layout.viewfinderTopOverlayInset + proTopOffset + horizonOffset)
@@ -333,10 +345,17 @@ public struct CameraMainView: View {
                                 }
                             }
                         }
-                        // Unobstructed Viewfinder Swipe Overlay khi bật Photographic Styles (lướt ngang đổi màu, chạm nhẹ để ẩn)
+                        // Unobstructed Viewfinder Swipe Overlay khi bật Photographic Styles hoặc Photobooth Studio
                         .overlay {
                             if isPhotoStylePadActive {
                                 PhotographicStylesViewfinderOverlay(
+                                    viewModel: viewModel,
+                                    topInset: layout.viewfinderTopOverlayInset,
+                                    bottomInset: layout.viewfinderBottomOverlayInset
+                                )
+                                .transition(.opacity)
+                            } else if viewModel.isPhotoboothModeActive && !viewModel.captureMode.isVideo {
+                                PhotoboothViewfinderOverlay(
                                     viewModel: viewModel,
                                     topInset: layout.viewfinderTopOverlayInset,
                                     bottomInset: layout.viewfinderBottomOverlayInset
@@ -366,7 +385,7 @@ public struct CameraMainView: View {
                             if !viewModel.isCameraHibernating && viewModel.effectiveVintageDateStampStyle.isEnabled {
                                 let stampBottomPadding: CGFloat = (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo)
                                     ? max(82, layout.viewfinderBottomOverlayInset + 72)
-                                    : (isPhotoStylePadActive ? 16 : max(50, layout.viewfinderBottomOverlayInset + 40))
+                                    : (isPhotoStylePadActive ? 16 : (viewModel.isPhotoboothModeActive ? max(66, layout.viewfinderBottomOverlayInset + 56) : max(50, layout.viewfinderBottomOverlayInset + 40)))
                                 VintageDateStampViewfinderOverlay(viewModel: viewModel)
                                     .padding(.trailing, 14)
                                     .padding(.bottom, stampBottomPadding)
@@ -374,7 +393,7 @@ public struct CameraMainView: View {
                         }
                         // Bottom In-Viewfinder Smoked Glass Zoom Capsule / Pro Photo Manual Deck
                         .overlay(alignment: .bottom) {
-                            if !viewModel.isWindowedZoomActive && !isPhotoStylePadActive {
+                            if !viewModel.isWindowedZoomActive && !isPhotoStylePadActive && !viewModel.isPhotoboothModeActive {
                                 if viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo && !viewModel.isCameraHibernating {
                                     ProPhotoManualDeckView(viewModel: viewModel)
                                         .padding(.bottom, max(6, layout.viewfinderBottomOverlayInset - 2))
@@ -397,6 +416,9 @@ public struct CameraMainView: View {
                             Group {
                                 if isPhotoStylePadActive {
                                     PhotographicStylesTopHUDBar(viewModel: viewModel, compact: layout.isCompact)
+                                        .transition(.opacity)
+                                } else if viewModel.isPhotoboothModeActive && !viewModel.captureMode.isVideo {
+                                    PhotoboothTopBar(viewModel: viewModel, compact: layout.isCompact)
                                         .transition(.opacity)
                                 } else {
                                     TopCameraBar(viewModel: viewModel, histogramWidth: layout.histogramWidth)
@@ -527,6 +549,9 @@ public struct CameraMainView: View {
             if let latest = viewModel.latestCapturedPhoto {
                 CapturedPhotoPreviewView(item: latest, viewModel: viewModel)
             }
+        }
+        .fullScreenCover(isPresented: $viewModel.isShowingPhotoboothEditor) {
+            PhotoboothEditorSheetView(viewModel: viewModel)
         }
         .sheet(isPresented: $viewModel.isShowingVideoPreview) {
             if let videoURL = viewModel.recordedVideoURL {
@@ -881,9 +906,7 @@ struct ViewfinderZoomSelectorPill: View {
             ForEach(zoomOptions, id: \.self) { zoom in
                 let isSelected = viewModel.selectedZoomPreset == zoom
                 Button(action: {
-                    let impact = UIImpactFeedbackGenerator(style: .light)
-                    impact.prepare()
-                    impact.impactOccurred()
+                    HapticFeedbackService.shared.triggerMechanicalDialTick()
                     withAnimation(.spring(response: 0.30, dampingFraction: 0.78)) {
                         viewModel.setVideoAwareZoomFromButton(zoom)
                     }
@@ -1877,6 +1900,28 @@ struct CameraFunctionDrawerView: View {
                             subtitle: viewModel.showHistogramInViewfinder ? (viewModel.isHistogramBarExpanded ? "Pro RGB" : "Bật") : "Tắt",
                             isActive: viewModel.showHistogramInViewfinder,
                             action: { viewModel.showHistogramInViewfinder.toggle() }
+                        )
+
+                        DrawerFunctionButton(
+                            icon: "photo.stack.fill",
+                            title: "Photobooth",
+                            subtitle: viewModel.isPhotoboothModeActive ? "Đang bật" : "Ngoài tiệm",
+                            isActive: viewModel.isPhotoboothModeActive,
+                            availability: viewModel.featureAvailability(.photobooth),
+                            onBlocked: { reason in
+                                viewModel.haptics.triggerError()
+                                viewModel.showHUDNotice(reason)
+                            },
+                            action: {
+                                withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+                                    viewModel.isFunctionDrawerOpen = false
+                                }
+                                if viewModel.isPhotoboothModeActive {
+                                    viewModel.exitPhotoboothMode()
+                                } else {
+                                    viewModel.enterPhotoboothMode()
+                                }
+                            }
                         )
                     }
                 }

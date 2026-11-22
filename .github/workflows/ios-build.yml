@@ -293,6 +293,13 @@ jobs:
             cp AISmartFramingCamera/Resources/CameraIcons/*.jpg Payload/AISmartFramingCamera.app/CameraIcons/
             echo " Đã tích hợp Studio 3D Vintage Camera Icons & Sample Look vào App Bundle!"
           fi
+          if [ -d "AISmartFramingCamera/Resources/PhotoboothAssets" ]; then
+            mkdir -p Payload/AISmartFramingCamera.app/PhotoboothAssets
+            cp AISmartFramingCamera/Resources/PhotoboothAssets/*.png Payload/AISmartFramingCamera.app/PhotoboothAssets/
+            PB_COUNT=$(ls -1 Payload/AISmartFramingCamera.app/PhotoboothAssets/*.png | wc -l)
+            test "$PB_COUNT" -ge 24
+            echo " Đã tích hợp $PB_COUNT Photobooth Studio Stickers vào App Bundle!"
+          fi
           test -d Payload/AISmartFramingCamera.app/SigLIPBaseImage.mlmodelc
           test -s Payload/AISmartFramingCamera.app/SigLIPPrompts.json
           python scripts/verify_model_bundle.py Payload/AISmartFramingCamera.app

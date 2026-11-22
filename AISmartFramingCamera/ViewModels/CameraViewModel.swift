@@ -398,11 +398,13 @@ public final class CameraViewModel: ObservableObject {
                 currentAIColorParams = nil
                 geminiColorRecipe = nil
             }
+            MechanicalShutterEngine.shared.activeFilmPreset = isFilmSimulationActive ? selectedFilmPreset : .standard
             pushLiveColorStateFastToPreview()
         }
     }
     @Published public var selectedFilmPreset: FilmPreset = .standard {
         didSet {
+            MechanicalShutterEngine.shared.activeFilmPreset = isFilmSimulationActive ? selectedFilmPreset : .standard
             pushLiveColorStateFastToPreview()
         }
     }
@@ -675,6 +677,316 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Mechanical Camera Shutter Audio & CoreHaptics Proxies
+    @Published public var mechanicalShutterProfile: MechanicalShutterProfile = MechanicalShutterEngine.shared.selectedProfile {
+        didSet { MechanicalShutterEngine.shared.selectedProfile = mechanicalShutterProfile }
+    }
+    @Published public var shutterSoundVolume: Float = MechanicalShutterEngine.shared.soundVolume {
+        didSet { MechanicalShutterEngine.shared.soundVolume = shutterSoundVolume }
+    }
+    @Published public var mechanicalHapticIntensity: Float = MechanicalShutterEngine.shared.hapticIntensity {
+        didSet { MechanicalShutterEngine.shared.hapticIntensity = mechanicalHapticIntensity }
+    }
+    @Published public var shutterRespectsSilentSwitch: Bool = MechanicalShutterEngine.shared.respectSilentSwitch {
+        didSet { MechanicalShutterEngine.shared.respectSilentSwitch = shutterRespectsSilentSwitch }
+    }
+    @Published public var enableShutterHalfPressHaptic: Bool = MechanicalShutterEngine.shared.enableHalfPressHaptic {
+        didSet { MechanicalShutterEngine.shared.enableHalfPressHaptic = enableShutterHalfPressHaptic }
+    }
+    @Published public var enableMechanicalDialTicks: Bool = MechanicalShutterEngine.shared.enableMechanicalDialTicks {
+        didSet { MechanicalShutterEngine.shared.enableMechanicalDialTicks = enableMechanicalDialTicks }
+    }
+
+    public func previewMechanicalShutter(_ profile: MechanicalShutterProfile? = nil) {
+        let p = profile ?? mechanicalShutterProfile
+        mechanicalShutterProfile = p
+        MechanicalShutterEngine.shared.firePreviewTest(profile: p)
+    }
+
+    // MARK: - Photobooth Studio Mode (Chụp 1-6 khung liên hoàn + Trang trí Sticker / AI Studio + Xuất 300 DPI)
+    @Published public var isPhotoboothModeActive: Bool = false {
+        didSet {
+            guard isPhotoboothModeActive != oldValue else { return }
+            if isPhotoboothModeActive {
+                if isShowingFilmDrawer { isShowingFilmDrawer = false }
+                if isShowingPhotographicStylePad { isShowingPhotographicStylePad = false }
+                if isFunctionDrawerOpen { isFunctionDrawerOpen = false }
+                if isProPhotoModeEnabled { isProPhotoModeEnabled = false }
+                if isWindowedZoomActive { isWindowedZoomActive = false }
+                if aiSessionState.isSessionActive { cancelAISession() }
+                ensurePhotoboothSlotArraySize()
+            } else {
+                cancelPhotoboothSequence()
+            }
+        }
+    }
+    @Published public var isShowingPhotoboothEditor: Bool = false {
+        didSet { updateCameraHibernationState() }
+    }
+    @Published public var photoboothTimer: PhotoboothTimerOption = .sec3
+    @Published public var photoboothSlots: [PhotoboothSlotPhoto?] = Array(repeating: nil, count: 4)
+    @Published public var photoboothActiveSlotIndex: Int = 0
+    @Published public var photoboothCountdownRemaining: Int = 0
+    @Published public var isPhotoboothSequenceRunning: Bool = false
+    @Published public var photoboothFlashBlink: Bool = false
+    @Published public var photoboothStripConfig: PhotoboothStripConfig = PhotoboothStripConfig()
+    @Published public var photoboothPlacedStickers: [PlacedPhotoboothSticker] = []
+    private var isAwaitingPhotoboothShot: Bool = false
+    private var photoboothSequenceTask: Task<Void, Never>? = nil
+
+    public var photoboothFilledCount: Int {
+        photoboothSlots.prefix(photoboothStripConfig.layout.slotCount).compactMap { $0 }.count
+    }
+
+    public var photoboothIsComplete: Bool {
+        photoboothFilledCount >= photoboothStripConfig.layout.slotCount
+    }
+
+    public func enterPhotoboothMode() {
+        attemptFeature(.photobooth) {
+            if captureMode.isVideo {
+                selectCaptureMode(.photo)
+            }
+            haptics.triggerSelectionChange()
+            withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+                isPhotoboothModeActive = true
+            }
+            Task { @MainActor in
+                await PhotoboothAssetManager.shared.syncFeaturedPackIfWiFi()
+            }
+        }
+    }
+
+    public func exitPhotoboothMode() {
+        cancelPhotoboothSequence()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+            isPhotoboothModeActive = false
+        }
+    }
+
+    public func selectPhotoboothLayout(_ layout: PhotoboothLayout) {
+        cancelPhotoboothSequence()
+        haptics.triggerSelectionChange()
+        photoboothStripConfig.layout = layout
+        ensurePhotoboothSlotArraySize()
+    }
+
+    public func cyclePhotoboothTimer() {
+        haptics.triggerSelectionChange()
+        let all = PhotoboothTimerOption.allCases
+        if let idx = all.firstIndex(of: photoboothTimer) {
+            photoboothTimer = all[(idx + 1) % all.count]
+        }
+    }
+
+    private func ensurePhotoboothSlotArraySize() {
+        let count = photoboothStripConfig.layout.slotCount
+        if photoboothSlots.count < count {
+            photoboothSlots.append(contentsOf: Array(repeating: nil, count: count - photoboothSlots.count))
+        } else if photoboothSlots.count > count {
+            photoboothSlots = Array(photoboothSlots.prefix(count))
+        }
+        photoboothActiveSlotIndex = min(photoboothActiveSlotIndex, max(0, count - 1))
+        if let nextEmpty = photoboothSlots.firstIndex(where: { $0 == nil }) {
+            photoboothActiveSlotIndex = nextEmpty
+        }
+    }
+
+    public func startPhotoboothCaptureOrSequence() {
+        guard isPhotoboothModeActive else { return }
+        if isPhotoboothSequenceRunning {
+            cancelPhotoboothSequence()
+            return
+        }
+        ensurePhotoboothSlotArraySize()
+        let total = photoboothStripConfig.layout.slotCount
+        if photoboothFilledCount >= total {
+            photoboothSlots = Array(repeating: nil, count: total)
+            photoboothActiveSlotIndex = 0
+        }
+
+        if photoboothTimer == .manual {
+            triggerSinglePhotoboothShot()
+            return
+        }
+
+        isPhotoboothSequenceRunning = true
+        photoboothSequenceTask?.cancel()
+        photoboothSequenceTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while self.isPhotoboothSequenceRunning && !Task.isCancelled {
+                guard let nextSlot = self.photoboothSlots.firstIndex(where: { $0 == nil }) else {
+                    break
+                }
+                self.photoboothActiveSlotIndex = nextSlot
+                let secs = max(1, self.photoboothTimer.rawValue)
+                for rem in stride(from: secs, through: 1, by: -1) {
+                    guard !Task.isCancelled && self.isPhotoboothSequenceRunning else { return }
+                    self.photoboothCountdownRemaining = rem
+                    self.haptics.triggerCountdownTick(secondsLeft: rem)
+                    try? await Task.sleep(nanoseconds: 950_000_000)
+                }
+                guard !Task.isCancelled && self.isPhotoboothSequenceRunning else { return }
+                self.photoboothCountdownRemaining = 0
+                self.triggerSinglePhotoboothShot()
+
+                // Đợi ảnh vừa chụp đi qua pipeline (tối đa ~4s) trước khi đếm nhịp khung kế tiếp
+                var waitedMs = 0
+                while self.isAwaitingPhotoboothShot && waitedMs < 4000 && !Task.isCancelled && self.isPhotoboothSequenceRunning {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                    waitedMs += 100
+                }
+                if self.photoboothFilledCount >= self.photoboothStripConfig.layout.slotCount {
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 450_000_000)
+            }
+            self.isPhotoboothSequenceRunning = false
+            self.photoboothCountdownRemaining = 0
+            if self.photoboothFilledCount >= self.photoboothStripConfig.layout.slotCount {
+                self.openPhotoboothEditor()
+            }
+        }
+    }
+
+    public func cancelPhotoboothSequence() {
+        photoboothSequenceTask?.cancel()
+        photoboothSequenceTask = nil
+        isPhotoboothSequenceRunning = false
+        photoboothCountdownRemaining = 0
+        isAwaitingPhotoboothShot = false
+    }
+
+    private func triggerSinglePhotoboothShot() {
+        guard (isCameraReady || cameraService.isAnySessionRunning),
+              !isCameraHibernating, !isShutterPressing else { return }
+        isAwaitingPhotoboothShot = true
+        haptics.triggerPhotoboothFlashPop()
+        withAnimation(.easeIn(duration: 0.06)) {
+            photoboothFlashBlink = true
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 140_000_000)
+            withAnimation(.easeOut(duration: 0.22)) {
+                self?.photoboothFlashBlink = false
+            }
+        }
+        performDirectPhotoCapture()
+    }
+
+    private func handlePhotoboothShotCaptured(_ item: CapturedPhotoItem?) {
+        guard isPhotoboothModeActive, isAwaitingPhotoboothShot, let item else { return }
+        isAwaitingPhotoboothShot = false
+        ensurePhotoboothSlotArraySize()
+        let idx = max(0, min(photoboothStripConfig.layout.slotCount - 1, photoboothActiveSlotIndex))
+        photoboothSlots[idx] = PhotoboothSlotPhoto(image: item.processedImage, isMirrored: false)
+
+        if let nextEmpty = photoboothSlots.firstIndex(where: { $0 == nil }) {
+            photoboothActiveSlotIndex = nextEmpty
+        } else if !isPhotoboothSequenceRunning {
+            openPhotoboothEditor()
+        }
+    }
+
+    public func retakePhotoboothSlot(_ index: Int) {
+        cancelPhotoboothSequence()
+        ensurePhotoboothSlotArraySize()
+        guard index >= 0 && index < photoboothSlots.count else { return }
+        photoboothSlots[index] = nil
+        photoboothActiveSlotIndex = index
+        isShowingPhotoboothEditor = false
+        haptics.triggerSelectionChange()
+    }
+
+    public func replacePhotoboothSlot(_ index: Int, cgImage: CGImage) {
+        ensurePhotoboothSlotArraySize()
+        guard index >= 0 && index < photoboothSlots.count else { return }
+        photoboothSlots[index] = PhotoboothSlotPhoto(image: cgImage, isMirrored: false)
+    }
+
+    public func importPhotoboothPhotos(_ images: [CGImage]) {
+        guard !images.isEmpty else { return }
+        cancelPhotoboothSequence()
+        ensurePhotoboothSlotArraySize()
+        var cursor = 0
+        for img in images {
+            while cursor < photoboothSlots.count && photoboothSlots[cursor] != nil {
+                cursor += 1
+            }
+            if cursor >= photoboothSlots.count { break }
+            photoboothSlots[cursor] = PhotoboothSlotPhoto(image: img, isMirrored: false)
+            cursor += 1
+        }
+        if let nextEmpty = photoboothSlots.firstIndex(where: { $0 == nil }) {
+            photoboothActiveSlotIndex = nextEmpty
+        }
+        haptics.triggerMedium()
+        if photoboothFilledCount >= photoboothStripConfig.layout.slotCount {
+            openPhotoboothEditor()
+        }
+    }
+
+    public func openPhotoboothEditor() {
+        cancelPhotoboothSequence()
+        isShowingPhotoboothEditor = true
+    }
+
+    public func resetPhotoboothSession() {
+        cancelPhotoboothSequence()
+        let count = photoboothStripConfig.layout.slotCount
+        photoboothSlots = Array(repeating: nil, count: count)
+        photoboothActiveSlotIndex = 0
+        photoboothPlacedStickers.removeAll()
+        photoboothStripConfig.customBackgroundHex = nil
+        haptics.triggerLight()
+    }
+
+    public func renderFinalPhotoboothStrip(targetWidth: CGFloat? = nil) -> CGImage? {
+        PhotoboothStripRenderer.renderStrip(
+            slots: photoboothSlots,
+            config: photoboothStripConfig,
+            stickers: photoboothPlacedStickers,
+            assetManager: PhotoboothAssetManager.shared,
+            targetWidth: targetWidth
+        )
+    }
+
+    public func savePhotoboothStripToLibrary(completion: @escaping (Bool) -> Void) {
+        guard let stripCG = renderFinalPhotoboothStrip() else {
+            completion(false)
+            return
+        }
+        let uiImg = UIImage(cgImage: stripCG)
+        guard let jpegData = uiImg.jpegData(compressionQuality: 0.96) else {
+            completion(false)
+            return
+        }
+        PHPhotoLibrary.requestAuthorization(for: .readWrite) { [weak self] status in
+            guard status == .authorized || status == .limited else {
+                Task { @MainActor in completion(false) }
+                return
+            }
+            PHPhotoLibrary.shared().performChanges({
+                let req = PHAssetCreationRequest.forAsset()
+                let opts = PHAssetResourceCreationOptions()
+                opts.uniformTypeIdentifier = UTType.jpeg.identifier
+                opts.originalFilename = "AlignAI_Photobooth_\(Int(Date().timeIntervalSince1970)).jpg"
+                req.addResource(with: .photo, data: jpegData, options: opts)
+            }) { success, _ in
+                Task { @MainActor in
+                    if success {
+                        self?.haptics.triggerSuccess()
+                        self?.latestAlbumThumbnail = uiImg
+                        self?.showHUDNotice("Đã lưu dải ảnh Photobooth 300 DPI!")
+                    } else {
+                        self?.haptics.triggerError()
+                    }
+                    completion(success)
+                }
+            }
+        }
+    }
+
     /// Tham số tinh chỉnh giả lập phim theo thời gian thực (Tương phản, Bão hòa, Độ ấm, Sáng/Tối, Hạt phim, Viền tối, Độ phai, Quầng sáng).
     @Published public var filmTuning: FilmSimulationTuning = .neutral {
         didSet {
@@ -833,9 +1145,11 @@ public final class CameraViewModel: ObservableObject {
         didSet {
             UserDefaults.standard.set(captureMode.rawValue, forKey: "captureMode")
             windowedZoomAspectRatio = captureMode.isVideo ? .ratio16_9 : .ratio3_4
+            MechanicalShutterEngine.shared.isVideoCaptureMode = captureMode.isVideo
             if captureMode.isVideo {
                 if isProPhotoModeEnabled { isProPhotoModeEnabled = false }
                 if isShowingPhotographicStylePad { isShowingPhotographicStylePad = false }
+                if isPhotoboothModeActive { exitPhotoboothMode() }
             }
             FilmFilterEngine.shared.activePhotographicStyle = effectivePhotographicStyle
             FilmFilterEngine.shared.activeLightLeak = effectiveVintageLightLeak
@@ -1705,7 +2019,13 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     @Published public var captureTimerSeconds: Int = 0 // 0s, 3s, 10s
-    @Published public var countdownSecondsRemaining: Int = 0
+    @Published public var countdownSecondsRemaining: Int = 0 {
+        didSet {
+            if countdownSecondsRemaining > 0 && countdownSecondsRemaining != oldValue {
+                haptics.triggerCountdownTick(secondsLeft: countdownSecondsRemaining)
+            }
+        }
+    }
     private var countdownTimer: Timer? = nil
     @Published public private(set) var plannedLightingScene: String = "normal"
     @Published public private(set) var plannedLightingDescription: String = ""
@@ -1931,7 +2251,13 @@ public final class CameraViewModel: ObservableObject {
     }
 
     // Capture & Review
-    @Published public var latestCapturedPhoto: CapturedPhotoItem?
+    @Published public var latestCapturedPhoto: CapturedPhotoItem? {
+        didSet {
+            if isPhotoboothModeActive && isAwaitingPhotoboothShot {
+                handlePhotoboothShotCaptured(latestCapturedPhoto)
+            }
+        }
+    }
     @Published public var isShowingPhotoDetail: Bool = false {
         didSet { updateCameraHibernationState() }
     }
@@ -2024,6 +2350,7 @@ public final class CameraViewModel: ObservableObject {
             || isShowingPhotoDetail
             || isShowingGallerySheet
             || isShowingVideoPreview
+            || isShowingPhotoboothEditor
             || isAppInBackground
 
         guard shouldHibernate != isCameraHibernating else { return }
@@ -2072,7 +2399,9 @@ public final class CameraViewModel: ObservableObject {
             isShowingVideoPreview = true
         } else if pendingPhotoPreview, latestCapturedPhoto != nil {
             pendingPhotoPreview = false
-            isShowingPhotoDetail = true
+            if !isPhotoboothModeActive {
+                isShowingPhotoDetail = true
+            }
         }
     }
 

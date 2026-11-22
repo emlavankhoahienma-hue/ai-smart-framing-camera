@@ -35,9 +35,29 @@ public final class HapticFeedbackService {
         impactRigid.impactOccurred(intensity: 1.0)
     }
     
-    // MARK: - Camera Shutter Click
+    // MARK: - Camera Shutter Click (Mechanical Audio + Synchronized CoreHaptics)
     public func triggerShutterClick() {
-        impactMedium.impactOccurred(intensity: 0.9)
+        MechanicalShutterEngine.shared.fireShutter()
+    }
+
+    // MARK: - Shutter Half-Press Mechanical Detent
+    public func triggerShutterHalfPress() {
+        MechanicalShutterEngine.shared.fireShutterHalfPress()
+    }
+
+    // MARK: - Aperture / Zoom Mechanical Dial Tick
+    public func triggerMechanicalDialTick() {
+        MechanicalShutterEngine.shared.fireMechanicalDialTick()
+    }
+
+    // MARK: - Studio Countdown Beep + Haptic
+    public func triggerCountdownTick(secondsLeft: Int) {
+        MechanicalShutterEngine.shared.fireCountdownTick(secondsLeft: secondsLeft)
+    }
+
+    // MARK: - Photobooth Studio Flash Pop
+    public func triggerPhotoboothFlashPop() {
+        MechanicalShutterEngine.shared.fireStudioFlashPop()
     }
     
     // MARK: - Light Tap / Zoom Snap

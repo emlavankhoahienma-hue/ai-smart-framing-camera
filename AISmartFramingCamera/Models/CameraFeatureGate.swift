@@ -20,6 +20,7 @@ public enum CameraFeature: String, CaseIterable, Sendable {
     case photographicStyles
     case focusPeaking
     case proPhoto
+    case photobooth
 }
 
 /// Trạng thái khả dụng của một tính năng: cho phép bật hay bị khóa kèm điều kiện rõ ràng
@@ -276,6 +277,18 @@ public enum CameraFeatureGate {
             }
             if ctx.isDualCameraActive {
                 return .disabled(shortHint: "Tắt Dual Cam", detailReason: "Tắt Dual Cam để dùng chế độ Chụp ảnh Pro")
+            }
+            return .available
+
+        case .photobooth:
+            if ctx.isRecordingVideo {
+                return .disabled(shortHint: "Đang quay", detailReason: "Dừng quay video trước khi mở Photobooth")
+            }
+            if ctx.isDualCameraActive {
+                return .disabled(shortHint: "Tắt Dual Cam", detailReason: "Tắt Dual Cam để dùng chế độ Photobooth")
+            }
+            if ctx.selectedPhotoFormat == .dng {
+                return .disabled(shortHint: "Đổi khỏi RAW", detailReason: "Đổi định dạng khỏi RAW DNG để chụp Photobooth")
             }
             return .available
         }
