@@ -57,7 +57,9 @@ public struct CameraPreviewView: UIViewRepresentable {
             intensity: Float(viewModel.filmSimulationIntensity),
             softwareWB: viewModel.activeProSoftwareWB,
             filmTuning: viewModel.filmTuning,
-            photographicStyle: viewModel.effectivePhotographicStyle
+            photographicStyle: viewModel.effectivePhotographicStyle,
+            isPhotographicStylePadOpen: viewModel.isShowingPhotographicStylePad && !viewModel.captureMode.isVideo && viewModel.selectedPhotoFormat != .dng,
+            photographicStyleSplit: (viewModel.captureMode.isVideo || viewModel.selectedPhotoFormat == .dng) ? .inactive : viewModel.photographicStyleSplit
         )
     }
 
@@ -158,6 +160,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private var currentSoftwareWB: ProPhotoSoftwareWBGrade = .inactive
     private var currentFilmTuning: FilmSimulationTuning = .neutral
     private var currentPhotographicStyle: PhotographicStyleState = .standard
+    private var currentPhotographicStyleSplit: PhotographicStyleSplitTransition = .inactive
 
     // Frame cache to avoid redundant filter graphs on idle or identical frames
     private var lastProcessedBuffer: CVPixelBuffer? = nil
@@ -168,6 +171,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private var lastSoftwareWB: ProPhotoSoftwareWBGrade = .inactive
     private var lastFilmTuning: FilmSimulationTuning = .neutral
     private var lastPhotographicStyle: PhotographicStyleState = .standard
+    private var lastPhotographicStyleSplit: PhotographicStyleSplitTransition = .inactive
     private var lastFilterActive: Bool = false
     private var lastVideoAspectFit: Bool = false
     private var lastDrawableSize: CGSize = .zero
@@ -187,15 +191,15 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         super.init()
     }
 
-    func updateState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool, isSimulatedUltraWide: Bool = false, simulatedFactor: CGFloat = 0.5, isHorizonLock: Bool = false, isFocusPeaking: Bool = false, focusPeakingColor: FocusPeakingColor = .green, focusPeakingSensitivity: Float = 0.5, preset: FilmPreset, intensity: Float, softwareWB: ProPhotoSoftwareWBGrade = .inactive, filmTuning: FilmSimulationTuning = .neutral, photographicStyle: PhotographicStyleState = .standard) {
+    func updateState(isActive: Bool, isDualCamera: Bool, isVideoMode: Bool, isSimulatedUltraWide: Bool = false, simulatedFactor: CGFloat = 0.5, isHorizonLock: Bool = false, isFocusPeaking: Bool = false, focusPeakingColor: FocusPeakingColor = .green, focusPeakingSensitivity: Float = 0.5, preset: FilmPreset, intensity: Float, softwareWB: ProPhotoSoftwareWBGrade = .inactive, filmTuning: FilmSimulationTuning = .neutral, photographicStyle: PhotographicStyleState = .standard, isPhotographicStylePadOpen: Bool = false, photographicStyleSplit: PhotographicStyleSplitTransition = .inactive) {
         stateLock.lock()
         let hasRealFilm = isActive && (preset != .standard && preset != .proColorGrade)
-        let hasColorPass = hasRealFilm || !softwareWB.isIdentity || !filmTuning.isIdentity || !photographicStyle.isIdentity
+        let hasColorPass = hasRealFilm || !softwareWB.isIdentity || !filmTuning.isIdentity || !photographicStyle.isIdentity || photographicStyleSplit.isActive
         self.isFilmFilterActive = hasColorPass
         self.isFocusPeaking = isFocusPeaking
         self.focusPeakingColor = focusPeakingColor
         self.focusPeakingSensitivity = focusPeakingSensitivity
-        self.isRenderingActive = hasColorPass || isSimulatedUltraWide || isHorizonLock || isFocusPeaking
+        self.isRenderingActive = hasColorPass || isPhotographicStylePadOpen || isSimulatedUltraWide || isHorizonLock || isFocusPeaking
         self.isDualCameraMode = isDualCamera
         self.isVideoAspectFit = isVideoMode
         self.isSimulatedUltraWide = isSimulatedUltraWide
@@ -206,6 +210,17 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         self.currentSoftwareWB = softwareWB
         self.currentFilmTuning = filmTuning
         self.currentPhotographicStyle = photographicStyle
+        self.currentPhotographicStyleSplit = photographicStyleSplit
+        stateLock.unlock()
+    }
+
+    func updateSplitTransitionFastPath(_ split: PhotographicStyleSplitTransition) {
+        stateLock.lock()
+        self.currentPhotographicStyleSplit = split
+        if split.isActive {
+            self.isFilmFilterActive = true
+            self.isRenderingActive = true
+        }
         stateLock.unlock()
     }
 
@@ -227,6 +242,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         let softwareWB = currentSoftwareWB
         let filmTuning = currentFilmTuning
         let photographicStyle = currentPhotographicStyle
+        let splitTransition = currentPhotographicStyleSplit
         stateLock.unlock()
 
         guard shouldRender else { return }
@@ -245,6 +261,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
            softwareWB == lastSoftwareWB,
            filmTuning == lastFilmTuning,
            photographicStyle == lastPhotographicStyle,
+           splitTransition == lastPhotographicStyleSplit,
            view.drawableSize == lastDrawableSize,
            lastFilteredCI != nil,
            lastPresentedOnce {
@@ -272,6 +289,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
            softwareWB == lastSoftwareWB,
            filmTuning == lastFilmTuning,
            photographicStyle == lastPhotographicStyle,
+           splitTransition == lastPhotographicStyleSplit,
            drawableSize == lastDrawableSize,
            let cached = lastFilteredCI {
             finalImageToRender = cached
@@ -331,12 +349,60 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
                 let workingInput = workingScale < 0.999
                     ? unwarpedCI.transformed(by: CGAffineTransform(scaleX: workingScale, y: workingScale))
                     : unwarpedCI
-                var workingOut = FilmFilterEngine.shared.applyPreset(
-                    to: workingInput,
-                    preset: effectivePreset,
-                    intensity: intensity,
-                    isRealtimePreview: true
-                ) ?? workingInput
+                var workingOut: CIImage
+                if splitTransition.isActive {
+                    // Live GPU Split-Screen Wipe 60 FPS (trái = leftStyle, phải = rightStyle — tổng pixel xử lý = đúng 1.0x khung hình)
+                    let splitPos = max(0.0, min(1.0, splitTransition.splitPosition))
+                    if splitPos <= 0.002 {
+                        workingOut = FilmFilterEngine.shared.applyPreset(
+                            to: workingInput,
+                            preset: effectivePreset,
+                            intensity: intensity,
+                            isRealtimePreview: true,
+                            photographicStyleOverride: splitTransition.rightStyle
+                        ) ?? workingInput
+                    } else if splitPos >= 0.998 {
+                        workingOut = FilmFilterEngine.shared.applyPreset(
+                            to: workingInput,
+                            preset: effectivePreset,
+                            intensity: intensity,
+                            isRealtimePreview: true,
+                            photographicStyleOverride: splitTransition.leftStyle
+                        ) ?? workingInput
+                    } else {
+                        let workExt = workingInput.extent.integral
+                        let splitX = floor(workExt.minX + workExt.width * CGFloat(splitPos))
+                        let leftW = max(1, splitX - workExt.minX)
+                        let rightW = max(1, workExt.maxX - splitX)
+                        let leftRect = CGRect(x: workExt.minX, y: workExt.minY, width: leftW, height: workExt.height).integral
+                        let rightRect = CGRect(x: splitX, y: workExt.minY, width: rightW, height: workExt.height).integral
+                        let leftSlice = workingInput.cropped(to: leftRect)
+                        let rightSlice = workingInput.cropped(to: rightRect)
+                        let leftGraded = FilmFilterEngine.shared.applyPreset(
+                            to: leftSlice,
+                            preset: effectivePreset,
+                            intensity: intensity,
+                            isRealtimePreview: true,
+                            photographicStyleOverride: splitTransition.leftStyle
+                        ) ?? leftSlice
+                        let rightGraded = FilmFilterEngine.shared.applyPreset(
+                            to: rightSlice,
+                            preset: effectivePreset,
+                            intensity: intensity,
+                            isRealtimePreview: true,
+                            photographicStyleOverride: splitTransition.rightStyle
+                        ) ?? rightSlice
+                        workingOut = rightGraded.composited(over: leftGraded).cropped(to: workExt)
+                    }
+                } else {
+                    workingOut = FilmFilterEngine.shared.applyPreset(
+                        to: workingInput,
+                        preset: effectivePreset,
+                        intensity: intensity,
+                        isRealtimePreview: true,
+                        photographicStyleOverride: photographicStyle
+                    ) ?? workingInput
+                }
                 if preset.isAIFullAuto, let aiParams = vm.currentAIColorParams {
                     workingOut = FilmFilterEngine.shared.applyAIColorParameters(to: workingOut, params: aiParams) ?? workingOut
                 }
@@ -362,6 +428,7 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
             lastSoftwareWB = softwareWB
             lastFilmTuning = filmTuning
             lastPhotographicStyle = photographicStyle
+            lastPhotographicStyleSplit = splitTransition
             lastDrawableSize = drawableSize
             lastPeakingActive = isPeaking
             lastPeakingColor = peakingColor
@@ -513,14 +580,17 @@ public class PreviewContainerView: UIView {
         intensity: Float,
         softwareWB: ProPhotoSoftwareWBGrade = .inactive,
         filmTuning: FilmSimulationTuning = .neutral,
-        photographicStyle: PhotographicStyleState = .standard
+        photographicStyle: PhotographicStyleState = .standard,
+        isPhotographicStylePadOpen: Bool = false,
+        photographicStyleSplit: PhotographicStyleSplitTransition = .inactive
     ) {
-        // Kich hoat MTKView khi bat bo loc mau, Photographic Style, GPU WB Pro, tinh chinh gia lap phim, simulated 0.5x, Horizon Lock 360 do, hoac Focus Peaking 60 FPS
+        // Kich hoat MTKView khi bat bo loc mau, Photographic Style (hoac dang mo Pad de vuot split-screen 0 giat), GPU WB Pro, tinh chinh gia lap phim, simulated 0.5x, Horizon Lock 360 do, hoac Focus Peaking 60 FPS
         let hasColorPass = (isActive && preset != .standard && preset != .proColorGrade)
             || !softwareWB.isIdentity
             || !filmTuning.isIdentity
             || !photographicStyle.isIdentity
-        let shouldRender = hasColorPass || isSimulatedUltraWide || isHorizonLock || isFocusPeaking
+            || photographicStyleSplit.isActive
+        let shouldRender = hasColorPass || isPhotographicStylePadOpen || isSimulatedUltraWide || isHorizonLock || isFocusPeaking
         metalRenderer?.updateState(
             isActive: isActive,
             isDualCamera: isDualCamera,
@@ -535,7 +605,9 @@ public class PreviewContainerView: UIView {
             intensity: intensity,
             softwareWB: softwareWB,
             filmTuning: filmTuning,
-            photographicStyle: photographicStyle
+            photographicStyle: photographicStyle,
+            isPhotographicStylePadOpen: isPhotographicStylePadOpen,
+            photographicStyleSplit: photographicStyleSplit
         )
 
         if isDualCamera {
@@ -547,6 +619,10 @@ public class PreviewContainerView: UIView {
         if metalView?.isPaused != !shouldRender {
             metalView?.isPaused = !shouldRender
         }
+    }
+
+    public func updatePhotographicStyleSplit(_ split: PhotographicStyleSplitTransition) {
+        metalRenderer?.updateSplitTransitionFastPath(split)
     }
 
     public func animateLensTransition() {

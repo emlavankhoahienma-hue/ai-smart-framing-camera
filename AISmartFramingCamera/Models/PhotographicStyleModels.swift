@@ -9,6 +9,48 @@ public enum PhotographicStyleActiveAxis: Equatable, Sendable {
     case palette
 }
 
+/// Trạng thái vuốt chia đôi màn hình thời gian thực (Live GPU Split-Screen Wipe) giống Camera iOS 18.
+public struct PhotographicStyleSplitTransition: Equatable, Sendable {
+    public var isActive: Bool
+    public var leftStyle: PhotographicStyleState
+    public var rightStyle: PhotographicStyleState
+    /// Tọa độ chuẩn hóa [0.0 ... 1.0] của ranh chia dọc (0 = sát mép trái, 1 = sát mép phải).
+    public var splitPosition: Float
+    /// Phong cách đang chiếm phần hiển thị ưu thế để đồng bộ Top HUD, tên style & Bottom Pad.
+    public var dominantStyle: PhotographicStyleState
+    /// Phong cách đích đang vuốt tới & tỷ lệ hòa trộn [0.0 ... 1.0] để chuyển màu nền Pad mượt theo tay.
+    public var incomingPreset: PhotographicStylePreset
+    public var morphProgress: Float
+
+    public static let inactive = PhotographicStyleSplitTransition(
+        isActive: false,
+        leftStyle: .standard,
+        rightStyle: .standard,
+        splitPosition: 1.0,
+        dominantStyle: .standard,
+        incomingPreset: .standard,
+        morphProgress: 0.0
+    )
+
+    public init(
+        isActive: Bool,
+        leftStyle: PhotographicStyleState,
+        rightStyle: PhotographicStyleState,
+        splitPosition: Float,
+        dominantStyle: PhotographicStyleState,
+        incomingPreset: PhotographicStylePreset,
+        morphProgress: Float
+    ) {
+        self.isActive = isActive
+        self.leftStyle = leftStyle
+        self.rightStyle = rightStyle
+        self.splitPosition = max(0.0, min(1.0, splitPosition))
+        self.dominantStyle = dominantStyle
+        self.incomingPreset = incomingPreset
+        self.morphProgress = max(0.0, min(1.0, morphProgress))
+    }
+}
+
 /// Phân nhóm bản chất quang học của 8 Photographic Styles (giống triết lý Undertones vs Moods trên iOS Camera).
 public enum PhotographicStyleGroup: String, Sendable {
     case standard

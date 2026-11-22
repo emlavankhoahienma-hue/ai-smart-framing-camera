@@ -550,11 +550,13 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         self.assertIn("@Published public var isShowingPhotographicStylePad: Bool = false", vm)
         self.assertIn("public func resetActivePhotographicStylePreset()", vm)
 
-        # 4. Native iOS 18 Bottom-Deck 2D Control Pad UI (English Top HUD without dividers, viewfinder swipe, Animatable blurred cursor)
+        # 4. Native iOS 18 Bottom-Deck 2D Control Pad UI (5x5 live-mirror icon, GPU split-screen wipe, English Top HUD, Animatable blurred cursor)
         pad = source("Views/PhotographicStylesPadView.swift")
         for token in [
+            "private struct PhotographicStyleLiveIconCanvas: View, Animatable",
             "public struct PhotographicStyleQuickTriggerButton: View",
             "public struct PhotographicStylesTopHUDBar: View",
+            "private struct PhotographicStyleRoundedSplitSeam: View",
             "public struct PhotographicStylesViewfinderOverlay: View",
             "public struct PhotographicStylesBottomControlDeck: View",
             'label: "TONE"',
@@ -567,10 +569,15 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             "monospacedDigit()",
             "PhotographicPalettePillSlider",
             "triggerPadGridTick()",
+            "FillStyle(eoFill: true)",
         ]:
             self.assertIn(token, pad)
         self.assertNotIn("electricCyan", pad)
         self.assertNotIn("iridescentRainbow", pad)
+
+        self.assertIn("photographicStyleOverride: splitTransition.leftStyle", preview)
+        self.assertIn("photographicStyleOverride: splitTransition.rightStyle", preview)
+        self.assertIn("public func finishPhotographicStyleSwipe(", vm)
 
         main_view = source("Views/CameraMainView.swift")
         self.assertIn("PhotographicStyleQuickTriggerButton(viewModel: viewModel)", main_view)

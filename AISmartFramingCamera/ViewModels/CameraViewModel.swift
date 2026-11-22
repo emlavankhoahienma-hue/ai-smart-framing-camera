@@ -10,6 +10,72 @@ import UniformTypeIdentifiers
 import simd
 import Vision
 
+@MainActor
+private final class PhotographicStyleSwipeAnimator: NSObject {
+    private var displayLink: CADisplayLink?
+    private var startTime: CFTimeInterval = 0
+    private var duration: CFTimeInterval = 0.22
+    private var startSplit: Float = 0.5
+    private var targetSplit: Float = 0.0
+    private var baseTransition: PhotographicStyleSplitTransition = .inactive
+    private var isSwipingToNext: Bool = true
+    private var onStep: ((PhotographicStyleSplitTransition) -> Void)?
+    private var onComplete: (() -> Void)?
+
+    func start(
+        from transition: PhotographicStyleSplitTransition,
+        targetSplit: Float,
+        isSwipingToNext: Bool,
+        duration: CFTimeInterval = 0.22,
+        onStep: @escaping (PhotographicStyleSplitTransition) -> Void,
+        onComplete: @escaping () -> Void
+    ) {
+        cancel()
+        self.baseTransition = transition
+        self.startSplit = transition.splitPosition
+        self.targetSplit = targetSplit
+        self.isSwipingToNext = isSwipingToNext
+        self.duration = max(0.08, duration)
+        self.startTime = CACurrentMediaTime()
+        self.onStep = onStep
+        self.onComplete = onComplete
+
+        let link = CADisplayLink(target: self, selector: #selector(handleFrame(_:)))
+        link.add(to: .main, forMode: .common)
+        self.displayLink = link
+    }
+
+    func cancel() {
+        displayLink?.invalidate()
+        displayLink = nil
+        onStep = nil
+        onComplete = nil
+    }
+
+    @objc private func handleFrame(_ link: CADisplayLink) {
+        let elapsed = CACurrentMediaTime() - startTime
+        let rawT = min(1.0, max(0.0, elapsed / duration))
+        // Smooth cubic ease-out khớp vật lý trượt trang của Camera iOS 18
+        let inv = 1.0 - rawT
+        let eased = Float(1.0 - inv * inv * inv)
+        let currentSplit = startSplit + (targetSplit - startSplit) * eased
+
+        let morph = isSwipingToNext ? (1.0 - currentSplit) : currentSplit
+        let dominant = currentSplit < 0.5 ? baseTransition.rightStyle : baseTransition.leftStyle
+        var updated = baseTransition
+        updated.splitPosition = currentSplit
+        updated.morphProgress = morph
+        updated.dominantStyle = dominant
+        onStep?(updated)
+
+        if rawT >= 1.0 {
+            let finish = onComplete
+            cancel()
+            finish?()
+        }
+    }
+}
+
 private struct CameraFrameProcessingConfiguration: Sendable {
     var isHibernating = false
     var isSettingsVisible = false
@@ -355,16 +421,72 @@ public final class CameraViewModel: ObservableObject {
             if isShowingPhotographicStylePad {
                 if isShowingFilmDrawer { isShowingFilmDrawer = false }
                 if isFunctionDrawerOpen { isFunctionDrawerOpen = false }
-            } else if activePhotographicStyleAxis != .none {
-                activePhotographicStyleAxis = .none
+            } else {
+                if activePhotographicStyleAxis != .none {
+                    activePhotographicStyleAxis = .none
+                }
+                cancelPhotographicStyleSwipe()
             }
         }
     }
     @Published public var activePhotographicStyleAxis: PhotographicStyleActiveAxis = .none
+    @Published public var photographicStyleSplit: PhotographicStyleSplitTransition = .inactive
+    private let photographicStyleSwipeAnimator = PhotographicStyleSwipeAnimator()
+
+    public func photographicStyleState(for preset: PhotographicStylePreset) -> PhotographicStyleState {
+        photographicStyleMemory[preset] ?? PhotographicStyleState.defaultState(for: preset)
+    }
 
     public func selectPhotographicStylePreset(_ preset: PhotographicStylePreset) {
-        let restored = photographicStyleMemory[preset] ?? PhotographicStyleState.defaultState(for: preset)
-        photographicStyle = restored
+        cancelPhotographicStyleSwipe()
+        photographicStyle = photographicStyleState(for: preset)
+    }
+
+    public func updatePhotographicStyleSplit(_ split: PhotographicStyleSplitTransition) {
+        photographicStyleSwipeAnimator.cancel()
+        photographicStyleSplit = split
+        previewContainerView?.updatePhotographicStyleSplit(split)
+    }
+
+    public func cancelPhotographicStyleSwipe() {
+        photographicStyleSwipeAnimator.cancel()
+        if photographicStyleSplit.isActive {
+            photographicStyleSplit = .inactive
+            previewContainerView?.updatePhotographicStyleSplit(.inactive)
+        }
+    }
+
+    /// Trượt nốt ranh chia đôi GPU (60/120 FPS) về sát mép 0.0 hoặc 1.0 sau khi nhả tay rồi chốt phong cách mới.
+    public func finishPhotographicStyleSwipe(
+        from split: PhotographicStyleSplitTransition,
+        targetSplitPosition: Float,
+        isSwipingToNext: Bool,
+        commitPreset: PhotographicStylePreset?
+    ) {
+        let distance = abs(targetSplitPosition - split.splitPosition)
+        let duration = max(0.10, min(0.24, Double(distance) * 0.28))
+        if commitPreset != nil {
+            haptics.triggerSelectionChange()
+        }
+        photographicStyleSwipeAnimator.start(
+            from: split,
+            targetSplit: targetSplitPosition,
+            isSwipingToNext: isSwipingToNext,
+            duration: duration,
+            onStep: { [weak self] stepSplit in
+                guard let self else { return }
+                self.photographicStyleSplit = stepSplit
+                self.previewContainerView?.updatePhotographicStyleSplit(stepSplit)
+            },
+            onComplete: { [weak self] in
+                guard let self else { return }
+                if let commitPreset {
+                    self.photographicStyle = self.photographicStyleState(for: commitPreset)
+                }
+                self.photographicStyleSplit = .inactive
+                self.previewContainerView?.updatePhotographicStyleSplit(.inactive)
+            }
+        )
     }
 
     @discardableResult

@@ -1,7 +1,84 @@
 import SwiftUI
 import UIKit
 
-// MARK: - 1. Quick Trigger Button (3x3 Dot Grid with Live Active Coordinate Dot)
+// MARK: - 1. Native iOS 18 Photographic Styles Glyph (5x5 Micro-Dot Grid + Live Continuous Cursor Mirror)
+private struct PhotographicStyleLiveIconCanvas: View, Animatable {
+    var tone: Float
+    var color: Float
+    let isOpen: Bool
+    let isDraggingPad: Bool
+
+    var animatableData: AnimatablePair<Double, Double> {
+        get { AnimatablePair(Double(tone), Double(color)) }
+        set {
+            tone = Float(newValue.first)
+            color = Float(newValue.second)
+        }
+    }
+
+    var body: some View {
+        Canvas { context, size in
+            let w = size.width
+            let h = size.height
+            let strokeWidth: CGFloat = 1.45
+            let cornerR: CGFloat = 5.6
+
+            // Màu chuẩn Camera iOS 18: trắng tinh khi đóng, vàng hổ phách khi mở
+            let accentGold = Color(red: 1.0, green: 0.84, blue: 0.25)
+            let frameColor = isOpen ? accentGold : Color.white.opacity(0.94)
+            let gridDotColor = isOpen ? accentGold.opacity(0.46) : Color.white.opacity(0.46)
+            let cursorColor = isOpen ? accentGold : Color.white
+
+            // 1. Viền khung vuông bo góc tối giản (không hộp kính nặng kiểu AI)
+            let borderRect = CGRect(
+                x: strokeWidth * 0.5,
+                y: strokeWidth * 0.5,
+                width: w - strokeWidth,
+                height: h - strokeWidth
+            )
+            context.stroke(
+                Path(roundedRect: borderRect, cornerRadius: cornerR, style: .continuous),
+                with: .color(frameColor),
+                lineWidth: strokeWidth
+            )
+
+            // 2. Lưới 5x5 chấm siêu mảnh đều nhau bên trong khung (25 chấm giống hệt icon gốc)
+            let gridInset: CGFloat = 4.6
+            let innerW = max(1, w - gridInset * 2.0)
+            let innerH = max(1, h - gridInset * 2.0)
+            let stepX = innerW / 4.0
+            let stepY = innerH / 4.0
+
+            let normX = CGFloat((max(-1.0, min(1.0, color)) + 1.0) * 0.5)
+            let normY = CGFloat((1.0 - max(-1.0, min(1.0, tone))) * 0.5)
+            let cursorX = gridInset + normX * innerW
+            let cursorY = gridInset + normY * innerH
+
+            let microR: CGFloat = 0.68
+            for row in 0..<5 {
+                for col in 0..<5 {
+                    let dx = gridInset + CGFloat(col) * stepX
+                    let dy = gridInset + CGFloat(row) * stepY
+                    // Giấu chấm nhỏ trùng ngay dưới tâm chấm con trỏ để sắc nét tuyệt đối
+                    if hypot(dx - cursorX, dy - cursorY) < 1.65 { continue }
+                    let dotRect = CGRect(x: dx - microR, y: dy - microR, width: microR * 2, height: microR * 2)
+                    context.fill(Path(ellipseIn: dotRect), with: .color(gridDotColor))
+                }
+            }
+
+            // 3. Chấm con trỏ thu nhỏ di chuyển liên tục theo tọa độ (color, tone) thực tế của ô Pad bên dưới
+            if isDraggingPad {
+                let haloR: CGFloat = 3.2
+                let haloRect = CGRect(x: cursorX - haloR, y: cursorY - haloR, width: haloR * 2, height: haloR * 2)
+                context.fill(Path(ellipseIn: haloRect), with: .color(cursorColor.opacity(0.32)))
+            }
+            let cursorR: CGFloat = isDraggingPad ? 2.15 : 1.9
+            let cursorRect = CGRect(x: cursorX - cursorR, y: cursorY - cursorR, width: cursorR * 2, height: cursorR * 2)
+            context.fill(Path(ellipseIn: cursorRect), with: .color(cursorColor))
+        }
+    }
+}
+
 public struct PhotographicStyleQuickTriggerButton: View {
     @ObservedObject var viewModel: CameraViewModel
     let isCompactTopBarVariant: Bool
@@ -11,27 +88,17 @@ public struct PhotographicStyleQuickTriggerButton: View {
         self.isCompactTopBarVariant = isCompactTopBarVariant
     }
 
-    private var isStyleActive: Bool {
-        !viewModel.photographicStyle.isIdentity
-    }
-
-    private var activeDotColumn: Int {
-        let c = viewModel.photographicStyle.color
-        if c < -0.22 { return 0 }
-        if c > 0.22 { return 2 }
-        return 1
-    }
-
-    private var activeDotRow: Int {
-        let t = viewModel.photographicStyle.tone
-        if t > 0.22 { return 0 }
-        if t < -0.22 { return 2 }
-        return 1
+    private var displayedStyle: PhotographicStyleState {
+        viewModel.photographicStyleSplit.isActive
+            ? viewModel.photographicStyleSplit.dominantStyle
+            : viewModel.photographicStyle
     }
 
     public var body: some View {
         let availability = viewModel.featureAvailability(.photographicStyles)
-        let isHighlighted = availability.isAvailable && (isStyleActive || viewModel.isShowingPhotographicStylePad)
+        let style = displayedStyle
+        let isOpen = viewModel.isShowingPhotographicStylePad
+        let isDraggingPad = viewModel.activePhotographicStyleAxis == .pad2D
 
         Button(action: {
             viewModel.attemptFeature(.photographicStyles) {
@@ -41,62 +108,31 @@ public struct PhotographicStyleQuickTriggerButton: View {
                 }
             }
         }) {
-            ZStack {
-                if isCompactTopBarVariant {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.black.opacity(0.60))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(
-                                    isHighlighted ? AlignTheme.studioAccent : Color.white.opacity(0.24),
-                                    lineWidth: isHighlighted ? 1.0 : 0.7
-                                )
-                        )
-                } else {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(isHighlighted ? AlignTheme.studioAccentSoft : AlignTheme.studioGlassTint.opacity(0.52))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .stroke(
-                                    isHighlighted ? AlignTheme.studioAccentBorder : Color.white.opacity(0.16),
-                                    lineWidth: isHighlighted ? 0.85 : 0.65
-                                )
-                        )
-                }
-
-                VStack(spacing: 3.0) {
-                    ForEach(0..<3, id: \.self) { row in
-                        HStack(spacing: 3.0) {
-                            ForEach(0..<3, id: \.self) { col in
-                                let isActiveCell = (isStyleActive || viewModel.isShowingPhotographicStylePad)
-                                    && row == activeDotRow
-                                    && col == activeDotColumn
-                                Circle()
-                                    .fill(
-                                        isActiveCell
-                                            ? AlignTheme.studioAccent
-                                            : Color.white.opacity(isHighlighted ? 0.88 : 0.76)
-                                    )
-                                    .frame(width: isActiveCell ? 3.8 : 2.1, height: isActiveCell ? 3.8 : 2.1)
-                            }
-                        }
-                    }
-                }
-            }
-            .frame(width: 30, height: 30)
+            PhotographicStyleLiveIconCanvas(
+                tone: style.tone,
+                color: style.color,
+                isOpen: isOpen,
+                isDraggingPad: isDraggingPad
+            )
+            .frame(width: 23, height: 23)
+            .animation(.interactiveSpring(response: 0.11, dampingFraction: 0.88), value: style.tone)
+            .animation(.interactiveSpring(response: 0.11, dampingFraction: 0.88), value: style.color)
+            .animation(.easeOut(duration: 0.14), value: isDraggingPad)
+            .shadow(
+                color: isCompactTopBarVariant ? Color.clear : Color.black.opacity(0.55),
+                radius: isCompactTopBarVariant ? 0 : 2.5,
+                y: isCompactTopBarVariant ? 0 : 1
+            )
+            .frame(width: 34, height: 34)
             .opacity(availability.isAvailable ? 1.0 : 0.34)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
         .accessibilityLabel(
-            viewModel.isShowingPhotographicStylePad
+            isOpen
                 ? "Ẩn Photographic Styles"
-                : (isStyleActive
-                    ? "Photographic Styles: \(viewModel.photographicStyle.preset.displayName)"
+                : (!style.isIdentity
+                    ? "Photographic Styles: \(style.preset.displayName)"
                     : "Mở Photographic Styles")
         )
     }
@@ -113,14 +149,16 @@ public struct PhotographicStylesTopHUDBar: View {
     }
 
     public var body: some View {
-        let style = viewModel.photographicStyle
+        let style = viewModel.photographicStyleSplit.isActive
+            ? viewModel.photographicStyleSplit.dominantStyle
+            : viewModel.photographicStyle
         let axis = viewModel.activePhotographicStyleAxis
         let isPadDragging = axis == .pad2D
         let isPaletteDragging = axis == .palette
 
         HStack(spacing: 6) {
             if !compact {
-                Color.clear.frame(width: 30, height: 30)
+                Color.clear.frame(width: 34, height: 34)
             }
 
             Spacer(minLength: 0)
@@ -179,7 +217,7 @@ public struct PhotographicStylesTopHUDBar: View {
 
             Spacer(minLength: 0)
 
-            // Right-edge active 3x3 grid toggle button (tap to dismiss)
+            // Right-edge native 5x5 live-mirror icon button (tap to dismiss)
             PhotographicStyleQuickTriggerButton(viewModel: viewModel, isCompactTopBarVariant: true)
         }
         .frame(maxWidth: .infinity)
@@ -215,14 +253,62 @@ public struct PhotographicStylesTopHUDBar: View {
     }
 }
 
-// MARK: - 3. Unobstructed Viewfinder Overlay (Story-Style Horizontal Swipe + Minimal Style Badge & Dots)
+// MARK: - Rounded Split-Screen Seam Canvas (iOS 18 Camera Continuous Squircle Dual-Card Mask)
+private struct PhotographicStyleRoundedSplitSeam: View {
+    let splitPosition: CGFloat
+
+    var body: some View {
+        Canvas { context, size in
+            let w = size.width
+            let h = size.height
+            guard splitPosition > 0.002 && splitPosition < 0.998 else { return }
+
+            let gap: CGFloat = 5.5
+            let splitX = splitPosition * w
+            let leftEdge = max(0, splitX - gap * 0.5)
+            let rightEdge = min(w, splitX + gap * 0.5)
+
+            // Dùng evenOdd mask khoét 2 thẻ squircle `.continuous` khớp tuyệt đối bo góc 20pt của khung ngắm 4:3
+            var maskPath = Path()
+            maskPath.addRect(CGRect(origin: .zero, size: size))
+
+            if leftEdge > 1.0 {
+                let rL = min(20.0, leftEdge * 0.5)
+                maskPath.addRoundedRect(
+                    in: CGRect(x: 0, y: 0, width: leftEdge, height: h),
+                    cornerSize: CGSize(width: rL, height: min(20.0, h * 0.5)),
+                    style: .continuous
+                )
+            }
+
+            let rightW = w - rightEdge
+            if rightW > 1.0 {
+                let rR = min(20.0, rightW * 0.5)
+                maskPath.addRoundedRect(
+                    in: CGRect(x: rightEdge, y: 0, width: rightW, height: h),
+                    cornerSize: CGSize(width: rR, height: min(20.0, h * 0.5)),
+                    style: .continuous
+                )
+            }
+
+            context.fill(
+                maskPath,
+                with: .color(AlignTheme.studioCanvas),
+                style: FillStyle(eoFill: true)
+            )
+        }
+    }
+}
+
+// MARK: - 3. Unobstructed Viewfinder Overlay (True 60 FPS GPU Live Split-Screen Wipe + Style Badge & Dots)
 public struct PhotographicStylesViewfinderOverlay: View {
     @ObservedObject var viewModel: CameraViewModel
     let topInset: CGFloat
     let bottomInset: CGFloat
 
-    @State private var swipeOffsetX: CGFloat = 0
     @State private var isSwipingHorizontally: Bool = false
+    @State private var swipeStartPresetIndex: Int = 0
+    @State private var bounceOffsetX: CGFloat = 0
 
     public init(viewModel: CameraViewModel, topInset: CGFloat, bottomInset: CGFloat) {
         self.viewModel = viewModel
@@ -232,28 +318,20 @@ public struct PhotographicStylesViewfinderOverlay: View {
 
     private var allPresets: [PhotographicStylePreset] { PhotographicStylePreset.allCases }
 
-    private var currentIndex: Int {
-        allPresets.firstIndex(of: viewModel.photographicStyle.preset) ?? 0
-    }
-
-    private var previewedPreset: PhotographicStylePreset {
-        guard isSwipingHorizontally else { return viewModel.photographicStyle.preset }
-        if swipeOffsetX < -44, currentIndex + 1 < allPresets.count {
-            return allPresets[currentIndex + 1]
-        }
-        if swipeOffsetX > 44, currentIndex - 1 >= 0 {
-            return allPresets[currentIndex - 1]
-        }
-        return viewModel.photographicStyle.preset
+    private var displayedStyle: PhotographicStyleState {
+        viewModel.photographicStyleSplit.isActive
+            ? viewModel.photographicStyleSplit.dominantStyle
+            : viewModel.photographicStyle
     }
 
     public var body: some View {
         GeometryReader { geo in
             let w = max(1, geo.size.width)
-            let h = max(1, geo.size.height)
+            let activeSplit = viewModel.photographicStyleSplit
+            let shownPreset = displayedStyle.preset
 
             ZStack {
-                // Full-viewfinder swipe layer: vuốt trái/phải đổi phong cách mượt như lướt trang, chạm nhẹ để ẩn
+                // Full-viewfinder live split-wipe layer: vuốt trái/phải chia đôi camera theo tay thời gian thực, chạm nhẹ để ẩn
                 Color.clear
                     .contentShape(Rectangle())
                     .highPriorityGesture(
@@ -261,15 +339,64 @@ public struct PhotographicStylesViewfinderOverlay: View {
                             .onChanged { value in
                                 let dx = value.translation.width
                                 let dy = value.translation.height
-                                if !isSwipingHorizontally && abs(dx) > 10 && abs(dx) > abs(dy) * 1.15 {
+                                if !isSwipingHorizontally && abs(dx) > 8 && abs(dx) > abs(dy) * 1.1 {
                                     isSwipingHorizontally = true
+                                    viewModel.cancelPhotographicStyleSwipe()
+                                    swipeStartPresetIndex = allPresets.firstIndex(of: viewModel.photographicStyle.preset) ?? 0
                                 }
-                                if isSwipingHorizontally {
-                                    // Tạo lực cản nhẹ ở 2 đầu danh sách preset
-                                    let atStart = currentIndex == 0 && dx > 0
-                                    let atEnd = currentIndex == allPresets.count - 1 && dx < 0
-                                    let resistance: CGFloat = (atStart || atEnd) ? 0.25 : 0.85
-                                    swipeOffsetX = dx * resistance
+                                guard isSwipingHorizontally else { return }
+
+                                let idx = swipeStartPresetIndex
+                                let currentState = viewModel.photographicStyleState(for: allPresets[idx])
+
+                                if dx < 0 {
+                                    // Vuốt sang trái -> kéo phong cách kế tiếp từ mép phải sang trái (1.0 -> 0.0)
+                                    if idx + 1 < allPresets.count {
+                                        bounceOffsetX = 0
+                                        let nextPreset = allPresets[idx + 1]
+                                        let nextState = viewModel.photographicStyleState(for: nextPreset)
+                                        let progress = Float(max(0.0, min(1.0, -dx / w)))
+                                        let splitPos = 1.0 - progress
+                                        let dominant = progress >= 0.5 ? nextState : currentState
+                                        viewModel.updatePhotographicStyleSplit(
+                                            PhotographicStyleSplitTransition(
+                                                isActive: true,
+                                                leftStyle: currentState,
+                                                rightStyle: nextState,
+                                                splitPosition: splitPos,
+                                                dominantStyle: dominant,
+                                                incomingPreset: nextPreset,
+                                                morphProgress: progress
+                                            )
+                                        )
+                                    } else {
+                                        viewModel.cancelPhotographicStyleSwipe()
+                                        bounceOffsetX = dx * 0.16
+                                    }
+                                } else if dx > 0 {
+                                    // Vuốt sang phải -> kéo phong cách trước đó từ mép trái sang phải (0.0 -> 1.0)
+                                    if idx - 1 >= 0 {
+                                        bounceOffsetX = 0
+                                        let prevPreset = allPresets[idx - 1]
+                                        let prevState = viewModel.photographicStyleState(for: prevPreset)
+                                        let progress = Float(max(0.0, min(1.0, dx / w)))
+                                        let splitPos = progress
+                                        let dominant = progress >= 0.5 ? prevState : currentState
+                                        viewModel.updatePhotographicStyleSplit(
+                                            PhotographicStyleSplitTransition(
+                                                isActive: true,
+                                                leftStyle: prevState,
+                                                rightStyle: currentState,
+                                                splitPosition: splitPos,
+                                                dominantStyle: dominant,
+                                                incomingPreset: prevPreset,
+                                                morphProgress: progress
+                                            )
+                                        )
+                                    } else {
+                                        viewModel.cancelPhotographicStyleSwipe()
+                                        bounceOffsetX = dx * 0.16
+                                    }
                                 }
                             }
                             .onEnded { value in
@@ -277,17 +404,39 @@ public struct PhotographicStylesViewfinderOverlay: View {
                                 let dy = value.translation.height
                                 let predictedX = value.predictedEndTranslation.width
                                 let wasSwipe = isSwipingHorizontally
+                                let idx = swipeStartPresetIndex
 
-                                withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
-                                    swipeOffsetX = 0
-                                    isSwipingHorizontally = false
+                                isSwipingHorizontally = false
+                                withAnimation(.spring(response: 0.26, dampingFraction: 0.82)) {
+                                    bounceOffsetX = 0
                                 }
 
                                 if wasSwipe {
-                                    if dx < -38 || predictedX < -95 {
-                                        viewModel.stepPhotographicStylePreset(by: 1)
-                                    } else if dx > 38 || predictedX > 95 {
-                                        viewModel.stepPhotographicStylePreset(by: -1)
+                                    let currentSplit = viewModel.photographicStyleSplit
+                                    if currentSplit.isActive {
+                                        if dx < 0, idx + 1 < allPresets.count {
+                                            let progress = -dx / w
+                                            let predictedProgress = -predictedX / w
+                                            let shouldCommit = progress >= 0.30 || predictedProgress >= 0.44
+                                            viewModel.finishPhotographicStyleSwipe(
+                                                from: currentSplit,
+                                                targetSplitPosition: shouldCommit ? 0.0 : 1.0,
+                                                isSwipingToNext: true,
+                                                commitPreset: shouldCommit ? allPresets[idx + 1] : nil
+                                            )
+                                        } else if dx > 0, idx - 1 >= 0 {
+                                            let progress = dx / w
+                                            let predictedProgress = predictedX / w
+                                            let shouldCommit = progress >= 0.30 || predictedProgress >= 0.44
+                                            viewModel.finishPhotographicStyleSwipe(
+                                                from: currentSplit,
+                                                targetSplitPosition: shouldCommit ? 1.0 : 0.0,
+                                                isSwipingToNext: false,
+                                                commitPreset: shouldCommit ? allPresets[idx - 1] : nil
+                                            )
+                                        } else {
+                                            viewModel.cancelPhotographicStyleSwipe()
+                                        }
                                     }
                                 } else if hypot(dx, dy) < 9 {
                                     // Chạm nhẹ vùng trống khung ngắm -> thu gọn Pad để chụp bình thường
@@ -299,27 +448,15 @@ public struct PhotographicStylesViewfinderOverlay: View {
                             }
                     )
 
-                // Đường ranh chia dọc mảnh lướt ngang khung ngắm khi vuốt chuyển phong cách (như Camera iOS 18)
-                if isSwipingHorizontally && abs(swipeOffsetX) > 6 {
-                    let curtainX: CGFloat = swipeOffsetX < 0
-                        ? max(0, min(w, w + swipeOffsetX * 1.35))
-                        : max(0, min(w, swipeOffsetX * 1.35))
-
-                    Rectangle()
-                        .fill(Color.black.opacity(0.68))
-                        .frame(width: 2.0, height: h)
-                        .overlay(
-                            Rectangle()
-                                .fill(Color.white.opacity(0.26))
-                                .frame(width: 0.6, height: h)
-                        )
-                        .position(x: curtainX, y: h * 0.5)
+                // Đường ranh chia đôi đen bo 4 góc tròn theo đúng tọa độ GPU splitPosition (như iOS 18 Camera)
+                if activeSplit.isActive {
+                    PhotographicStyleRoundedSplitSeam(splitPosition: CGFloat(activeSplit.splitPosition))
                         .allowsHitTesting(false)
                 }
 
                 // Nhóm phong cách tinh gọn trên đỉnh khung ngắm (STANDARD / UNDERTONE / MOOD)
                 VStack {
-                    Text(previewedPreset.group.badgeTitle)
+                    Text(shownPreset.group.badgeTitle)
                         .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                         .tracking(0.8)
                         .foregroundColor(AlignTheme.studioInkPrimary.opacity(0.90))
@@ -331,13 +468,13 @@ public struct PhotographicStylesViewfinderOverlay: View {
                                 .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 0.5))
                         )
                         .padding(.top, topInset)
-                        .animation(.easeOut(duration: 0.16), value: previewedPreset.group)
+                        .animation(.easeOut(duration: 0.16), value: shownPreset.group)
 
                     Spacer()
 
                     // Tên phong cách + dãy chấm trang ở sát đáy khung ngắm (gọn nhẹ, không che ảnh)
                     VStack(spacing: 6) {
-                        Text(previewedPreset.displayName)
+                        Text(shownPreset.displayName)
                             .font(.system(size: 11.5, weight: .semibold, design: .rounded))
                             .foregroundColor(AlignTheme.studioInkPrimary)
                             .padding(.horizontal, 10)
@@ -350,15 +487,15 @@ public struct PhotographicStylesViewfinderOverlay: View {
                                             .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
                                     )
                             )
-                            .offset(x: swipeOffsetX * 0.18)
-                            .id(previewedPreset.id)
+                            .offset(x: bounceOffsetX * 0.5)
+                            .id(shownPreset.id)
                             .transition(.opacity)
-                            .animation(.easeOut(duration: 0.16), value: previewedPreset.id)
+                            .animation(.easeOut(duration: 0.14), value: shownPreset.id)
 
                         // Dãy chấm trang iOS Camera (mốc Standard hình vuông rỗng, các phong cách khác hình tròn)
                         HStack(spacing: 6.5) {
                             ForEach(allPresets) { preset in
-                                let isSelected = preset == viewModel.photographicStyle.preset
+                                let isSelected = preset == shownPreset
                                 let hasEdits = viewModel.hasSessionEditsForPhotographicStyle(preset)
 
                                 Button(action: {
@@ -417,7 +554,8 @@ public struct PhotographicStylesBottomControlDeck: View {
     private var padSide: CGFloat { compact ? 92 : 106 }
 
     public var body: some View {
-        let style = viewModel.photographicStyle
+        let split = viewModel.photographicStyleSplit
+        let style = split.isActive ? split.dominantStyle : viewModel.photographicStyle
 
         HStack(alignment: .center, spacing: 0) {
             // Left: Back / Hide button (<) -> thu gọn về cụm nút chụp bình thường

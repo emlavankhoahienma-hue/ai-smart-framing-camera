@@ -254,10 +254,11 @@ public final class FilmFilterEngine: @unchecked Sendable {
         preset: FilmPreset,
         intensity: Float = 1.0,
         isRealtimePreview: Bool = false,
-        applyUserGrade: Bool = true
+        applyUserGrade: Bool = true,
+        photographicStyleOverride: PhotographicStyleState? = nil
     ) -> CIImage? {
         let wb = applyUserGrade ? activeSoftwareWhiteBalance : .inactive
-        let photoStyle = applyUserGrade ? activePhotographicStyle : .standard
+        let photoStyle = photographicStyleOverride ?? (applyUserGrade ? activePhotographicStyle : .standard)
         let tuning = applyUserGrade ? activeFilmTuning : .neutral
         let hasPreset = preset != .standard && preset != .aiFullAuto && preset != .proColorGrade && intensity > 0.001
         guard hasPreset || !wb.isIdentity || !photoStyle.isIdentity || !tuning.isIdentity else { return inputImage }
