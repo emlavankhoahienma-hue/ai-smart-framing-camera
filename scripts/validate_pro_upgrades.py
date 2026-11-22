@@ -550,15 +550,22 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         self.assertIn("@Published public var isShowingPhotographicStylePad: Bool = false", vm)
         self.assertIn("public func resetActivePhotographicStylePreset()", vm)
 
-        # 4. Native iOS 2D Control Pad UI (no AI/neon slop, Gaussian proximity Canvas, hysteresis snap, numbered slider)
+        # 4. Native iOS 18 Bottom-Deck 2D Control Pad UI (English Top HUD without dividers, viewfinder swipe, Animatable blurred cursor)
         pad = source("Views/PhotographicStylesPadView.swift")
         for token in [
             "public struct PhotographicStyleQuickTriggerButton: View",
-            "public struct PhotographicStylesControlPadOverlay: View",
+            "public struct PhotographicStylesTopHUDBar: View",
+            "public struct PhotographicStylesViewfinderOverlay: View",
+            "public struct PhotographicStylesBottomControlDeck: View",
+            'label: "TONE"',
+            'label: "COLOR"',
+            'label: "PALETTE"',
+            "PhotographicStyleDotGridCanvas: View, Animatable",
+            "PhotographicStyleLuminousCursor: View, Animatable",
             "snapEnterDeadzone: Float = 0.04",
             "snapExitDeadzone: Float = 0.065",
             "monospacedDigit()",
-            "PhotographicPaletteSlider",
+            "PhotographicPalettePillSlider",
             "triggerPadGridTick()",
         ]:
             self.assertIn(token, pad)
@@ -567,7 +574,9 @@ class ProCameraUpgradesContracts(unittest.TestCase):
 
         main_view = source("Views/CameraMainView.swift")
         self.assertIn("PhotographicStyleQuickTriggerButton(viewModel: viewModel)", main_view)
-        self.assertIn("PhotographicStylesControlPadOverlay(viewModel: viewModel, compact: layout.isCompact)", main_view)
+        self.assertIn("PhotographicStylesTopHUDBar(viewModel: viewModel, compact: layout.isCompact)", main_view)
+        self.assertIn("PhotographicStylesViewfinderOverlay(", main_view)
+        self.assertIn("PhotographicStylesBottomControlDeck(viewModel: viewModel, compact: layout.isCompact)", main_view)
 
         # 5. All 3 new Swift files registered cleanly in project.pbxproj
         pbx = PBXPROJ.read_text(encoding="utf-8")

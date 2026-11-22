@@ -355,13 +355,29 @@ public final class CameraViewModel: ObservableObject {
             if isShowingPhotographicStylePad {
                 if isShowingFilmDrawer { isShowingFilmDrawer = false }
                 if isFunctionDrawerOpen { isFunctionDrawerOpen = false }
+            } else if activePhotographicStyleAxis != .none {
+                activePhotographicStyleAxis = .none
             }
         }
     }
+    @Published public var activePhotographicStyleAxis: PhotographicStyleActiveAxis = .none
 
     public func selectPhotographicStylePreset(_ preset: PhotographicStylePreset) {
         let restored = photographicStyleMemory[preset] ?? PhotographicStyleState.defaultState(for: preset)
         photographicStyle = restored
+    }
+
+    @discardableResult
+    public func stepPhotographicStylePreset(by delta: Int) -> Bool {
+        let all = PhotographicStylePreset.allCases
+        guard let currentIndex = all.firstIndex(of: photographicStyle.preset) else { return false }
+        let nextIndex = currentIndex + delta
+        guard nextIndex >= 0 && nextIndex < all.count else { return false }
+        haptics.triggerSelectionChange()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+            selectPhotographicStylePreset(all[nextIndex])
+        }
+        return true
     }
 
     public func updatePhotographicStyle(tone: Float, color: Float) {

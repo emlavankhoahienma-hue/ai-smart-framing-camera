@@ -2,6 +2,13 @@ import Foundation
 import SwiftUI
 import simd
 
+/// Trục đang được kéo trên Photographic Styles Control Pad để làm nổi đúng thông số trên Top HUD.
+public enum PhotographicStyleActiveAxis: Equatable, Sendable {
+    case none
+    case pad2D
+    case palette
+}
+
 /// Phân nhóm bản chất quang học của 8 Photographic Styles (giống triết lý Undertones vs Moods trên iOS Camera).
 public enum PhotographicStyleGroup: String, Sendable {
     case standard
@@ -10,9 +17,9 @@ public enum PhotographicStyleGroup: String, Sendable {
 
     public var badgeTitle: String {
         switch self {
-        case .standard: return "CHUẨN"
-        case .undertone: return "SẮC DA"
-        case .mood: return "TÂM TRẠNG"
+        case .standard: return "STANDARD"
+        case .undertone: return "UNDERTONE"
+        case .mood: return "MOOD"
         }
     }
 }
@@ -82,14 +89,96 @@ public enum PhotographicStylePreset: String, CaseIterable, Identifiable, Sendabl
     /// Sắc độ nhẹ (không chói neon) cho góc phải nền Control Pad & track thanh Bảng màu.
     public var padTintColor: Color {
         switch self {
-        case .standard:     return Color(red: 0.46, green: 0.72, blue: 0.90) // Xanh trời dịu như Camera iOS
-        case .warmAmber:    return Color(red: 0.88, green: 0.67, blue: 0.40) // Hổ phách ấm mịn
-        case .softRose:     return Color(red: 0.88, green: 0.60, blue: 0.64) // Hồng phấn dịu
-        case .neutral:      return Color(red: 0.74, green: 0.73, blue: 0.70) // Xám ấm trung tính
-        case .richContrast: return Color(red: 0.62, green: 0.68, blue: 0.76) // Than ánh thép
-        case .vibrant:      return Color(red: 0.42, green: 0.76, blue: 0.86) // Xanh trong rực nhẹ
-        case .coolMood:     return Color(red: 0.44, green: 0.62, blue: 0.84) // Xanh trầm điện ảnh
-        case .starkBW:      return Color(red: 0.72, green: 0.72, blue: 0.74) // Bạc đơn sắc
+        case .standard:     return Color(red: 0.48, green: 0.68, blue: 0.86)
+        case .warmAmber:    return Color(red: 0.90, green: 0.62, blue: 0.34)
+        case .softRose:     return Color(red: 0.92, green: 0.62, blue: 0.60)
+        case .neutral:      return Color(red: 0.66, green: 0.64, blue: 0.72)
+        case .richContrast: return Color(red: 0.54, green: 0.64, blue: 0.76)
+        case .vibrant:      return Color(red: 0.88, green: 0.48, blue: 0.46)
+        case .coolMood:     return Color(red: 0.42, green: 0.66, blue: 0.88)
+        case .starkBW:      return Color(red: 0.72, green: 0.73, blue: 0.76)
+        }
+    }
+
+    /// Màu góc trên-phải của ô Pad 2D (vùng sáng rực đặc trưng từng phong cách iOS Camera).
+    public var padTopRightColor: Color {
+        switch self {
+        case .standard:     return Color(red: 0.68, green: 0.74, blue: 0.82)
+        case .warmAmber:    return Color(red: 0.95, green: 0.68, blue: 0.36)
+        case .softRose:     return Color(red: 0.95, green: 0.68, blue: 0.64)
+        case .neutral:      return Color(red: 0.72, green: 0.70, blue: 0.78)
+        case .richContrast: return Color(red: 0.60, green: 0.68, blue: 0.78)
+        case .vibrant:      return Color(red: 0.94, green: 0.48, blue: 0.50)
+        case .coolMood:     return Color(red: 0.48, green: 0.76, blue: 0.94)
+        case .starkBW:      return Color(red: 0.78, green: 0.79, blue: 0.82)
+        }
+    }
+
+    /// Màu góc dưới-phải của ô Pad 2D (vùng sâu tối đặc trưng từng phong cách).
+    public var padBottomRightColor: Color {
+        switch self {
+        case .standard:     return Color(red: 0.16, green: 0.21, blue: 0.28)
+        case .warmAmber:    return Color(red: 0.36, green: 0.21, blue: 0.08)
+        case .softRose:     return Color(red: 0.36, green: 0.21, blue: 0.17)
+        case .neutral:      return Color(red: 0.22, green: 0.22, blue: 0.28)
+        case .richContrast: return Color(red: 0.12, green: 0.17, blue: 0.25)
+        case .vibrant:      return Color(red: 0.15, green: 0.28, blue: 0.26)
+        case .coolMood:     return Color(red: 0.12, green: 0.22, blue: 0.34)
+        case .starkBW:      return Color(red: 0.14, green: 0.14, blue: 0.16)
+        }
+    }
+
+    /// Dải màu ngang cho thanh trượt Palette dạng viên thuốc đặt ngay dưới ô Pad 2D.
+    public var paletteGradientColors: [Color] {
+        switch self {
+        case .standard:
+            return [
+                Color(red: 0.34, green: 0.35, blue: 0.38),
+                Color(red: 0.58, green: 0.62, blue: 0.68),
+                Color(red: 0.80, green: 0.84, blue: 0.90)
+            ]
+        case .warmAmber:
+            return [
+                Color(red: 0.40, green: 0.46, blue: 0.52),
+                Color(red: 0.74, green: 0.58, blue: 0.38),
+                Color(red: 0.94, green: 0.64, blue: 0.30)
+            ]
+        case .softRose:
+            return [
+                Color(red: 0.44, green: 0.46, blue: 0.52),
+                Color(red: 0.78, green: 0.62, blue: 0.60),
+                Color(red: 0.94, green: 0.62, blue: 0.62)
+            ]
+        case .neutral:
+            return [
+                Color(red: 0.36, green: 0.36, blue: 0.40),
+                Color(red: 0.60, green: 0.60, blue: 0.66),
+                Color(red: 0.82, green: 0.82, blue: 0.88)
+            ]
+        case .richContrast:
+            return [
+                Color(red: 0.32, green: 0.36, blue: 0.44),
+                Color(red: 0.52, green: 0.56, blue: 0.64),
+                Color(red: 0.78, green: 0.70, blue: 0.60)
+            ]
+        case .vibrant:
+            return [
+                Color(red: 0.48, green: 0.76, blue: 0.94),
+                Color(red: 0.92, green: 0.76, blue: 0.50),
+                Color(red: 0.94, green: 0.46, blue: 0.44)
+            ]
+        case .coolMood:
+            return [
+                Color(red: 0.32, green: 0.36, blue: 0.42),
+                Color(red: 0.44, green: 0.60, blue: 0.78),
+                Color(red: 0.64, green: 0.80, blue: 0.95)
+            ]
+        case .starkBW:
+            return [
+                Color(red: 0.24, green: 0.24, blue: 0.26),
+                Color(red: 0.58, green: 0.58, blue: 0.60),
+                Color(red: 0.88, green: 0.88, blue: 0.90)
+            ]
         }
     }
 
@@ -313,5 +402,26 @@ public struct PhotographicStyleState: Equatable, Sendable, Codable {
 
     public var paletteDisplayText: String {
         "\(palettePercent)%"
+    }
+
+    /// Định dạng 2 chữ số sạch chuẩn iOS Camera Top HUD (`00`, `07`, `84`, `-14`, `100` — không dấu `+`, không gạch).
+    public var toneHUDNumber: String {
+        Self.formatTwoDigitSigned(tonePercent)
+    }
+
+    public var colorHUDNumber: String {
+        Self.formatTwoDigitSigned(colorPercent)
+    }
+
+    public var paletteHUDNumber: String {
+        "\(palettePercent)"
+    }
+
+    private static func formatTwoDigitSigned(_ value: Int) -> String {
+        if value < 0 {
+            let absVal = abs(value)
+            return absVal < 10 ? "-0\(absVal)" : "-\(absVal)"
+        }
+        return value < 10 ? "0\(value)" : "\(value)"
     }
 }
