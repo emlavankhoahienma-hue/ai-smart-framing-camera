@@ -119,10 +119,12 @@ public struct CustomAppIconView: View {
     }
 }
 
-// MARK: - Sliding Segmented Mode Switcher (ẢNH / PRO / VIDEO)
+// MARK: - Sliding Segmented Mode Switcher (ẢNH / PRO / VIDEO — Chạm 5 lần vào ẢNH mở Photobooth)
 struct CameraModeSegmentedSwitcher: View {
     @ObservedObject var viewModel: CameraViewModel
     @Namespace private var modeAnimationNamespace
+    @State private var photoTabTapCount: Int = 0
+    @State private var lastPhotoTabTapTime: TimeInterval = 0
 
     private enum SwitcherMode: String, CaseIterable, Identifiable {
         case photo = "ẢNH"
@@ -150,13 +152,41 @@ struct CameraModeSegmentedSwitcher: View {
                     generator.prepare()
                     generator.selectionChanged()
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
-                        if viewModel.isPhotoboothModeActive { viewModel.exitPhotoboothMode() }
                         switch item {
                         case .photo:
-                            viewModel.selectCaptureMode(.photo)
+                            if viewModel.isPhotoboothModeActive {
+                                photoTabTapCount = 0
+                                viewModel.exitPhotoboothMode()
+                                viewModel.selectCaptureMode(.photo)
+                            } else {
+                                if activeSwitcherMode != .photo {
+                                    viewModel.selectCaptureMode(.photo)
+                                }
+                                let now = CACurrentMediaTime()
+                                if now - lastPhotoTabTapTime <= 1.45 {
+                                    photoTabTapCount += 1
+                                } else {
+                                    photoTabTapCount = 1
+                                }
+                                lastPhotoTabTapTime = now
+
+                                if photoTabTapCount >= 5 {
+                                    photoTabTapCount = 0
+                                    HapticFeedbackService.shared.triggerMedium()
+                                    viewModel.enterPhotoboothMode()
+                                } else if photoTabTapCount >= 3 {
+                                    HapticFeedbackService.shared.triggerLight()
+                                    let remain = 5 - photoTabTapCount
+                                    viewModel.showHUDNotice("Chạm thêm \(remain) lần vào ẢNH để mở Photobooth")
+                                }
+                            }
                         case .proPhoto:
+                            photoTabTapCount = 0
+                            if viewModel.isPhotoboothModeActive { viewModel.exitPhotoboothMode() }
                             viewModel.selectProPhotoMode()
                         case .video:
+                            photoTabTapCount = 0
+                            if viewModel.isPhotoboothModeActive { viewModel.exitPhotoboothMode() }
                             viewModel.selectCaptureMode(.video)
                         }
                     }

@@ -134,17 +134,13 @@ public final class MechanicalShutterEngine: @unchecked Sendable {
     private let impactLight = UIImpactFeedbackGenerator(style: .light)
 
     private init() {
-        let ud = UserDefaults.standard
-        if let raw = ud.string(forKey: Keys.profile), let p = MechanicalShutterProfile(rawValue: raw) {
-            _selectedProfile = p
-        } else {
-            _selectedProfile = .autoMatch
-        }
-        _soundVolume = ud.object(forKey: Keys.soundVolume) != nil ? ud.float(forKey: Keys.soundVolume) : 0.80
-        _hapticIntensity = ud.object(forKey: Keys.hapticIntensity) != nil ? ud.float(forKey: Keys.hapticIntensity) : 0.92
-        _respectSilentSwitch = ud.object(forKey: Keys.respectSilentSwitch) != nil ? ud.bool(forKey: Keys.respectSilentSwitch) : false
-        _enableHalfPressHaptic = ud.object(forKey: Keys.halfPressHaptic) != nil ? ud.bool(forKey: Keys.halfPressHaptic) : true
-        _enableMechanicalDialTicks = ud.object(forKey: Keys.dialTicks) != nil ? ud.bool(forKey: Keys.dialTicks) : true
+        // Mặc định luôn tự động khớp màn trập & rung theo dòng máy phim/chế độ đang chụp (ẩn cấu hình thủ công trong Cài đặt)
+        _selectedProfile = .autoMatch
+        _soundVolume = 0.80
+        _hapticIntensity = 0.92
+        _respectSilentSwitch = false
+        _enableHalfPressHaptic = true
+        _enableMechanicalDialTicks = true
 
         supportsHaptics = CHHapticEngine.capabilitiesForHardware().supportsHaptics
 

@@ -112,6 +112,73 @@ public enum PhotoboothStripRenderer {
         return uiImage.cgImage
     }
 
+    /// Kết xuất riêng nền khung + chân trang (dùng làm lớp tĩnh cho Video Tua Nhanh 9:16 để đạt tốc độ xuất siêu nhanh).
+    @MainActor
+    public static func renderFrameBackgroundAndFooter(
+        config: PhotoboothStripConfig,
+        assetManager: PhotoboothAssetManager,
+        canvasSize: CGSize
+    ) -> CGImage? {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1.0
+        format.opaque = true
+        let fullRect = CGRect(origin: .zero, size: canvasSize)
+        let slotRects = config.layout.slotRects(in: canvasSize, marginScale: config.marginScale)
+
+        let img = UIGraphicsImageRenderer(size: canvasSize, format: format).image { uikitCtx in
+            let cg = uikitCtx.cgContext
+            drawEditorialFrameBackground(cg: cg, rect: fullRect, config: config, assetManager: assetManager)
+            for (idx, rect) in slotRects.enumerated() {
+                if config.frameStyle == .kodak35mmSprocket {
+                    drawFilmFrameIndex(index: idx + 1, slotRect: rect, canvasWidth: canvasSize.width)
+                }
+            }
+            drawEditorialFooter(cg: cg, rect: fullRect, slotRects: slotRects, config: config)
+        }
+        return img.cgImage
+    }
+
+    /// Kết xuất riêng lớp Sticker nền trong suốt (vẽ 1 lần rồi phủ lên mỗi khung hình Video Tua Nhanh).
+    @MainActor
+    public static func renderStickersOverlay(
+        stickers: [PlacedPhotoboothSticker],
+        assetManager: PhotoboothAssetManager,
+        canvasSize: CGSize
+    ) -> CGImage? {
+        guard !stickers.isEmpty else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1.0
+        format.opaque = false
+        let w = canvasSize.width
+        let h = canvasSize.height
+
+        let img = UIGraphicsImageRenderer(size: canvasSize, format: format).image { uikitCtx in
+            let cg = uikitCtx.cgContext
+            for sticker in stickers {
+                guard let stUI = assetManager.cachedImage(for: sticker.assetSource, id: sticker.assetID),
+                      let stCG = stUI.cgImage else { continue }
+                let targetW = max(12.0, w * sticker.scale)
+                let aspect = CGFloat(stCG.height) / CGFloat(max(1, stCG.width))
+                let targetH = targetW * aspect
+                let cx = sticker.normalizedX * w
+                let cy = sticker.normalizedY * h
+
+                cg.saveGState()
+                cg.translateBy(x: cx, y: cy)
+                cg.rotate(by: CGFloat(sticker.rotationDegrees * .pi / 180.0))
+                cg.setAlpha(CGFloat(sticker.opacity))
+                cg.setShadow(
+                    offset: CGSize(width: 0, height: w * 0.004),
+                    blur: w * 0.012,
+                    color: UIColor.black.withAlphaComponent(0.24).cgColor
+                )
+                stUI.draw(in: CGRect(x: -targetW * 0.5, y: -targetH * 0.5, width: targetW, height: targetH))
+                cg.restoreGState()
+            }
+        }
+        return img.cgImage
+    }
+
     // MARK: - Editorial Frame Painters
 
     @MainActor

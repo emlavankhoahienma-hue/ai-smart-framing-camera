@@ -87,6 +87,11 @@ private struct CameraFrameProcessingConfiguration: Sendable {
     var showHistogramInViewfinder = true
     var isVideo = false
     var isDualCameraActive = false
+    var isPhotoboothTimelapseRecording = false
+    var photoboothActiveSlotIndex = 0
+    var activeFilmPreset: FilmPreset = .standard
+    var activeFilmIntensity: Float = 1.0
+    var isFilmSimulationActive = false
 }
 
 /// Owns frame-rate work on AVFoundation's serial sample-buffer queue. UI state is
@@ -164,6 +169,17 @@ private final class CameraFrameProcessor: @unchecked Sendable {
             stateLock.lock()
             latestPixelBuffer = pixelBuffer
             stateLock.unlock()
+
+            // Ghi khung hình tua nhanh hậu trường siêu nhẹ (~7 FPS) khi đang tạo dáng trong chế độ Photobooth
+            if snapshot.isPhotoboothTimelapseRecording && !snapshot.isVideo {
+                PhotoboothTimelapseRecorder.shared.samplePixelBufferIfDue(
+                    pixelBuffer,
+                    slotIndex: snapshot.photoboothActiveSlotIndex,
+                    activeFilmPreset: snapshot.activeFilmPreset,
+                    filmIntensity: snapshot.activeFilmIntensity,
+                    isFilmActive: snapshot.isFilmSimulationActive
+                )
+            }
         }
 
         // Khi đang quay video: Bỏ qua toàn bộ AI tracking và Vision nặng nề để đảm bảo hiệu năng
@@ -715,19 +731,37 @@ public final class CameraViewModel: ObservableObject {
                 if isWindowedZoomActive { isWindowedZoomActive = false }
                 if aiSessionState.isSessionActive { cancelAISession() }
                 ensurePhotoboothSlotArraySize()
+                if photoboothFilledCount == 0 {
+                    PhotoboothTimelapseRecorder.shared.resetAll()
+                }
             } else {
                 cancelPhotoboothSequence()
+                isPhotoboothLiveFramePickerOpen = false
             }
+            updateFrameProcessingConfiguration()
         }
     }
     @Published public var isShowingPhotoboothEditor: Bool = false {
-        didSet { updateCameraHibernationState() }
+        didSet {
+            updateCameraHibernationState()
+            updateFrameProcessingConfiguration()
+        }
     }
+    @Published public var isPhotoboothLiveFramePickerOpen: Bool = false
     @Published public var photoboothTimer: PhotoboothTimerOption = .sec3
     @Published public var photoboothSlots: [PhotoboothSlotPhoto?] = Array(repeating: nil, count: 4)
-    @Published public var photoboothActiveSlotIndex: Int = 0
+    @Published public var photoboothActiveSlotIndex: Int = 0 {
+        didSet { updateFrameProcessingConfiguration() }
+    }
     @Published public var photoboothCountdownRemaining: Int = 0
-    @Published public var isPhotoboothSequenceRunning: Bool = false
+    @Published public var isPhotoboothSequenceRunning: Bool = false {
+        didSet {
+            if isPhotoboothSequenceRunning {
+                isPhotoboothLiveFramePickerOpen = false
+            }
+            updateFrameProcessingConfiguration()
+        }
+    }
     @Published public var photoboothFlashBlink: Bool = false
     @Published public var photoboothStripConfig: PhotoboothStripConfig = PhotoboothStripConfig()
     @Published public var photoboothPlacedStickers: [PlacedPhotoboothSticker] = []
@@ -740,6 +774,12 @@ public final class CameraViewModel: ObservableObject {
 
     public var photoboothIsComplete: Bool {
         photoboothFilledCount >= photoboothStripConfig.layout.slotCount
+    }
+
+    public func selectPhotoboothFrameStyle(_ style: PhotoboothFrameStyle) {
+        haptics.triggerSelectionChange()
+        photoboothStripConfig.customBackgroundHex = nil
+        photoboothStripConfig.frameStyle = style
     }
 
     public func enterPhotoboothMode() {
@@ -894,7 +934,9 @@ public final class CameraViewModel: ObservableObject {
         guard index >= 0 && index < photoboothSlots.count else { return }
         photoboothSlots[index] = nil
         photoboothActiveSlotIndex = index
+        PhotoboothTimelapseRecorder.shared.clearSlot(index)
         isShowingPhotoboothEditor = false
+        updateFrameProcessingConfiguration()
         haptics.triggerSelectionChange()
     }
 
@@ -938,7 +980,41 @@ public final class CameraViewModel: ObservableObject {
         photoboothActiveSlotIndex = 0
         photoboothPlacedStickers.removeAll()
         photoboothStripConfig.customBackgroundHex = nil
+        PhotoboothTimelapseRecorder.shared.resetAll()
+        updateFrameProcessingConfiguration()
         haptics.triggerLight()
+    }
+
+    public func savePhotoboothTimelapseVideoToLibrary(url: URL, completion: @escaping (Bool) -> Void) {
+        PHPhotoLibrary.requestAuthorization(for: .readWrite) { [weak self] status in
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    completion(false)
+                    return
+                }
+                guard status == .authorized || status == .limited else {
+                    completion(false)
+                    return
+                }
+                PHPhotoLibrary.shared().performChanges({
+                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+                }) { [weak self] success, _ in
+                    Task { @MainActor [weak self] in
+                        guard let self else {
+                            completion(false)
+                            return
+                        }
+                        if success {
+                            self.haptics.triggerSuccess()
+                            self.showHUDNotice("Đã lưu Video Tua Nhanh Photobooth vào Thư viện!")
+                        } else {
+                            self.haptics.triggerError()
+                        }
+                        completion(success)
+                    }
+                }
+            }
+        }
     }
 
     public func renderFinalPhotoboothStrip(targetWidth: CGFloat? = nil) -> CGImage? {
@@ -2763,7 +2839,12 @@ public final class CameraViewModel: ObservableObject {
                 isRecordingVideo: isRecordingVideo,
                 showHistogramInViewfinder: showHistogramInViewfinder,
                 isVideo: captureMode.isVideo,
-                isDualCameraActive: isDualCameraActive
+                isDualCameraActive: isDualCameraActive,
+                isPhotoboothTimelapseRecording: isPhotoboothModeActive && !isShowingPhotoboothEditor && !isCameraHibernating && !captureMode.isVideo && (photoboothFilledCount < photoboothStripConfig.layout.slotCount),
+                photoboothActiveSlotIndex: photoboothActiveSlotIndex,
+                activeFilmPreset: selectedFilmPreset,
+                activeFilmIntensity: Float(filmSimulationIntensity),
+                isFilmSimulationActive: isFilmSimulationActive
             )
         )
     }

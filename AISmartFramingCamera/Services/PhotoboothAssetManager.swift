@@ -53,99 +53,111 @@ public final class PhotoboothAssetManager: ObservableObject {
     // MARK: - 1. Catalog Setup
 
     private func setupBundledCatalog() {
-        let coquetteItems: [(String, String)] = [
-            ("pb_ribbon_pink", "Nơ lụa hồng"),
-            ("pb_ribbon_black", "Nơ nhung đen"),
-            ("pb_bunny_ears", "Tai thỏ bông"),
-            ("pb_cat_ears", "Tai mèo cài đầu"),
-            ("pb_bear_plush", "Gấu bông"),
-            ("pb_cherry_twin", "Cherry đôi"),
-            ("pb_strawberry_cake", "Bánh dâu"),
-            ("pb_iced_latte", "Cà phê sữa đá"),
-            ("pb_daisy_flower", "Cúc họa mi"),
-            ("pb_pastel_cloud", "Mây pastel"),
-            ("pb_heart_gem", "Trái tim pha lê"),
-            ("pb_angel_wings", "Cánh thiên thần"),
+        let coquetteItems: [(String, String, PhotoboothStickerAnchorZone)] = [
+            ("pb_ribbon_pink", "Nơ lụa hồng", .hairTemple),
+            ("pb_ribbon_black", "Nơ nhung đen", .hairTemple),
+            ("pb_bunny_ears", "Tai thỏ bông", .headCrown),
+            ("pb_cat_ears", "Tai mèo cài đầu", .headCrown),
+            ("pb_bear_plush", "Gấu bông", .shoulderBack),
+            ("pb_cherry_twin", "Cherry đôi", .cheekAccent),
+            ("pb_strawberry_cake", "Bánh dâu", .safeCorner),
+            ("pb_iced_latte", "Cà phê sữa đá", .safeCorner),
+            ("pb_daisy_flower", "Cúc họa mi", .hairTemple),
+            ("pb_pastel_cloud", "Mây pastel", .safeCorner),
+            ("pb_heart_gem", "Trái tim pha lê", .cheekAccent),
+            ("pb_angel_wings", "Cánh thiên thần", .shoulderBack),
         ]
-        let y2kItems: [(String, String)] = [
-            ("pb_chrome_star", "Ngôi sao Chrome"),
-            ("pb_sparkle_trio", "Lấp lánh Y2K"),
-            ("pb_film_roll", "Cuộn phim 35mm"),
-            ("pb_clapperboard", "Bảng quay phim"),
-            ("pb_vinyl_record", "Đĩa than Retro"),
-            ("pb_disco_ball", "Quả cầu Disco"),
-            ("pb_vintage_stamp", "Tem bưu chính"),
-            ("pb_wax_seal", "Dấu sáp cổ điển"),
-            ("pb_kiss_mark", "Dấu son môi"),
-            ("pb_retro_sunglasses", "Kính râm Oval"),
-            ("pb_lucky_clover", "Cỏ 4 lá"),
-            ("pb_pixel_heart", "Tim Pixel 8-bit"),
+        let y2kItems: [(String, String, PhotoboothStickerAnchorZone)] = [
+            ("pb_chrome_star", "Ngôi sao Chrome", .safeCorner),
+            ("pb_sparkle_trio", "Lấp lánh Y2K", .safeCorner),
+            ("pb_film_roll", "Cuộn phim 35mm", .safeCorner),
+            ("pb_clapperboard", "Bảng quay phim", .safeCorner),
+            ("pb_vinyl_record", "Đĩa than Retro", .safeCorner),
+            ("pb_disco_ball", "Quả cầu Disco", .safeCorner),
+            ("pb_vintage_stamp", "Tem bưu chính", .safeCorner),
+            ("pb_wax_seal", "Dấu sáp cổ điển", .safeCorner),
+            ("pb_kiss_mark", "Dấu son môi", .cheekAccent),
+            ("pb_retro_sunglasses", "Kính râm Oval", .eyeBridge),
+            ("pb_lucky_clover", "Cỏ 4 lá", .safeCorner),
+            ("pb_pixel_heart", "Tim Pixel 8-bit", .cheekAccent),
         ]
 
         var all: [PhotoboothStickerAsset] = []
-        for (id, title) in coquetteItems {
-            all.append(PhotoboothStickerAsset(id: id, title: title, category: .coquette, source: .bundled(filename: "\(id).png")))
+        for (id, title, zone) in coquetteItems {
+            all.append(PhotoboothStickerAsset(id: id, title: title, category: .coquette, source: .bundled(filename: "\(id).png"), anchorZone: zone))
         }
-        for (id, title) in y2kItems {
-            all.append(PhotoboothStickerAsset(id: id, title: title, category: .y2k, source: .bundled(filename: "\(id).png")))
+        for (id, title, zone) in y2kItems {
+            all.append(PhotoboothStickerAsset(id: id, title: title, category: .y2k, source: .bundled(filename: "\(id).png"), anchorZone: zone))
         }
         self.bundledStickers = all
     }
 
     private func setupOnlineCatalog() {
-        // Toàn bộ 36 URL bên dưới đã kiểm chứng thực tế HTTP 200 PNG RGBA nền trong suốt
-        let specs: [(String, String, PhotoboothOnlinePackCategory, String)] = [
-            // Y2K & Cyber
-            ("onl_cd", "Đĩa CD Y2K", .y2kCyber, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F4BF.png"),
-            ("onl_alien", "Pixel Alien", .y2kCyber, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F47E.png"),
-            ("onl_butterfly", "Bướm xanh", .y2kCyber, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F98B.png"),
-            ("onl_mirror_ball", "Cầu gương", .y2kCyber, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1FAA9.png"),
-            ("onl_lightning", "Tia chớp", .y2kCyber, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/26A1.png"),
-            ("onl_headphone", "Tai nghe", .y2kCyber, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F3A7.png"),
+        // Toàn bộ 48 URL bên dưới đã kiểm chứng thực tế HTTP 200 PNG RGBA nền trong suốt
+        let specs: [(String, String, PhotoboothOnlinePackCategory, PhotoboothStickerAnchorZone, String)] = [
+            // Y2K & Cyber (8)
+            ("onl_cd", "Đĩa CD Y2K", .y2kCyber, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F4BF.png"),
+            ("onl_sunglasses_3d", "Kính Mát 3D", .y2kCyber, .eyeBridge, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Sunglasses/3D/sunglasses_3d.png"),
+            ("onl_butterfly_3d", "Bướm 3D", .y2kCyber, .hairTemple, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Butterfly/3D/butterfly_3d.png"),
+            ("onl_alien", "Pixel Alien", .y2kCyber, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F47E.png"),
+            ("onl_butterfly", "Bướm xanh", .y2kCyber, .hairTemple, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F98B.png"),
+            ("onl_mirror_ball", "Cầu gương", .y2kCyber, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1FAA9.png"),
+            ("onl_lightning", "Tia chớp", .y2kCyber, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/26A1.png"),
+            ("onl_headphone", "Tai nghe", .y2kCyber, .headCrown, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F3A7.png"),
 
-            // Nơ & Pastel
-            ("onl_ribbon_3d", "Nơ Hồng 3D", .bowsPastel, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Ribbon/3D/ribbon_3d.png"),
-            ("onl_pink_heart", "Tim hồng", .bowsPastel, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1FA77.png"),
-            ("onl_tulip", "Hoa Tulip", .bowsPastel, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F337.png"),
-            ("onl_swan", "Thiên nga", .bowsPastel, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F9A2.png"),
-            ("onl_blossom", "Hoa anh đào", .bowsPastel, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F338.png"),
-            ("onl_ballet", "Giày Ballet", .bowsPastel, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1FA70.png"),
+            // Nơ & Pastel (8)
+            ("onl_ribbon_3d", "Nơ Hồng 3D", .bowsPastel, .hairTemple, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Ribbon/3D/ribbon_3d.png"),
+            ("onl_crown_3d", "Vương Miện 3D", .bowsPastel, .headCrown, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Crown/3D/crown_3d.png"),
+            ("onl_kiss_3d", "Dấu Son 3D", .bowsPastel, .cheekAccent, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Kiss%20mark/3D/kiss_mark_3d.png"),
+            ("onl_hibiscus_3d", "Hoa Dâm Bụt 3D", .bowsPastel, .hairTemple, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Hibiscus/3D/hibiscus_3d.png"),
+            ("onl_pink_heart", "Tim hồng", .bowsPastel, .cheekAccent, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1FA77.png"),
+            ("onl_tulip", "Hoa Tulip", .bowsPastel, .hairTemple, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F337.png"),
+            ("onl_swan", "Thiên nga", .bowsPastel, .shoulderBack, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F9A2.png"),
+            ("onl_blossom", "Hoa anh đào", .bowsPastel, .hairTemple, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F338.png"),
+            ("onl_ballet", "Giày Ballet", .bowsPastel, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1FA70.png"),
 
-            // Phim & Rạp
-            ("onl_cam_3d", "Máy ảnh 3D", .filmCinema, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Camera%20with%20flash/3D/camera_with_flash_3d.png"),
-            ("onl_film_frames", "Dải phim 35mm", .filmCinema, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F39E.png"),
-            ("onl_clapper", "Bảng quay", .filmCinema, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F3AC.png"),
-            ("onl_ticket", "Vé xem phim", .filmCinema, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F39F.png"),
-            ("onl_cassette", "Băng VHS", .filmCinema, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F4FC.png"),
-            ("onl_mic", "Mic thu âm", .filmCinema, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F399.png"),
+            // Phim & Rạp (7)
+            ("onl_cam_3d", "Máy ảnh 3D", .filmCinema, .safeCorner, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Camera%20with%20flash/3D/camera_with_flash_3d.png"),
+            ("onl_party_popper_3d", "Pháo Giấy 3D", .filmCinema, .safeCorner, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Party%20popper/3D/party_popper_3d.png"),
+            ("onl_film_frames", "Dải phim 35mm", .filmCinema, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F39E.png"),
+            ("onl_clapper", "Bảng quay", .filmCinema, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F3AC.png"),
+            ("onl_ticket", "Vé xem phim", .filmCinema, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F39F.png"),
+            ("onl_cassette", "Băng VHS", .filmCinema, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F4FC.png"),
+            ("onl_mic", "Mic thu âm", .filmCinema, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F399.png"),
 
-            // Cà phê & Bánh
-            ("onl_croissant", "Bánh sừng bò", .cafeSweet, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F950.png"),
-            ("onl_matcha", "Trà Matcha", .cafeSweet, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F375.png"),
-            ("onl_strawberry", "Dâu tây", .cafeSweet, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F353.png"),
-            ("onl_shortcake", "Bánh kem dâu", .cafeSweet, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F370.png"),
-            ("onl_boba", "Trà sữa trân châu", .cafeSweet, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F9CB.png"),
-            ("onl_cherry", "Quả Cherry", .cafeSweet, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F352.png"),
+            // Cà phê & Bánh (8)
+            ("onl_cherry_3d", "Cherry 3D", .cafeSweet, .cheekAccent, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Cherries/3D/cherries_3d.png"),
+            ("onl_strawberry_3d", "Dâu Tây 3D", .cafeSweet, .cheekAccent, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Strawberry/3D/strawberry_3d.png"),
+            ("onl_croissant", "Bánh sừng bò", .cafeSweet, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F950.png"),
+            ("onl_matcha", "Trà Matcha", .cafeSweet, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F375.png"),
+            ("onl_strawberry", "Dâu tây", .cafeSweet, .cheekAccent, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F353.png"),
+            ("onl_shortcake", "Bánh kem dâu", .cafeSweet, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F370.png"),
+            ("onl_boba", "Trà sữa trân châu", .cafeSweet, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F9CB.png"),
+            ("onl_cherry", "Quả Cherry", .cafeSweet, .cheekAccent, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F352.png"),
 
-            // Lấp lánh
-            ("onl_sparkles_3d", "Lấp lánh 3D", .sparkleMagic, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Sparkles/3D/sparkles_3d.png"),
-            ("onl_moon", "Trăng lưỡi liềm", .sparkleMagic, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F319.png"),
-            ("onl_dizzy", "Sao chổi", .sparkleMagic, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F4AB.png"),
-            ("onl_rainbow", "Cầu vồng", .sparkleMagic, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F308.png"),
-            ("onl_gem", "Kim cương", .sparkleMagic, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F48E.png"),
-            ("onl_sun", "Mặt trời nhỏ", .sparkleMagic, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/2600.png"),
+            // Lấp lánh (9)
+            ("onl_sparkles_3d", "Lấp lánh 3D", .sparkleMagic, .safeCorner, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Sparkles/3D/sparkles_3d.png"),
+            ("onl_star_3d", "Sao Sáng 3D", .sparkleMagic, .safeCorner, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Glowing%20star/3D/glowing_star_3d.png"),
+            ("onl_heart_ribbon_3d", "Tim Nơ 3D", .sparkleMagic, .cheekAccent, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Heart%20with%20ribbon/3D/heart_with_ribbon_3d.png"),
+            ("onl_clover_3d", "Cỏ 4 Lá 3D", .sparkleMagic, .safeCorner, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Four%20leaf%20clover/3D/four_leaf_clover_3d.png"),
+            ("onl_moon", "Trăng lưỡi liềm", .sparkleMagic, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F319.png"),
+            ("onl_dizzy", "Sao chổi", .sparkleMagic, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F4AB.png"),
+            ("onl_rainbow", "Cầu vồng", .sparkleMagic, .headCrown, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F308.png"),
+            ("onl_gem", "Kim cương", .sparkleMagic, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F48E.png"),
+            ("onl_sun", "Mặt trời nhỏ", .sparkleMagic, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/2600.png"),
 
-            // Mèo & Du lịch
-            ("onl_cat_3d", "Mèo con 3D", .petsTravel, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Cat%20face/3D/cat_face_3d.png"),
-            ("onl_bunny", "Thỏ xinh", .petsTravel, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F430.png"),
-            ("onl_bear", "Gấu Teddy", .petsTravel, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F9F8.png"),
-            ("onl_paw", "Dấu chân mèo", .petsTravel, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F43E.png"),
-            ("onl_plane", "Máy bay giấy", .petsTravel, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/2708.png"),
-            ("onl_palm", "Cây dừa biển", .petsTravel, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F334.png"),
+            // Mèo & Du lịch (7)
+            ("onl_cat_3d", "Mèo con 3D", .petsTravel, .shoulderBack, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Cat%20face/3D/cat_face_3d.png"),
+            ("onl_teddy_3d", "Gấu Bông 3D", .petsTravel, .shoulderBack, "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/Teddy%20bear/3D/teddy_bear_3d.png"),
+            ("onl_bunny", "Thỏ xinh", .petsTravel, .shoulderBack, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F430.png"),
+            ("onl_bear", "Gấu Teddy", .petsTravel, .shoulderBack, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F9F8.png"),
+            ("onl_paw", "Dấu chân mèo", .petsTravel, .cheekAccent, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F43E.png"),
+            ("onl_plane", "Máy bay giấy", .petsTravel, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/2708.png"),
+            ("onl_palm", "Cây dừa biển", .petsTravel, .safeCorner, "https://cdn.jsdelivr.net/gh/hfg-gmuend/openmoji@15.1.0/color/618x618/1F334.png"),
         ]
 
-        self.onlineStickers = specs.map { id, title, pack, url in
-            PhotoboothStickerAsset(id: id, title: title, category: .onlinePacks, onlinePack: pack, source: .online(urlString: url))
+        self.onlineStickers = specs.map { id, title, pack, zone, url in
+            PhotoboothStickerAsset(id: id, title: title, category: .onlinePacks, onlinePack: pack, source: .online(urlString: url), anchorZone: zone)
         }
     }
 

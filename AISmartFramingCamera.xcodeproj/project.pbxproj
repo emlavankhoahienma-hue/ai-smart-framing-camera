@@ -113,6 +113,8 @@
 		C2000000000000000000008C /* PhotoboothStripRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000008C /* PhotoboothStripRenderer.swift */; };
 		C2000000000000000000008D /* PhotoboothCameraOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000008D /* PhotoboothCameraOverlayView.swift */; };
 		C2000000000000000000008E /* PhotoboothEditorSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000008E /* PhotoboothEditorSheetView.swift */; };
+		C2000000000000000000008F /* PhotoboothSmartPlacementEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000008F /* PhotoboothSmartPlacementEngine.swift */; };
+		C20000000000000000000090 /* PhotoboothTimelapseEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000090 /* PhotoboothTimelapseEngine.swift */; };
 		C20000000000000000000076 /* NativeTrackingCore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000076 /* NativeTrackingCore.cpp */; };
 		C20000000000000000000079 /* NativeOpticsCore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000079 /* NativeOpticsCore.cpp */; };
 		C2000000000000000000007A /* NativeOpticsBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000007A /* NativeOpticsBridge.swift */; };
@@ -227,6 +229,8 @@
 		C1000000000000000000008C /* PhotoboothStripRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoboothStripRenderer.swift; sourceTree = "<group>"; };
 		C1000000000000000000008D /* PhotoboothCameraOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoboothCameraOverlayView.swift; sourceTree = "<group>"; };
 		C1000000000000000000008E /* PhotoboothEditorSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoboothEditorSheetView.swift; sourceTree = "<group>"; };
+		C1000000000000000000008F /* PhotoboothSmartPlacementEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoboothSmartPlacementEngine.swift; sourceTree = "<group>"; };
+		C10000000000000000000090 /* PhotoboothTimelapseEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoboothTimelapseEngine.swift; sourceTree = "<group>"; };
 		C10000000000000000000075 /* NativeTrackingCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NativeTrackingCore.h; sourceTree = "<group>"; };
 		C10000000000000000000076 /* NativeTrackingCore.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NativeTrackingCore.cpp; sourceTree = "<group>"; };
 		C10000000000000000000078 /* NativeOpticsCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NativeOpticsCore.h; sourceTree = "<group>"; };
@@ -340,6 +344,8 @@
 				C10000000000000000000089 /* MechanicalShutterEngine.swift */,
 				C1000000000000000000008B /* PhotoboothAssetManager.swift */,
 				C1000000000000000000008C /* PhotoboothStripRenderer.swift */,
+				C1000000000000000000008F /* PhotoboothSmartPlacementEngine.swift */,
+				C10000000000000000000090 /* PhotoboothTimelapseEngine.swift */,
 				C10000000000000000000062 /* CharmPhotographicModel.swift */,
 				C10000000000000000000063 /* PortraitFramingEvidence.swift */,
 				C10000000000000000000064 /* CompositionTuning.swift */,
@@ -599,6 +605,8 @@
 				C2000000000000000000008C /* PhotoboothStripRenderer.swift in Sources */,
 				C2000000000000000000008D /* PhotoboothCameraOverlayView.swift in Sources */,
 				C2000000000000000000008E /* PhotoboothEditorSheetView.swift in Sources */,
+				C2000000000000000000008F /* PhotoboothSmartPlacementEngine.swift in Sources */,
+				C20000000000000000000090 /* PhotoboothTimelapseEngine.swift in Sources */,
 				C20000000000000000000062 /* CharmPhotographicModel.swift in Sources */,
 				C20000000000000000000063 /* PortraitFramingEvidence.swift in Sources */,
 				C20000000000000000000064 /* CompositionTuning.swift in Sources */,

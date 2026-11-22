@@ -894,13 +894,15 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             self.assertIn(token, vm)
 
     def test_22_photobooth_studio_and_mechanical_shutter_engine(self):
-        # 1. Verify all 6 new Swift files exist and are registered in Xcode project.pbxproj
+        # 1. Verify all 8 new Swift files exist and are registered in Xcode project.pbxproj
         pbx = PBXPROJ.read_text(encoding="utf-8")
         new_files = [
             "Services/MechanicalShutterEngine.swift",
             "Models/PhotoboothModels.swift",
             "Services/PhotoboothAssetManager.swift",
             "Services/PhotoboothStripRenderer.swift",
+            "Services/PhotoboothSmartPlacementEngine.swift",
+            "Services/PhotoboothTimelapseEngine.swift",
             "Views/PhotoboothCameraOverlayView.swift",
             "Views/PhotoboothEditorSheetView.swift",
         ]
@@ -921,13 +923,14 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         yml = (ROOT.parent / ".github" / "workflows" / "ios-build.yml").read_text(encoding="utf-8")
         self.assertIn("PhotoboothAssets", yml)
 
-        # 3. Verify Mechanical Shutter Engine & CoreHaptics wiring
+        # 3. Verify Mechanical Shutter Engine (auto default) & hidden Settings card
         shutter = source("Services/MechanicalShutterEngine.swift")
         for token in [
             "public enum MechanicalShutterProfile",
             "case autoMatch", "case leicaM", "case nikonFM2", "case contaxT2",
             "case hasselblad500", "case polaroidSX70", "case silentHaptic",
             "AVAudioEngine", "CHHapticEngine", "mixWithOthers",
+            "_selectedProfile = .autoMatch",
             "public func fireShutter()",
             "public func fireShutterHalfPress()",
             "public func fireMechanicalDialTick()",
@@ -939,7 +942,10 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         self.assertIn("MechanicalShutterEngine.shared.fireShutter()", haptics)
         self.assertIn("MechanicalShutterEngine.shared.fireShutterHalfPress()", haptics)
 
-        # 4. Verify Photobooth Asset Manager (bundled + online + Gemini + Pollinations + Vision Cutout)
+        settings = source("Views/SettingsSheetView.swift")
+        self.assertNotIn("mechanicalShutterCard", settings)
+
+        # 4. Verify Photobooth Asset Manager (24 bundled + 48 online + Gemini + Pollinations + Vision Cutout)
         assets_mgr = source("Services/PhotoboothAssetManager.swift")
         for token in [
             "VNGenerateForegroundInstanceMaskRequest",
@@ -951,14 +957,37 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             "generateAIFrameTexture",
             "stylizeBoothPhotoWithAI",
             "renderOfflineProceduralSticker",
+            "onl_crown_3d",
+            "onl_sunglasses_3d",
         ]:
             self.assertIn(token, assets_mgr)
 
-        # 5. Verify Photobooth Layouts & 16 Editorial Frames + 300 DPI Compositor
+        # 5. Verify Lightweight Vision Smart Placement & 9:16 Timelapse Video Engine
+        smart = source("Services/PhotoboothSmartPlacementEngine.swift")
+        for tok in [
+            "VNDetectFaceLandmarksRequest",
+            "headCrown", "eyeBridge", "leftTemple", "leftCheek", "leftShoulder",
+            "safeCornersInStrip", "suggestPlacement(", "generateAutoDecoratedStickers(",
+        ]:
+            self.assertIn(tok, smart)
+
+        timelapse = source("Services/PhotoboothTimelapseEngine.swift")
+        for tok in [
+            "class PhotoboothTimelapseRecorder",
+            "enum PhotoboothTimelapseExporter",
+            "AVAssetWriter",
+            "AVAssetWriterInputPixelBufferAdaptor",
+            "exportTimelapseVideo(",
+        ]:
+            self.assertIn(tok, timelapse)
+
+        # 6. Verify Photobooth Layouts, 16 Editorial Frames, Live Frame Picker & Editor Timelapse UI
         pb_models = source("Models/PhotoboothModels.swift")
         for layout_case in [
             "case strip4x1", "case grid2x2", "case strip3x1",
             "case couple2x1", "case mini6Cut", "case polaroidSingle",
+            "enum PhotoboothStickerAnchorZone",
+            "enum PhotoboothTimelapseStyle",
         ]:
             self.assertIn(layout_case, pb_models)
 
@@ -967,24 +996,40 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             ".kodak35mmSprocket", ".dailyNewspaper", ".vintageCinemaTicket",
             ".thermalReceipt", ".cafeGingham", ".y2kBrushedChrome",
             ".customAITexture", "drawEditorialFrameBackground",
+            "renderFrameBackgroundAndFooter", "renderStickersOverlay",
         ]:
             self.assertIn(frame_tok, renderer)
 
-        # 6. Verify CameraViewModel, Controls, MainView & Settings UI integration
+        # 7. Verify UI cleanliness (no floating BOOTH pill, no Styles icon in PRO mode, 5-tap ẢNH trigger)
         vm = source("ViewModels/CameraViewModel.swift")
+        controls = source("Views/CameraControlsView.swift")
         main_view = source("Views/CameraMainView.swift")
         overlay_view = source("Views/PhotoboothCameraOverlayView.swift")
-        settings = source("Views/SettingsSheetView.swift")
+        editor_view = source("Views/PhotoboothEditorSheetView.swift")
+        preview_view = source("Views/CapturedPhotoPreviewView.swift")
         gate = source("Models/CameraFeatureGate.swift")
 
         self.assertIn("case photobooth", gate)
-        for token in ["enterPhotoboothMode", "exitPhotoboothMode", "startPhotoboothCaptureOrSequence", "savePhotoboothStripToLibrary"]:
+        for token in [
+            "enterPhotoboothMode", "exitPhotoboothMode",
+            "startPhotoboothCaptureOrSequence", "savePhotoboothStripToLibrary",
+            "savePhotoboothTimelapseVideoToLibrary", "selectPhotoboothFrameStyle",
+        ]:
             self.assertIn(token, vm)
-        self.assertIn("PhotoboothQuickTriggerButton", main_view)
-        self.assertIn("struct PhotoboothQuickTriggerButton", overlay_view)
-        self.assertIn("PhotoboothTopBar", main_view)
-        self.assertIn("PhotoboothEditorSheetView", main_view)
-        self.assertIn("mechanicalShutterCard", settings)
+        self.assertNotIn("PhotoboothQuickTriggerButton", main_view)
+        self.assertIn("!viewModel.isProPhotoModeEnabled", main_view)
+        self.assertIn("photoTabTapCount >= 5", controls)
+        self.assertIn("boothCropMatteLayer", overlay_view)
+        self.assertIn("liveFrameSelectorStrip", overlay_view)
+        self.assertIn("PhotoboothTimelapsePreviewSheet", editor_view)
+        self.assertIn("applySmartAutoDecorate", editor_view)
+        self.assertIn("cachedBaseStripImage", editor_view)
+
+        # 8. Verify Final Photo Preview zero-lag caching (no synchronous HEIC/JPEG share encode inside body)
+        self.assertNotIn("private var currentPhotoShareURL", preview_view)
+        self.assertIn("cachedDisplayUIImage", preview_view)
+        self.assertIn("cachedMiniMapUIImage", preview_view)
+        self.assertIn("prepareAndPresentShareSheet", preview_view)
 
 
 if __name__ == "__main__":

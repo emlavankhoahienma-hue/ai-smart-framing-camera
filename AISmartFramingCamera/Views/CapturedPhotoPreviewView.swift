@@ -169,6 +169,16 @@ public struct CapturedPhotoPreviewView: View {
     @State private var isSavingToLibrary: Bool = false
     @State private var hasSavedNewEnhancement: Bool = false
 
+    // Pre-decoded Display & Mini-Map Image Caches (Zero per-frame 48MP decoding or main-thread HEIC export!)
+    @State private var cachedFullResUIImage: UIImage
+    @State private var cachedDisplayUIImage: UIImage
+    @State private var cachedOriginalDisplayUIImage: UIImage
+    @State private var cachedMiniMapUIImage: UIImage
+    @State private var isHistogramStale: Bool = true
+    @State private var cachedShareURL: URL? = nil
+    @State private var isPreparingShare: Bool = false
+    @State private var isShowingShareSheet: Bool = false
+
     // Comparison & Zoom States
     @State private var isSplitCompareMode: Bool = false
     @State private var splitRatio: CGFloat = 0.5
@@ -190,6 +200,12 @@ public struct CapturedPhotoPreviewView: View {
         self.item = item
         self.viewModel = viewModel
         _currentProcessedImage = State(initialValue: item.processedImage)
+        let initialProcessedUI = UIImage(cgImage: item.processedImage)
+        let initialOriginalUI = UIImage(cgImage: item.originalImage)
+        _cachedFullResUIImage = State(initialValue: initialProcessedUI)
+        _cachedDisplayUIImage = State(initialValue: initialProcessedUI)
+        _cachedOriginalDisplayUIImage = State(initialValue: initialOriginalUI)
+        _cachedMiniMapUIImage = State(initialValue: initialProcessedUI)
         _activePreset = State(initialValue: item.appliedPreset)
         _selectedCategory = State(initialValue: item.appliedPreset.category)
         if let vm = viewModel {
@@ -225,15 +241,25 @@ public struct CapturedPhotoPreviewView: View {
                     calmBottomActionBar
                 }
             }
-            .navigationBarHidden(true)
+            .toolbar(.hidden, for: .navigationBar)
             .interactiveDismissDisabled(zoomScale > 1.02 || isSplitCompareMode)
             .sheet(isPresented: $isShowingInfoSheet) {
                 photoInfoInspectorSheet
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
+                    .onAppear {
+                        if isHistogramStale {
+                            refreshHistogram(for: currentProcessedImage)
+                        }
+                    }
+            }
+            .sheet(isPresented: $isShowingShareSheet) {
+                if let url = cachedShareURL {
+                    CapturedPhotoActivityShareSheet(items: [url])
+                }
             }
             .onAppear {
-                refreshHistogram(for: currentProcessedImage)
+                rebuildDisplayCachesAsync(processed: currentProcessedImage, original: item.originalImage)
             }
         }
     }
@@ -362,15 +388,19 @@ public struct CapturedPhotoPreviewView: View {
 
     @ViewBuilder
     private func zoomableHeroCanvas(in size: CGSize) -> some View {
-        let displayCG = isPeekingOriginal ? item.originalImage : currentProcessedImage
         let isZoomedIn = zoomScale > 1.02
+        // Sử dụng ảnh đã giải mã trước (<= 2400px) cho 1x..2.3x để kéo/phóng 120Hz siêu mượt,
+        // và tự động chuyển sang ảnh full-res đã cache khi zoom sâu (> 2.3x) để soi chi tiết 100%.
+        let activeUIImage: UIImage = isPeekingOriginal
+            ? cachedOriginalDisplayUIImage
+            : (zoomScale > 2.3 ? cachedFullResUIImage : cachedDisplayUIImage)
 
         // Gắn toàn bộ cử chỉ trên vùng chứa tĩnh (coordinateSpace cố định) để kéo xuống xem vùng trên khi zoom
         // hoàn toàn mượt mà, không bị lệch tọa độ và không bao giờ xung đột với cử chỉ đóng sheet.
         ZStack {
             Color.clear
 
-            Image(uiImage: UIImage(cgImage: displayCG))
+            Image(uiImage: activeUIImage)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: size.width, height: size.height)
@@ -461,12 +491,12 @@ public struct CapturedPhotoPreviewView: View {
     private func splitScreenComparisonCanvas(in size: CGSize) -> some View {
         let splitX = size.width * splitRatio
         ZStack {
-            Image(uiImage: UIImage(cgImage: currentProcessedImage))
+            Image(uiImage: cachedDisplayUIImage)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: size.width, height: size.height)
 
-            Image(uiImage: UIImage(cgImage: item.originalImage))
+            Image(uiImage: cachedOriginalDisplayUIImage)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: size.width, height: size.height)
@@ -824,7 +854,7 @@ public struct CapturedPhotoPreviewView: View {
             .buttonStyle(.plain)
             .disabled(isSavingToLibrary || isProcessingFilter)
 
-            // Share Control (Preserving OriginalDNGShare contract)
+            // Share Control (Preserving OriginalDNGShare contract; non-DNG encodes lazily on background thread ONLY when tapped!)
             if item.saveFormat == .dng {
                 if let url = item.rawLocalFileURL, FileManager.default.fileExists(atPath: url.path) {
                     ShareLink(item: url) {
@@ -836,16 +866,24 @@ public struct CapturedPhotoPreviewView: View {
                         shareIconLabel
                     }
                 }
-            } else if let shareURL = currentPhotoShareURL {
-                ShareLink(
-                    item: shareURL,
-                    preview: SharePreview(
-                        "AlignAI Studio • \(activePreset.rawValue)",
-                        image: Image(uiImage: UIImage(cgImage: currentProcessedImage))
-                    )
-                ) {
-                    shareIconLabel
+            } else {
+                Button(action: { prepareAndPresentShareSheet() }) {
+                    if isPreparingShare {
+                        VStack(spacing: 3) {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                .scaleEffect(0.75)
+                            Text("Chuẩn bị...")
+                                .font(.system(size: 10.0, weight: .medium, design: .rounded))
+                        }
+                        .foregroundColor(.white.opacity(0.80))
+                        .frame(width: 70, height: 44)
+                    } else {
+                        shareIconLabel
+                    }
                 }
+                .buttonStyle(.plain)
+                .disabled(isPreparingShare || isProcessingFilter)
             }
         }
         .padding(.horizontal, 18)
@@ -998,12 +1036,18 @@ public struct CapturedPhotoPreviewView: View {
                 ) ?? working
             }
 
-            let hist = PhotoDetailHistogramSnapshot.compute(from: working)
+            let previewDisplayUI = Self.downsampleForFastDisplay(working, maxSide: 2400)
+            let miniUI = Self.downsampleForFastDisplay(working, maxSide: 220)
+            let fullUI = UIImage(cgImage: working)
 
             DispatchQueue.main.async {
                 withAnimation(.easeInOut(duration: 0.16)) {
                     self.currentProcessedImage = working
-                    self.histogramSnapshot = hist
+                    self.cachedFullResUIImage = fullUI
+                    self.cachedDisplayUIImage = previewDisplayUI
+                    self.cachedMiniMapUIImage = miniUI
+                    self.cachedShareURL = nil
+                    self.isHistogramStale = true
                     self.isProcessingFilter = false
                 }
             }
@@ -1059,8 +1103,12 @@ public struct CapturedPhotoPreviewView: View {
         isPeekingOriginal = false
         isSplitCompareMode = false
         currentProcessedImage = item.originalImage
+        cachedFullResUIImage = UIImage(cgImage: item.originalImage)
+        cachedDisplayUIImage = cachedOriginalDisplayUIImage
+        cachedShareURL = nil
+        isHistogramStale = true
         hasSavedNewEnhancement = false
-        refreshHistogram(for: item.originalImage)
+        rebuildDisplayCachesAsync(processed: item.originalImage, original: nil)
     }
 
     private func refreshHistogram(for image: CGImage) {
@@ -1068,7 +1116,109 @@ public struct CapturedPhotoPreviewView: View {
             let snap = PhotoDetailHistogramSnapshot.compute(from: image)
             DispatchQueue.main.async {
                 self.histogramSnapshot = snap
+                self.isHistogramStale = false
             }
+        }
+    }
+
+    private func rebuildDisplayCachesAsync(processed: CGImage, original: CGImage?) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let displayUI = Self.downsampleForFastDisplay(processed, maxSide: 2400)
+            let miniUI = Self.downsampleForFastDisplay(processed, maxSide: 220)
+            let origUI = original.map { Self.downsampleForFastDisplay($0, maxSide: 2400) }
+            DispatchQueue.main.async {
+                self.cachedDisplayUIImage = displayUI
+                self.cachedMiniMapUIImage = miniUI
+                if let origUI {
+                    self.cachedOriginalDisplayUIImage = origUI
+                }
+            }
+        }
+    }
+
+    private static func downsampleForFastDisplay(_ cgImage: CGImage, maxSide: CGFloat) -> UIImage {
+        let w = CGFloat(cgImage.width)
+        let h = CGFloat(cgImage.height)
+        let longest = max(w, h)
+        guard longest > maxSide, w > 0, h > 0 else {
+            // Still force eager bitmap decode off main thread so SwiftUI doesn't decode on first zoom frame
+            let ui = UIImage(cgImage: cgImage)
+            return ui.preparingForDisplay() ?? ui
+        }
+        let scale = maxSide / longest
+        let targetSize = CGSize(width: round(w * scale), height: round(h * scale))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1.0
+        format.opaque = true
+        let downsampled = UIGraphicsImageRenderer(size: targetSize, format: format).image { ctx in
+            ctx.cgContext.interpolationQuality = .high
+            UIImage(cgImage: cgImage).draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+        return downsampled.preparingForDisplay() ?? downsampled
+    }
+
+    private func prepareAndPresentShareSheet() {
+        if let existing = cachedShareURL, FileManager.default.fileExists(atPath: existing.path) {
+            isShowingShareSheet = true
+            return
+        }
+        isPreparingShare = true
+        let cgToExport = currentProcessedImage
+        let format = item.saveFormat
+        let itemID = item.id
+        let preserveOrig = item.preservesOriginalFile && !hasModifiedSinceOpen && (currentProcessedImage === item.processedImage)
+        let rawData = preserveOrig ? item.rawPhotoData : nil
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let url = Self.writeShareFileOnBackground(
+                cgImage: cgToExport,
+                saveFormat: format,
+                itemID: itemID,
+                rawPhotoData: rawData
+            )
+            DispatchQueue.main.async {
+                self.isPreparingShare = false
+                if let url {
+                    self.cachedShareURL = url
+                    self.isShowingShareSheet = true
+                }
+            }
+        }
+    }
+
+    private static func writeShareFileOnBackground(
+        cgImage: CGImage,
+        saveFormat: PhotoSaveFormat,
+        itemID: UUID,
+        rawPhotoData: Data?
+    ) -> URL? {
+        let tempDir = FileManager.default.temporaryDirectory
+        if let data = rawPhotoData {
+            let ext = saveFormat == .jpeg ? "jpg" : "heic"
+            let url = tempDir.appendingPathComponent("AlignAI_Original_\(itemID.uuidString).\(ext)")
+            if (try? data.write(to: url, options: .atomic)) != nil {
+                return url
+            }
+        }
+        let isHEIC = saveFormat == .heif || saveFormat == .heic
+        let ext = isHEIC ? "heic" : "jpg"
+        let utType = isHEIC ? UTType.heic : UTType.jpeg
+        let fileURL = tempDir.appendingPathComponent("AlignAI_Studio_\(itemID.uuidString).\(ext)")
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, utType.identifier as CFString, 1, nil) else {
+            return nil
+        }
+        let props: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: 0.95,
+            kCGImagePropertyOrientation: 1
+        ]
+        CGImageDestinationAddImage(dest, cgImage, props as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        do {
+            try (data as Data).write(to: fileURL, options: .atomic)
+            return fileURL
+        } catch {
+            return nil
         }
     }
 
@@ -1132,7 +1282,7 @@ public struct CapturedPhotoPreviewView: View {
         let indOffsetY = min(maxShiftY, max(-maxShiftY, rawIndOffsetY))
 
         ZStack {
-            Image(uiImage: UIImage(cgImage: displayCG))
+            Image(uiImage: cachedMiniMapUIImage)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: miniW, height: miniH)
@@ -1228,47 +1378,6 @@ public struct CapturedPhotoPreviewView: View {
         }
     }
 
-    private var originalPhotoShareURL: URL? {
-        guard item.preservesOriginalFile, !hasModifiedSinceOpen,
-              currentProcessedImage === item.processedImage,
-              let data = item.rawPhotoData else { return nil }
-        let ext = item.saveFormat == .jpeg ? "jpg" : "heic"
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("AlignAI_Original_\(item.id.uuidString).\(ext)")
-        do {
-            try data.write(to: url, options: .atomic)
-            return url
-        } catch {
-            return nil
-        }
-    }
-
-    private var currentPhotoShareURL: URL? {
-        if let originalURL = originalPhotoShareURL {
-            return originalURL
-        }
-        let tempDir = FileManager.default.temporaryDirectory
-        let isHEIC = item.saveFormat == .heif || item.saveFormat == .heic
-        let ext = isHEIC ? "heic" : "jpg"
-        let utType = isHEIC ? UTType.heic : UTType.jpeg
-        let fileURL = tempDir.appendingPathComponent("AlignAI_Studio_\(item.id.uuidString).\(ext)")
-        let data = NSMutableData()
-        guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, utType.identifier as CFString, 1, nil) else {
-            return nil
-        }
-        let props: [CFString: Any] = [
-            kCGImageDestinationLossyCompressionQuality: 0.96,
-            kCGImagePropertyOrientation: 1
-        ]
-        CGImageDestinationAddImage(dest, currentProcessedImage, props as CFDictionary)
-        guard CGImageDestinationFinalize(dest) else { return nil }
-        do {
-            try (data as Data).write(to: fileURL, options: .atomic)
-            return fileURL
-        } catch {
-            return nil
-        }
-    }
-
     private var formatBadgeTitle: String {
         if item.saveFormat == .dng { return "RAW DNG" }
         if item.livePhotoMovieURL != nil { return "LIVE" }
@@ -1355,4 +1464,12 @@ private struct PhotoDetailHistogramCanvasView: View {
             }
         }
     }
+}
+
+private struct CapturedPhotoActivityShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

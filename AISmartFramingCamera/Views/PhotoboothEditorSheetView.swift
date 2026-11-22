@@ -1,6 +1,8 @@
 import SwiftUI
 import UIKit
 import PhotosUI
+import AVKit
+import AVFoundation
 
 private enum PhotoboothEditorTab: String, CaseIterable, Identifiable {
     case frames = "Khung"
@@ -47,10 +49,18 @@ public struct PhotoboothEditorSheetView: View {
     @State private var aiFeedbackMessage: String? = nil
     @State private var isStylizingSlots: Bool = false
 
-    // Saving / Sharing
+    // Saving / Sharing / 9:16 Timelapse Video
     @State private var isSavingStrip: Bool = false
     @State private var shareImage: UIImage? = nil
     @State private var showShareSheet: Bool = false
+    @State private var showTimelapseSheet: Bool = false
+
+    // 120Hz Cached Base Strip Preview + On-Device Vision Semantic Face/Space Anchors
+    @State private var cachedBaseStripImage: UIImage? = nil
+    @State private var baseStripRevision: Int = 0
+    @State private var slotSemanticMaps: [PhotoboothSlotSemanticMap] = []
+    @State private var isSmartAnchorEnabled: Bool = true
+    @State private var isAnalyzingFaces: Bool = false
 
     public init(viewModel: CameraViewModel) {
         self.viewModel = viewModel
@@ -137,6 +147,7 @@ public struct PhotoboothEditorSheetView: View {
                        let ui = UIImage(data: data),
                        let cg = Self.normalizedUprightCGImage(ui) {
                         viewModel.replacePhotoboothSlot(idx, cgImage: cg)
+                        baseStripRevision &+= 1
                     }
                     replacePhotoItem = nil
                 }
@@ -145,6 +156,24 @@ public struct PhotoboothEditorSheetView: View {
                 if let shareImage {
                     PhotoboothShareSheet(items: [shareImage])
                 }
+            }
+            .fullScreenCover(isPresented: $showTimelapseSheet) {
+                PhotoboothTimelapsePreviewSheet(
+                    viewModel: viewModel,
+                    assetManager: assetManager
+                )
+            }
+            .onAppear {
+                rebuildBaseStripPreviewCache()
+                refreshVisionSlotAnchors()
+            }
+            .onChangeCompatible(of: viewModel.photoboothStripConfig) { _ in
+                rebuildBaseStripPreviewCache()
+                refreshVisionSlotAnchors()
+            }
+            .onChangeCompatible(of: baseStripRevision) { _ in
+                rebuildBaseStripPreviewCache()
+                refreshVisionSlotAnchors()
             }
         }
     }
@@ -180,6 +209,30 @@ public struct PhotoboothEditorSheetView: View {
             .buttonStyle(.plain)
 
             Spacer()
+
+            // Nút xem & xuất Video Tua Nhanh Hậu Trường 9:16 kiểu Life4Cuts / Reels
+            Button(action: {
+                HapticFeedbackService.shared.triggerLight()
+                showTimelapseSheet = true
+            }) {
+                HStack(spacing: 4.5) {
+                    Image(systemName: "play.rectangle.fill")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("Video")
+                        .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(AlignTheme.studioAccent)
+                .padding(.horizontal, 10)
+                .frame(height: 34)
+                .background(
+                    Capsule()
+                        .fill(AlignTheme.studioAccentSoft)
+                        .overlay(Capsule().stroke(AlignTheme.studioAccentBorder, lineWidth: 0.7))
+                )
+            }
+            .buttonStyle(.plain)
+            .disabled(viewModel.photoboothFilledCount == 0)
+            .accessibilityLabel("Xem video tua nhanh quá trình chụp")
 
             Button(action: prepareShareStrip) {
                 Image(systemName: "square.and.arrow.up")
@@ -224,15 +277,7 @@ public struct PhotoboothEditorSheetView: View {
                 marginScale: viewModel.photoboothStripConfig.marginScale
             )
 
-            // Base Strip Render (chỉ vẽ nền + các khung ảnh + chữ, còn sticker được render interactive ở trên để kéo mượt 120Hz!)
-            let baseCG = PhotoboothStripRenderer.renderStrip(
-                slots: viewModel.photoboothSlots,
-                config: viewModel.photoboothStripConfig,
-                stickers: [],
-                assetManager: assetManager,
-                targetWidth: max(360, stripW * 2.0)
-            )
-
+            // Sử dụng ảnh dải nền đã cache trong @State để kéo/phóng/xoay sticker mượt 120Hz không giật
             ZStack {
                 Color.clear
                     .contentShape(Rectangle())
@@ -241,9 +286,13 @@ public struct PhotoboothEditorSheetView: View {
                     }
 
                 ZStack {
-                    if let baseCG {
-                        Image(uiImage: UIImage(cgImage: baseCG))
+                    if let cachedBaseStripImage {
+                        Image(uiImage: cachedBaseStripImage)
                             .resizable()
+                            .frame(width: stripSize.width, height: stripSize.height)
+                    } else {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.white.opacity(0.08))
                             .frame(width: stripSize.width, height: stripSize.height)
                     }
 
@@ -450,10 +499,76 @@ public struct PhotoboothEditorSheetView: View {
         .padding(.top, 4)
     }
 
-    // MARK: - Tab 2: Stickers (24 Bundled + 36 Live Online Packs + Custom AI/Cutouts)
+    // MARK: - Tab 2: Stickers (24 Bundled + 48 Live Online Packs + Vision Smart Placement + Custom AI/Cutouts)
 
     private var stickersTabPanel: some View {
-        VStack(spacing: 8) {
+        let detectedFaceTotal = slotSemanticMaps.reduce(0) { $0 + $1.faces.count }
+
+        return VStack(spacing: 6.5) {
+            // Dải AI Vision Tự Dán Thông Minh Đa Vùng (Đỉnh đầu · Mắt · Kẹp tóc · Gò má · Vai · Góc trống không che mặt)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    Button(action: {
+                        isSmartAnchorEnabled.toggle()
+                        HapticFeedbackService.shared.triggerSelectionChange()
+                    }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: isSmartAnchorEnabled ? "face.smiling.inverse" : "hand.draw")
+                                .font(.system(size: 10.5, weight: .bold))
+                            Text(isSmartAnchorEnabled
+                                ? (detectedFaceTotal > 0 ? "AI Neo (\(detectedFaceTotal) mặt)" : "AI Neo góc trống")
+                                : "Đặt tự do")
+                                .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                        }
+                        .foregroundColor(isSmartAnchorEnabled ? .black : .white.opacity(0.78))
+                        .padding(.horizontal, 9)
+                        .frame(height: 25)
+                        .background(Capsule().fill(isSmartAnchorEnabled ? AlignTheme.studioAccent : Color.white.opacity(0.10)))
+                    }
+                    .buttonStyle(.plain)
+
+                    ForEach(PhotoboothAutoDecorateStyle.allCases) { autoStyle in
+                        Button(action: {
+                            applySmartAutoDecorate(style: autoStyle)
+                        }) {
+                            HStack(spacing: 3.5) {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 9.5, weight: .bold))
+                                Text(autoStyle.rawValue)
+                                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                            }
+                            .foregroundColor(AlignTheme.studioAccent)
+                            .padding(.horizontal, 9)
+                            .frame(height: 25)
+                            .background(
+                                Capsule()
+                                    .fill(AlignTheme.studioAccentSoft)
+                                    .overlay(Capsule().stroke(AlignTheme.studioAccentBorder, lineWidth: 0.65))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isAnalyzingFaces)
+                    }
+
+                    if !viewModel.photoboothPlacedStickers.isEmpty {
+                        Button(action: {
+                            viewModel.photoboothPlacedStickers.removeAll()
+                            selectedStickerID = nil
+                            HapticFeedbackService.shared.triggerLight()
+                        }) {
+                            Text("Xóa hết")
+                                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white.opacity(0.75))
+                                .padding(.horizontal, 9)
+                                .frame(height: 25)
+                                .background(Capsule().fill(Color.white.opacity(0.08)))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 14)
+            }
+
             // Category pills
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -805,8 +920,76 @@ public struct PhotoboothEditorSheetView: View {
 
     // MARK: - Interactive Logic Helpers
 
+    private func rebuildBaseStripPreviewCache() {
+        let stripCG = PhotoboothStripRenderer.renderStrip(
+            slots: viewModel.photoboothSlots,
+            config: viewModel.photoboothStripConfig,
+            stickers: [],
+            assetManager: assetManager,
+            targetWidth: 720
+        )
+        if let stripCG {
+            cachedBaseStripImage = UIImage(cgImage: stripCG)
+        }
+    }
+
+    private func refreshVisionSlotAnchors() {
+        let currentSlots = viewModel.photoboothSlots
+        let currentConfig = viewModel.photoboothStripConfig
+        isAnalyzingFaces = true
+        Task {
+            let maps = await PhotoboothSmartPlacementEngine.analyzeSlots(
+                slots: currentSlots,
+                config: currentConfig
+            )
+            await MainActor.run {
+                self.slotSemanticMaps = maps
+                self.isAnalyzingFaces = false
+            }
+        }
+    }
+
+    private func applySmartAutoDecorate(style: PhotoboothAutoDecorateStyle) {
+        HapticFeedbackService.shared.triggerMedium()
+        Task {
+            var maps = slotSemanticMaps
+            if maps.isEmpty {
+                maps = await PhotoboothSmartPlacementEngine.analyzeSlots(
+                    slots: viewModel.photoboothSlots,
+                    config: viewModel.photoboothStripConfig
+                )
+            }
+            let available = assetManager.bundledStickers
+                + assetManager.onlineStickers.filter { assetManager.downloadedOnlineIDs.contains($0.id) }
+            let generated = PhotoboothSmartPlacementEngine.generateAutoDecoratedStickers(
+                style: style,
+                maps: maps,
+                availableAssets: available,
+                config: viewModel.photoboothStripConfig
+            )
+            await MainActor.run {
+                self.slotSemanticMaps = maps
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+                    self.viewModel.photoboothPlacedStickers = generated
+                    self.selectedStickerID = generated.last?.id
+                }
+            }
+        }
+    }
+
     private func placeSticker(_ asset: PhotoboothStickerAsset) {
         HapticFeedbackService.shared.triggerLight()
+        if isSmartAnchorEnabled && !slotSemanticMaps.isEmpty {
+            let placed = PhotoboothSmartPlacementEngine.suggestPlacement(
+                for: asset,
+                maps: slotSemanticMaps,
+                existingStickers: viewModel.photoboothPlacedStickers,
+                config: viewModel.photoboothStripConfig
+            )
+            viewModel.photoboothPlacedStickers.append(placed)
+            selectedStickerID = placed.id
+            return
+        }
         let jitterX = CGFloat.random(in: -0.06...0.06)
         let jitterY = CGFloat.random(in: -0.06...0.06)
         let newSticker = PlacedPhotoboothSticker(
@@ -842,6 +1025,7 @@ public struct PhotoboothEditorSheetView: View {
               var slot = viewModel.photoboothSlots[index] else { return }
         slot.isMirrored.toggle()
         viewModel.photoboothSlots[index] = slot
+        baseStripRevision &+= 1
     }
 
     private func toggleSlotAIStyle(_ index: Int) {
@@ -849,6 +1033,7 @@ public struct PhotoboothEditorSheetView: View {
               var slot = viewModel.photoboothSlots[index] else { return }
         slot.isAIStyleActive.toggle()
         viewModel.photoboothSlots[index] = slot
+        baseStripRevision &+= 1
     }
 
     private func applyAutoOutfitColor() {
@@ -916,6 +1101,7 @@ public struct PhotoboothEditorSheetView: View {
             }
             isStylizingSlots = false
             if updatedCount > 0 {
+                baseStripRevision &+= 1
                 aiFeedbackMessage = "Đã chuyển đổi \(updatedCount) khung sang phong cách \(targetStyle.displayName)!"
             } else {
                 aiFeedbackMessage = firstError ?? "Không thể chuyển đổi phong cách AI lúc này."
@@ -1061,4 +1247,275 @@ private struct PhotoboothShareSheet: UIViewControllerRepresentable {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Photobooth 9:16 Behind-the-Scenes Timelapse Video Preview & Social Export Sheet
+private struct PhotoboothTimelapsePreviewSheet: View {
+    @ObservedObject var viewModel: CameraViewModel
+    @ObservedObject var assetManager: PhotoboothAssetManager
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var selectedStyle: PhotoboothTimelapseStyle = .movingStrip
+    @State private var selectedSpeed: PhotoboothTimelapseSpeed = .x3
+    @State private var isRendering: Bool = true
+    @State private var renderProgress: Double = 0.0
+    @State private var exportedVideoURL: URL? = nil
+    @State private var player: AVPlayer? = nil
+    @State private var errorMessage: String? = nil
+    @State private var isSavingVideo: Bool = false
+    @State private var hasSavedVideo: Bool = false
+    @State private var showShareSheet: Bool = false
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(red: 0.04, green: 0.042, blue: 0.052).ignoresSafeArea()
+
+                VStack(spacing: 12) {
+                    // Header Bar
+                    HStack {
+                        Button(action: {
+                            player?.pause()
+                            dismiss()
+                        }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 34, height: 34)
+                                .background(Circle().fill(Color.white.opacity(0.10)))
+                        }
+                        .buttonStyle(.plain)
+
+                        Spacer()
+
+                        VStack(spacing: 2) {
+                            Text("Video Tua Nhanh Photobooth")
+                                .font(.system(size: 14, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                            Text("9:16 Full HD · Sẵn sàng đăng TikTok / Reels")
+                                .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.58))
+                        }
+
+                        Spacer()
+
+                        Color.clear.frame(width: 34, height: 34)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+
+                    // 9:16 Video Player Viewport
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(Color.black.opacity(0.65))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .stroke(Color.white.opacity(0.12), lineWidth: 0.7)
+                            )
+
+                        if let player, !isRendering {
+                            VideoPlayer(player: player)
+                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .onAppear { player.play() }
+                        } else if isRendering {
+                            VStack(spacing: 12) {
+                                ProgressView(value: renderProgress, total: 1.0)
+                                    .progressViewStyle(.linear)
+                                    .tint(AlignTheme.studioAccent)
+                                    .frame(width: 180)
+                                Text("Đang dựng video tua nhanh \(Int(round(renderProgress * 100)))%...")
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.white)
+                                Text("Ghép khung in thật + sticker + quá trình tạo dáng")
+                                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                                    .foregroundColor(.white.opacity(0.58))
+                            }
+                            .padding(24)
+                        } else if let errorMessage {
+                            VStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 28))
+                                    .foregroundColor(AlignTheme.studioAccent)
+                                Text(errorMessage)
+                                    .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                                    .foregroundColor(.white.opacity(0.85))
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 24)
+                            }
+                        }
+                    }
+                    .aspectRatio(9.0 / 16.0, contentMode: .fit)
+                    .frame(maxHeight: .infinity)
+                    .padding(.horizontal, 20)
+
+                    // Style & Speed Controls
+                    VStack(spacing: 10) {
+                        HStack(spacing: 6) {
+                            ForEach(PhotoboothTimelapseStyle.allCases) { st in
+                                let isSel = selectedStyle == st
+                                Button(action: {
+                                    guard selectedStyle != st else { return }
+                                    selectedStyle = st
+                                    regenerateVideo()
+                                }) {
+                                    Text(st.rawValue)
+                                        .font(.system(size: 11.5, weight: isSel ? .bold : .medium, design: .rounded))
+                                        .foregroundColor(isSel ? .black : .white.opacity(0.82))
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 32)
+                                        .background(Capsule().fill(isSel ? Color.white : Color.white.opacity(0.09)))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(isRendering)
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            Text("Tốc độ tua")
+                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white.opacity(0.65))
+
+                            Spacer()
+
+                            ForEach(PhotoboothTimelapseSpeed.allCases) { spd in
+                                let isSel = selectedSpeed == spd
+                                Button(action: {
+                                    guard selectedSpeed != spd else { return }
+                                    selectedSpeed = spd
+                                    regenerateVideo()
+                                }) {
+                                    Text(spd.label)
+                                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                                        .foregroundColor(isSel ? .black : .white.opacity(0.84))
+                                        .padding(.horizontal, 14)
+                                        .frame(height: 28)
+                                        .background(Capsule().fill(isSel ? AlignTheme.studioAccent : Color.white.opacity(0.09)))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(isRendering)
+                            }
+                        }
+
+                        // Save & Share Actions
+                        HStack(spacing: 10) {
+                            Button(action: saveVideoToPhotos) {
+                                HStack(spacing: 6) {
+                                    if isSavingVideo {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .black))
+                                            .scaleEffect(0.8)
+                                    } else {
+                                        Image(systemName: hasSavedVideo ? "checkmark" : "square.and.arrow.down")
+                                            .font(.system(size: 13, weight: .bold))
+                                    }
+                                    Text(hasSavedVideo ? "Đã lưu Video" : "Lưu Video")
+                                        .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                                }
+                                .foregroundColor(hasSavedVideo ? .white : .black)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 44)
+                                .background(Capsule().fill(hasSavedVideo ? Color.green.opacity(0.78) : AlignTheme.studioAccent))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isRendering || exportedVideoURL == nil || isSavingVideo)
+
+                            Button(action: { showShareSheet = true }) {
+                                HStack(spacing: 5) {
+                                    Image(systemName: "square.and.arrow.up")
+                                        .font(.system(size: 13.5, weight: .bold))
+                                    Text("Đăng MXH")
+                                        .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 18)
+                                .frame(height: 44)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.white.opacity(0.13))
+                                        .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.7))
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isRendering || exportedVideoURL == nil)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                }
+            }
+            .toolbar(.hidden, for: .navigationBar)
+            .preferredColorScheme(.dark)
+            .onAppear {
+                regenerateVideo()
+            }
+            .onDisappear {
+                player?.pause()
+                player = nil
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
+                guard let finishedItem = notification.object as? AVPlayerItem,
+                      finishedItem == player?.currentItem else { return }
+                player?.seek(to: .zero)
+                player?.play()
+            }
+            .sheet(isPresented: $showShareSheet) {
+                if let url = exportedVideoURL {
+                    PhotoboothShareSheet(items: [url])
+                }
+            }
+        }
+    }
+
+    private func regenerateVideo() {
+        player?.pause()
+        player = nil
+        isRendering = true
+        hasSavedVideo = false
+        renderProgress = 0.02
+        errorMessage = nil
+
+        let slots = viewModel.photoboothSlots
+        let config = viewModel.photoboothStripConfig
+        let stickers = viewModel.photoboothPlacedStickers
+        let recorded = PhotoboothTimelapseRecorder.shared.snapshotFramesBySlot()
+        let style = selectedStyle
+        let speed = selectedSpeed
+
+        Task {
+            do {
+                let url = try await PhotoboothTimelapseExporter.exportTimelapseVideo(
+                    slots: slots,
+                    config: config,
+                    stickers: stickers,
+                    assetManager: assetManager,
+                    recordedFramesBySlot: recorded,
+                    style: style,
+                    speed: speed
+                ) { pct in
+                    self.renderProgress = pct
+                }
+                await MainActor.run {
+                    self.exportedVideoURL = url
+                    let avPlayer = AVPlayer(url: url)
+                    self.player = avPlayer
+                    self.isRendering = false
+                    avPlayer.play()
+                }
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = error.localizedDescription
+                    self.isRendering = false
+                }
+            }
+        }
+    }
+
+    private func saveVideoToPhotos() {
+        guard let url = exportedVideoURL else { return }
+        isSavingVideo = true
+        viewModel.savePhotoboothTimelapseVideoToLibrary(url: url) { ok in
+            isSavingVideo = false
+            hasSavedVideo = ok
+        }
+    }
 }

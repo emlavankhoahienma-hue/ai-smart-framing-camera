@@ -331,12 +331,71 @@ public enum PhotoboothAssetSource: Codable, Equatable, Sendable {
     case localFile(filename: String)
 }
 
+/// Vùng neo thông minh cho từng loại sticker (Vision phát hiện khuôn mặt & góc trống, KHÔNG dán bừa che mặt).
+public enum PhotoboothStickerAnchorZone: String, Codable, Equatable, Sendable {
+    case headCrown      // Trên đỉnh đầu / cài tóc (tai thỏ, tai mèo, vương miện)
+    case eyeBridge      // Sống mũi / mắt (kính râm)
+    case hairTemple     // Kẹp tóc thái dương / bên mai (nơ lụa, hoa cúc, bướm)
+    case cheekAccent    // Gò má ngoài an toàn (dấu son môi, cherry, tim nhỏ)
+    case shoulderBack   // Bên vai / sau lưng (cánh thiên thần, gấu bông, tai nghe)
+    case safeCorner     // Góc trống không che khuôn mặt (cà phê, bánh, sao, film, tem, mây)
+}
+
+/// Chủ đề tự động dán sticker thông minh 1 chạm theo nhận diện khuôn mặt & không gian trống.
+public enum PhotoboothAutoDecorateStyle: String, CaseIterable, Identifiable, Sendable {
+    case smartAdaptive = "Tự động theo mặt"
+    case coquette = "Coquette"
+    case y2kRetro = "Y2K Retro"
+    case minimalCafe = "Tối giản Cafe"
+
+    public var id: String { rawValue }
+}
+
+/// Phong cách xuất video tua nhanh hậu trường Photobooth (chuẩn đăng TikTok / IG Reels 9:16).
+public enum PhotoboothTimelapseStyle: String, CaseIterable, Identifiable, Sendable {
+    case movingStrip = "Khung động (Life4Cuts)"
+    case btsReelsReveal = "Hậu trường + Lật ảnh"
+
+    public var id: String { rawValue }
+}
+
+/// Tốc độ tua nhanh cho video hậu trường Photobooth.
+public enum PhotoboothTimelapseSpeed: Double, CaseIterable, Identifiable, Sendable {
+    case x2 = 2.0
+    case x3 = 3.0
+    case x4 = 4.0
+
+    public var id: Double { rawValue }
+
+    public var label: String {
+        switch self {
+        case .x2: return "2x"
+        case .x3: return "3x"
+        case .x4: return "4x"
+        }
+    }
+}
+
+/// Khung hình nén JPEG nhẹ ghi lại tự động trong quá trình tạo dáng chụp Photobooth.
+public struct PhotoboothTimelapseClipFrame: Sendable {
+    public let slotIndex: Int
+    public let timestamp: TimeInterval
+    public let jpegData: Data
+
+    public init(slotIndex: Int, timestamp: TimeInterval, jpegData: Data) {
+        self.slotIndex = slotIndex
+        self.timestamp = timestamp
+        self.jpegData = jpegData
+    }
+}
+
 public struct PhotoboothStickerAsset: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public var title: String
     public var category: PhotoboothAssetCategory
     public var onlinePack: PhotoboothOnlinePackCategory?
     public var source: PhotoboothAssetSource
+    public var anchorZone: PhotoboothStickerAnchorZone
     public var isAIGenerated: Bool
 
     public init(
@@ -345,6 +404,7 @@ public struct PhotoboothStickerAsset: Identifiable, Codable, Equatable, Sendable
         category: PhotoboothAssetCategory,
         onlinePack: PhotoboothOnlinePackCategory? = nil,
         source: PhotoboothAssetSource,
+        anchorZone: PhotoboothStickerAnchorZone = .safeCorner,
         isAIGenerated: Bool = false
     ) {
         self.id = id
@@ -352,7 +412,23 @@ public struct PhotoboothStickerAsset: Identifiable, Codable, Equatable, Sendable
         self.category = category
         self.onlinePack = onlinePack
         self.source = source
+        self.anchorZone = anchorZone
         self.isAIGenerated = isAIGenerated
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, category, onlinePack, source, anchorZone, isAIGenerated
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.title = try c.decode(String.self, forKey: .title)
+        self.category = try c.decode(PhotoboothAssetCategory.self, forKey: .category)
+        self.onlinePack = try c.decodeIfPresent(PhotoboothOnlinePackCategory.self, forKey: .onlinePack)
+        self.source = try c.decode(PhotoboothAssetSource.self, forKey: .source)
+        self.anchorZone = try c.decodeIfPresent(PhotoboothStickerAnchorZone.self, forKey: .anchorZone) ?? .safeCorner
+        self.isAIGenerated = try c.decodeIfPresent(Bool.self, forKey: .isAIGenerated) ?? false
     }
 }
 

@@ -303,28 +303,16 @@ public struct CameraMainView: View {
                                     .stroke(Color.white.opacity(0.10), lineWidth: 0.65)
                             }
                         }
-                        // In-Viewfinder Stereo Audio VU Level Meter / Photobooth Quick Trigger (Top Leading)
+                        // In-Viewfinder Stereo Audio VU Level Meter (Top Leading)
                         .overlay(alignment: .topLeading) {
-                            let proTopOffset: CGFloat = (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 64 : 0
-                            let horizonOffset: CGFloat = viewModel.isHorizonLockEnabled ? 34 : 0
-
                             if viewModel.showAudioLevelMeter && !viewModel.isCameraHibernating && viewModel.captureMode.isVideo {
                                 AudioVULevelMeterView(levels: viewModel.audioLevels)
                                     .padding(.top, layout.viewfinderTopOverlayInset)
                                     .padding(.leading, 10)
                                     .transition(.opacity)
-                            } else if !viewModel.captureMode.isVideo &&
-                                      !viewModel.isCameraHibernating &&
-                                      !isPhotoStylePadActive &&
-                                      !viewModel.isPhotoboothModeActive &&
-                                      !viewModel.isWindowedZoomActive {
-                                PhotoboothQuickTriggerButton(viewModel: viewModel)
-                                    .padding(.top, layout.viewfinderTopOverlayInset + proTopOffset + horizonOffset)
-                                    .padding(.leading, 10)
-                                    .transition(.scale(scale: 0.90, anchor: .topLeading).combined(with: .opacity))
                             }
                         }
-                        // Expanded Pro RGB + Luma Scope HUD / Photographic Styles 5x5 Quick Trigger (Top Trailing)
+                        // Expanded Pro RGB + Luma Scope HUD / Photographic Styles 5x5 Quick Trigger (Top Trailing, ẩn ở chế độ PRO để giữ khung ngắm tinh gọn)
                         .overlay(alignment: .topTrailing) {
                             let proTopOffset: CGFloat = (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 64 : 0
                             let horizonOffset: CGFloat = viewModel.isHorizonLockEnabled ? 34 : 0
@@ -336,10 +324,11 @@ public struct CameraMainView: View {
                                         .padding(.trailing, 10)
                                         .transition(.scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity))
                                 } else if !viewModel.captureMode.isVideo &&
+                                          !viewModel.isProPhotoModeEnabled &&
                                           !viewModel.isCameraHibernating &&
                                           !viewModel.isWindowedZoomActive {
                                     PhotographicStyleQuickTriggerButton(viewModel: viewModel)
-                                        .padding(.top, layout.viewfinderTopOverlayInset + proTopOffset + horizonOffset)
+                                        .padding(.top, layout.viewfinderTopOverlayInset + horizonOffset)
                                         .padding(.trailing, 10)
                                         .transition(.scale(scale: 0.90, anchor: .topTrailing).combined(with: .opacity))
                                 }

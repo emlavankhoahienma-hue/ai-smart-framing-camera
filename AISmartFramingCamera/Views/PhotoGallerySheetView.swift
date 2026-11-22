@@ -71,7 +71,7 @@ public struct PhotoGallerySheetView: View {
                     }
                 }
             }
-            .navigationBarHidden(true)
+            .toolbar(.hidden, for: .navigationBar)
             .fullScreenCover(item: $selectedPreviewItem) { item in
                 CapturedPhotoPreviewView(item: item, viewModel: viewModel)
             }
