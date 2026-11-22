@@ -595,6 +595,60 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             self.assertIn(f"/* {filename} */", pbx)
             self.assertIn(f"/* {filename} in Sources */", pbx)
 
+    def test_18_filmic_metal_color_science_pipeline(self):
+        # 1. Single-Pass Metal Filmic Color Science Kernels (Gamut+C1 Rolloff, Local YIQ SH, Matte Fade+Exposure)
+        kernel = source("Services/FilmicColorScienceKernel.swift")
+        for token in [
+            "kernel void filmicGamutHighlightProtect(",
+            "kernel void filmicLocalShadowHighlightYIQ(",
+            "kernel void filmicMatteFadeAndExposure(",
+            "yNew + 0.95605023f * iNew + 0.62075494f * qNew",
+            "yNew - 0.27205234f * iNew - 0.64720571f * qNew",
+            "yNew - 1.10670432f * iNew + 1.70442128f * qNew",
+            "(-0.68f * s3) + (1.04f * s2) + (0.42f * s) + float3(0.145f)",
+            "makeQuarterResBlurGuide",
+            "applyPreLUTGamutAndHighlightProtection",
+            "applyLocalShadowHighlightRecovery",
+            "applyMatteFadeAndExposure",
+        ]:
+            self.assertIn(token, kernel)
+        self.assertNotIn("cbrtf(", kernel)
+        for m_ss in re.finditer(r"smoothstep\(\s*([+-]?\d+(?:\.\d+)?)f\s*,\s*([+-]?\d+(?:\.\d+)?)f", kernel):
+            self.assertLess(float(m_ss.group(1)), float(m_ss.group(2)), f"Reversed MSL smoothstep: {m_ss.group(0)}")
+
+        # 2. FilmSimulationCore: Pre-LUT protection, 60 FPS quarter-res clamped Halation & Diffusion, physical grain
+        core = source("Services/FilmSimulations/FilmSimulationCore.swift")
+        self.assertIn("FilmicColorScience.applyPreLUTGamutAndHighlightProtection(to: input, threshold: 0.82)", core)
+        self.assertIn("CIColorClamp", core)
+        self.assertIn("let physicalScale = max(1.0, (maxDim / 1100.0)", core)
+        self.assertIn("public static func applyLocalShadowHighlight(", core)
+        self.assertIn("public static func applyMatteFade(", core)
+
+        # 3. FilmFilterEngine + CameraPreviewView: unified Extended Linear sRGB RGBAh + Local YIQ + Fade + Halation
+        engine = source("Services/FilmFilterEngine.swift")
+        for token in [
+            "public var fade: Float = 0.0",
+            "public var halation: Float = 0.0",
+            "CGColorSpace.extendedLinearSRGB",
+            "CIFormat.RGBAh",
+            "FilmSimulationCore.applyLocalShadowHighlight(",
+            "FilmSimulationCore.applyMatteFade(",
+            "FilmicColorScience.applyMatteFadeAndExposure(",
+        ]:
+            self.assertIn(token, engine)
+
+        preview = source("Views/CameraPreviewView.swift")
+        self.assertIn("CGColorSpace.extendedLinearSRGB", preview)
+        self.assertIn("CIFormat.RGBAh", preview)
+
+        overlay = source("Views/ProPhotoControlsOverlayView.swift")
+        self.assertIn('case fade = "Độ phai"', overlay)
+        self.assertIn('case halation = "Quầng sáng"', overlay)
+
+        pbx = PBXPROJ.read_text(encoding="utf-8")
+        self.assertIn("/* FilmicColorScienceKernel.swift */", pbx)
+        self.assertIn("/* FilmicColorScienceKernel.swift in Sources */", pbx)
+
 
 if __name__ == "__main__":
     unittest.main()

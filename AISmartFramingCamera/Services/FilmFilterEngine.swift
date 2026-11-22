@@ -22,6 +22,10 @@ public struct FilmSimulationTuning: Equatable, Sendable, Codable {
     public var grain: Float = 0.0
     /// Viền tối quang học góc ảnh (0.0 ... 1.0)
     public var vignette: Float = 0.0
+    /// Độ phai giấy ảnh cổ điển Matte Fade (0.0 ... 1.0)
+    public var fade: Float = 0.0
+    /// Quầng đỏ quang học Remjet Halation quanh nguồn sáng mạnh (0.0 ... 1.0)
+    public var halation: Float = 0.0
 
     public static let neutral = FilmSimulationTuning()
 
@@ -32,7 +36,9 @@ public struct FilmSimulationTuning: Equatable, Sendable, Codable {
         highlights: Float = 0.0,
         shadows: Float = 0.0,
         grain: Float = 0.0,
-        vignette: Float = 0.0
+        vignette: Float = 0.0,
+        fade: Float = 0.0,
+        halation: Float = 0.0
     ) {
         self.contrast = contrast
         self.saturation = saturation
@@ -41,6 +47,8 @@ public struct FilmSimulationTuning: Equatable, Sendable, Codable {
         self.shadows = shadows
         self.grain = grain
         self.vignette = vignette
+        self.fade = fade
+        self.halation = halation
     }
 
     public var isIdentity: Bool {
@@ -51,6 +59,8 @@ public struct FilmSimulationTuning: Equatable, Sendable, Codable {
             && abs(shadows) < 0.005
             && grain < 0.005
             && vignette < 0.005
+            && fade < 0.005
+            && halation < 0.005
     }
 }
 
@@ -134,13 +144,17 @@ public final class FilmFilterEngine: @unchecked Sendable {
     }
 
     public init() {
+        let linearCS = CGColorSpace(name: CGColorSpace.extendedLinearSRGB) ?? CGColorSpaceCreateDeviceRGB()
+        let baseOptions: [CIContextOption: Any] = [
+            .useSoftwareRenderer: false,
+            .priorityRequestLow: false,
+            .workingColorSpace: linearCS,
+            .workingFormat: CIFormat.RGBAh
+        ]
         if let metalDevice = MTLCreateSystemDefaultDevice() {
-            self.context = CIContext(mtlDevice: metalDevice, options: [
-                .useSoftwareRenderer: false,
-                .priorityRequestLow: false
-            ])
+            self.context = CIContext(mtlDevice: metalDevice, options: baseOptions)
         } else {
-            self.context = CIContext(options: [.useSoftwareRenderer: false])
+            self.context = CIContext(options: baseOptions)
         }
     }
 
@@ -192,19 +206,30 @@ public final class FilmFilterEngine: @unchecked Sendable {
             output = FilmSimulationCore.applyColorControls(output, contrast: contrastVal, saturation: satVal)
         }
 
-        // 3. Đường cong Vùng sáng (Highlights) & Vùng tối (Shadows)
+        // 3. Phục hồi Vùng sáng (Highlights) & Vùng tối (Shadows) cục bộ trong không gian YIQ có bù sắc độ (Single-Pass Metal)
         if abs(tuning.highlights) >= 0.005 || abs(tuning.shadows) >= 0.005 {
-            let sh = CGFloat(max(-0.40, min(0.40, tuning.shadows)))
-            let hi = CGFloat(max(-0.40, min(0.40, tuning.highlights)))
-            let p0 = CGPoint(x: 0.0, y: max(0.0, sh * 0.14))
-            let p1 = CGPoint(x: 0.25, y: max(0.05, min(0.45, 0.25 + sh * 0.20)))
-            let p2 = CGPoint(x: 0.50, y: 0.50)
-            let p3 = CGPoint(x: 0.75, y: max(0.55, min(0.95, 0.75 + hi * 0.20)))
-            let p4 = CGPoint(x: 1.0, y: min(1.0, max(0.86, 1.0 + hi * 0.12)))
-            output = FilmSimulationCore.applyToneCurve(output, p0: p0, p1: p1, p2: p2, p3: p3, p4: p4)
+            output = FilmSimulationCore.applyLocalShadowHighlight(
+                output,
+                shadows: max(-0.40, min(0.40, tuning.shadows)) * 1.45,
+                highlights: max(-0.40, min(0.40, tuning.highlights)) * 1.45
+            )
         }
 
-        // 4. Viền tối quang học (Vignette)
+        // 4. Độ phai giấy ảnh cổ điển Matte Fade (đường cong bậc 3 đơn điệu nghiêm ngặt)
+        if tuning.fade >= 0.005 {
+            output = FilmSimulationCore.applyMatteFade(output, intensity: min(1.0, tuning.fade))
+        }
+
+        // 5. Quầng đỏ quang học Remjet Halation 1/4 độ phân giải (60 FPS đồng nhất Preview & Ảnh xuất)
+        if tuning.halation >= 0.005 {
+            output = FilmSimulationCore.applyHalationGlow(
+                output,
+                intensity: min(0.65, tuning.halation * 0.55),
+                radius: 14.0
+            )
+        }
+
+        // 6. Viền tối quang học (Vignette)
         if tuning.vignette >= 0.005 {
             output = FilmSimulationCore.applyVignette(
                 output,
@@ -213,7 +238,7 @@ public final class FilmFilterEngine: @unchecked Sendable {
             )
         }
 
-        // 5. Hạt phim hữu cơ (bỏ qua bước blur nặng khi chạy preview 60 FPS)
+        // 7. Hạt phim hữu cơ chuẩn hóa kích thước vật lý theo độ phân giải thực tế
         if tuning.grain >= 0.005 {
             output = FilmSimulationCore.applyOrganicGrain(
                 output,
@@ -422,7 +447,16 @@ public final class FilmFilterEngine: @unchecked Sendable {
 
         let exposureBias = max(-1.2, min(1.2, params.exposureBias))
         if abs(exposureBias) > 0.02 {
-            output = FilmSimulationCore.applyExposure(output, ev: Float(exposureBias))
+            if exposureBias > 0.02 {
+                // Phơi sáng filmic chống cháy trắng bầu trời/đèn khi AI nâng sáng
+                output = FilmicColorScience.applyMatteFadeAndExposure(
+                    to: output,
+                    fade: 0.0,
+                    exposure: Float(exposureBias) * 0.75
+                )
+            } else {
+                output = FilmSimulationCore.applyExposure(output, ev: Float(exposureBias))
+            }
         }
 
         let warmth = max(-0.35, min(0.35, params.warmthShift))
@@ -451,12 +485,11 @@ public final class FilmFilterEngine: @unchecked Sendable {
         let highlight = max(-0.30, min(0.30, params.highlightRecovery))
         let shadow = max(-0.25, min(0.35, params.shadowLift))
         if abs(highlight) > 0.02 || abs(shadow) > 0.02 {
-            let p0 = CGPoint(x: 0.0, y: max(0.0, shadow * 0.15))
-            let p1 = CGPoint(x: 0.25, y: 0.25 + shadow * 0.10)
-            let p2 = CGPoint(x: 0.50, y: 0.50)
-            let p3 = CGPoint(x: 0.75, y: 0.75 - highlight * 0.10)
-            let p4 = CGPoint(x: 1.0, y: min(1.0, 1.0 - highlight * 0.15))
-            output = FilmSimulationCore.applyToneCurve(output, p0: p0, p1: p1, p2: p2, p3: p3, p4: p4)
+            output = FilmSimulationCore.applyLocalShadowHighlight(
+                output,
+                shadows: Float(shadow) * 1.35,
+                highlights: Float(-highlight) * 1.35
+            )
         }
 
         let vibrance = max(-0.15, min(0.25, params.vibranceBoost))

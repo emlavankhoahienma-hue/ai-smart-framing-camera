@@ -183,9 +183,12 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         self.device = device
         let queue = UltraWideWarpEngine.live.commandQueue ?? device.makeCommandQueue()!
         self.commandQueue = queue
+        let linearCS = CGColorSpace(name: CGColorSpace.extendedLinearSRGB) ?? CGColorSpaceCreateDeviceRGB()
         self.ciContext = CIContext(mtlCommandQueue: queue, options: [
             .useSoftwareRenderer: false,
-            .priorityRequestLow: false
+            .priorityRequestLow: false,
+            .workingColorSpace: linearCS,
+            .workingFormat: CIFormat.RGBAh
         ])
         self.viewModel = viewModel
         super.init()

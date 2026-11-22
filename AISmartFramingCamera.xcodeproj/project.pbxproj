@@ -103,6 +103,7 @@
 		C20000000000000000000082 /* PhotographicStyleModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000082 /* PhotographicStyleModels.swift */; };
 		C20000000000000000000083 /* PhotographicStyleMetalKernel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000083 /* PhotographicStyleMetalKernel.swift */; };
 		C20000000000000000000084 /* PhotographicStylesPadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000084 /* PhotographicStylesPadView.swift */; };
+		C20000000000000000000085 /* FilmicColorScienceKernel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000085 /* FilmicColorScienceKernel.swift */; };
 		C20000000000000000000076 /* NativeTrackingCore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000076 /* NativeTrackingCore.cpp */; };
 		C20000000000000000000079 /* NativeOpticsCore.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C10000000000000000000079 /* NativeOpticsCore.cpp */; };
 		C2000000000000000000007A /* NativeOpticsBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000000000000000000007A /* NativeOpticsBridge.swift */; };
@@ -207,6 +208,7 @@
 		C10000000000000000000082 /* PhotographicStyleModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotographicStyleModels.swift; sourceTree = "<group>"; };
 		C10000000000000000000083 /* PhotographicStyleMetalKernel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotographicStyleMetalKernel.swift; sourceTree = "<group>"; };
 		C10000000000000000000084 /* PhotographicStylesPadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotographicStylesPadView.swift; sourceTree = "<group>"; };
+		C10000000000000000000085 /* FilmicColorScienceKernel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilmicColorScienceKernel.swift; sourceTree = "<group>"; };
 		C10000000000000000000075 /* NativeTrackingCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NativeTrackingCore.h; sourceTree = "<group>"; };
 		C10000000000000000000076 /* NativeTrackingCore.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = NativeTrackingCore.cpp; sourceTree = "<group>"; };
 		C10000000000000000000078 /* NativeOpticsCore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NativeOpticsCore.h; sourceTree = "<group>"; };
@@ -313,6 +315,7 @@
 				C1000000000000000000007F /* ProPhotoManualControlsService.swift */,
 				C10000000000000000000081 /* HorizonLevelerService.swift */,
 				C10000000000000000000083 /* PhotographicStyleMetalKernel.swift */,
+				C10000000000000000000085 /* FilmicColorScienceKernel.swift */,
 				C10000000000000000000062 /* CharmPhotographicModel.swift */,
 				C10000000000000000000063 /* PortraitFramingEvidence.swift */,
 				C10000000000000000000064 /* CompositionTuning.swift */,
@@ -559,6 +562,7 @@
 				C20000000000000000000082 /* PhotographicStyleModels.swift in Sources */,
 				C20000000000000000000083 /* PhotographicStyleMetalKernel.swift in Sources */,
 				C20000000000000000000084 /* PhotographicStylesPadView.swift in Sources */,
+				C20000000000000000000085 /* FilmicColorScienceKernel.swift in Sources */,
 				C20000000000000000000062 /* CharmPhotographicModel.swift in Sources */,
 				C20000000000000000000063 /* PortraitFramingEvidence.swift in Sources */,
 				C20000000000000000000064 /* CompositionTuning.swift in Sources */,

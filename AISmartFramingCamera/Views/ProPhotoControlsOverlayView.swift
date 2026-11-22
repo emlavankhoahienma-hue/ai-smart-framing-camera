@@ -433,6 +433,8 @@ public enum FilmTuningAxis: String, CaseIterable, Identifiable, Sendable {
     case warmth = "Độ ấm"
     case highlights = "Vùng sáng"
     case shadows = "Vùng tối"
+    case fade = "Độ phai"
+    case halation = "Quầng sáng"
     case grain = "Hạt phim"
     case vignette = "Viền tối"
 
@@ -440,7 +442,7 @@ public enum FilmTuningAxis: String, CaseIterable, Identifiable, Sendable {
 
     public var isBipolar: Bool {
         switch self {
-        case .intensity, .grain, .vignette: return false
+        case .intensity, .fade, .halation, .grain, .vignette: return false
         default: return true
         }
     }
@@ -453,6 +455,8 @@ public enum FilmTuningAxis: String, CaseIterable, Identifiable, Sendable {
         case .warmth: return max(0, min(1, (Double(tuning.warmth) + 0.50) / 1.00))
         case .highlights: return max(0, min(1, (Double(tuning.highlights) + 0.40) / 0.80))
         case .shadows: return max(0, min(1, (Double(tuning.shadows) + 0.40) / 0.80))
+        case .fade: return max(0, min(1, Double(tuning.fade)))
+        case .halation: return max(0, min(1, Double(tuning.halation)))
         case .grain: return max(0, min(1, Double(tuning.grain)))
         case .vignette: return max(0, min(1, Double(tuning.vignette)))
         }
@@ -480,6 +484,10 @@ public enum FilmTuningAxis: String, CaseIterable, Identifiable, Sendable {
         case .shadows:
             let v = Float(-0.40 + t * 0.80)
             viewModel.filmTuning.shadows = abs(v) < 0.015 ? 0 : v
+        case .fade:
+            viewModel.filmTuning.fade = t < 0.02 ? 0 : Float(t)
+        case .halation:
+            viewModel.filmTuning.halation = t < 0.02 ? 0 : Float(t)
         case .grain:
             viewModel.filmTuning.grain = t < 0.02 ? 0 : Float(t)
         case .vignette:
@@ -506,6 +514,10 @@ public enum FilmTuningAxis: String, CaseIterable, Identifiable, Sendable {
         case .shadows:
             let p = Int(round(tuning.shadows * 100))
             return p == 0 ? "0" : String(format: "%+d", p)
+        case .fade:
+            return "\(Int(round(tuning.fade * 100)))%"
+        case .halation:
+            return "\(Int(round(tuning.halation * 100)))%"
         case .grain:
             return "\(Int(round(tuning.grain * 100)))%"
         case .vignette:
@@ -521,6 +533,8 @@ public enum FilmTuningAxis: String, CaseIterable, Identifiable, Sendable {
         case .warmth: return abs(tuning.warmth) >= 0.01
         case .highlights: return abs(tuning.highlights) >= 0.01
         case .shadows: return abs(tuning.shadows) >= 0.01
+        case .fade: return tuning.fade >= 0.01
+        case .halation: return tuning.halation >= 0.01
         case .grain: return tuning.grain >= 0.01
         case .vignette: return tuning.vignette >= 0.01
         }

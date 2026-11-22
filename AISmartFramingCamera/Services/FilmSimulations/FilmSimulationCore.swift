@@ -113,36 +113,31 @@ public enum FilmSimulationCore {
         return filter.outputImage ?? input
     }
 
-    // MARK: - 1. Organic Film Grain (Hat phim bac huu co Silver Halide)
+    // MARK: - 1. Organic Film Grain (Hat phim bac huu co Silver Halide chuan hoa kich thuoc vat ly 1080p == 12MP == 48MP)
     public static func applyOrganicGrain(_ input: CIImage, intensity: Float, grainSize: Float = 1.4) -> CIImage {
         guard intensity > 0.01 else { return input }
         guard let random = sharedRandomImage ?? CIFilter(name: "CIRandomGenerator")?.outputImage else { return input }
 
         let extent = input.extent
-        let croppedNoise = random.cropped(to: extent)
+        let maxDim = max(extent.width, extent.height)
+        guard maxDim > 1 else { return input }
+
+        // Chuẩn hóa tỷ lệ hạt vật lý theo kích thước ảnh thực tế (không bị vỡ hạt khi preview và không bị mất hạt trên ảnh 48MP, bỏ blur nặng toàn phân giải)
+        let physicalScale = max(1.0, (maxDim / 1100.0) * CGFloat(max(0.6, grainSize)))
+        let scaledNoise = random
+            .transformed(by: CGAffineTransform(scaleX: physicalScale, y: physicalScale))
+            .cropped(to: extent)
 
         // Chuyen doi nhieu ngau nhien thanh don sac xam
         guard let monoFilter = CIFilter(name: "CIColorControls") else { return input }
-        monoFilter.setValue(croppedNoise, forKey: kCIInputImageKey)
+        monoFilter.setValue(scaledNoise, forKey: kCIInputImageKey)
         monoFilter.setValue(0.0, forKey: kCIInputSaturationKey)
-        monoFilter.setValue(1.15, forKey: kCIInputContrastKey)
+        monoFilter.setValue(1.18, forKey: kCIInputContrastKey)
         guard let monoNoise = monoFilter.outputImage else { return input }
-
-        // Khi chạy xem trước trực tiếp (Realtime Preview), bỏ qua CIGaussianBlur trên hạt nhiễu để tiết kiệm GPU
-        let effectiveNoise: CIImage
-        if isRealtimePreview {
-            effectiveNoise = monoNoise
-        } else {
-            guard let blurFilter = CIFilter(name: "CIGaussianBlur") else { return input }
-            blurFilter.setValue(monoNoise, forKey: kCIInputImageKey)
-            blurFilter.setValue(grainSize, forKey: kCIInputRadiusKey)
-            guard let blurredNoise = blurFilter.outputImage?.cropped(to: extent) else { return input }
-            effectiveNoise = blurredNoise
-        }
 
         // Dieu tiet do trong suot cua lop hat
         guard let opacityFilter = CIFilter(name: "CIColorMatrix") else { return input }
-        opacityFilter.setValue(effectiveNoise, forKey: kCIInputImageKey)
+        opacityFilter.setValue(monoNoise, forKey: kCIInputImageKey)
         opacityFilter.setValue(CIVector(x: 1, y: 0, z: 0, w: 0), forKey: "inputRVector")
         opacityFilter.setValue(CIVector(x: 0, y: 1, z: 0, w: 0), forKey: "inputGVector")
         opacityFilter.setValue(CIVector(x: 0, y: 0, z: 1, w: 0), forKey: "inputBVector")
@@ -245,39 +240,71 @@ public enum FilmSimulationCore {
         }
     }
 
-    // MARK: - 3. Highlight Halation & Red Glow (Quang do bop nguon sang dac trung CineStill 800T)
+    // MARK: - 3. Highlight Halation & Red Glow (Quang do Remjet 1/4 do phan giai chay muot 60 FPS ca Live Preview & 48MP)
     public static func applyHalationGlow(
         _ input: CIImage,
         intensity: Float = 0.32,
         radius: Float = 14.0
     ) -> CIImage {
-        guard intensity > 0.01, !isRealtimePreview else { return input }
+        guard intensity > 0.01 else { return input }
         let extent = input.extent
         let dim = max(extent.width, extent.height)
-        let scaleFactor = max(0.2, min(8.0, dim / 1000.0))
-        let effectiveRadius = radius * Float(scaleFactor)
+        guard dim > 8 else { return input }
+
+        // Hạ 1/4 độ phân giải trước khi tách sáng & blur (~64x nhanh hơn GPU, khớp 1:1 giữa Live Preview và ảnh xuất)
+        let downScale: CGFloat = dim > 480 ? 0.25 : 0.5
+        let smallExt = CGRect(
+            x: floor(extent.minX * downScale),
+            y: floor(extent.minY * downScale),
+            width: max(4, ceil(extent.width * downScale)),
+            height: max(4, ceil(extent.height * downScale))
+        )
+        let smallInput = input
+            .clampedToExtent()
+            .transformed(by: CGAffineTransform(scaleX: downScale, y: downScale))
+            .cropped(to: smallExt)
 
         // Trich xuat vung sang cao thuc su (Specular highlights thresholding khong an vao ao do ban ngay)
         guard let threshold = CIFilter(name: "CIColorMatrix") else { return input }
-        threshold.setValue(input, forKey: kCIInputImageKey)
-        threshold.setValue(CIVector(x: 1.6, y: 0.6, z: 0.2, w: 0), forKey: "inputRVector")
-        threshold.setValue(CIVector(x: 0.4, y: 1.4, z: 0.4, w: 0), forKey: "inputGVector")
-        threshold.setValue(CIVector(x: 0.2, y: 0.4, z: 1.2, w: 0), forKey: "inputBVector")
+        threshold.setValue(smallInput, forKey: kCIInputImageKey)
+        threshold.setValue(CIVector(x: 1.55, y: 0.58, z: 0.20, w: 0), forKey: "inputRVector")
+        threshold.setValue(CIVector(x: 0.40, y: 1.38, z: 0.38, w: 0), forKey: "inputGVector")
+        threshold.setValue(CIVector(x: 0.20, y: 0.38, z: 1.18, w: 0), forKey: "inputBVector")
         threshold.setValue(CIVector(x: 0, y: 0, z: 0, w: 1), forKey: "inputAVector")
-        threshold.setValue(CIVector(x: -1.65, y: -1.65, z: -1.65, w: 0), forKey: "inputBiasVector")
-        guard let brightHighlights = threshold.outputImage else { return input }
+        threshold.setValue(CIVector(x: -1.55, y: -1.55, z: -1.55, w: 0), forKey: "inputBiasVector")
+        guard let rawThresholded = threshold.outputImage else { return input }
 
-        // Lam mo quang hoc quang do voi ban kinh thich ung kich thuoc anh
+        // Chặn giá trị âm trong Extended Linear sRGB trước khi Blur để vùng tối không triệt tiêu quầng đỏ quanh đèn đêm!
+        let brightHighlights: CIImage
+        if let clampFilter = CIFilter(name: "CIColorClamp") {
+            clampFilter.setValue(rawThresholded, forKey: kCIInputImageKey)
+            clampFilter.setValue(CIVector(x: 0, y: 0, z: 0, w: 0), forKey: "inputMinComponents")
+            clampFilter.setValue(CIVector(x: 4, y: 4, z: 4, w: 1), forKey: "inputMaxComponents")
+            brightHighlights = (clampFilter.outputImage ?? rawThresholded).cropped(to: smallExt)
+        } else {
+            brightHighlights = rawThresholded.cropped(to: smallExt)
+        }
+
+        let scaleFactor = max(0.2, min(8.0, dim / 1000.0))
+        let effectiveRadius = max(1.5, radius * Float(scaleFactor * downScale))
+
+        // Lam mo quang hoc quang do o 1/4 do phan giai voi clampedToExtent chong toi vien
         guard let blur = CIFilter(name: "CIGaussianBlur") else { return input }
-        blur.setValue(brightHighlights, forKey: kCIInputImageKey)
+        blur.setValue(brightHighlights.clampedToExtent(), forKey: kCIInputImageKey)
         blur.setValue(effectiveRadius, forKey: kCIInputRadiusKey)
-        guard let blurredHalation = blur.outputImage?.cropped(to: extent) else { return input }
+        guard let blurredSmall = blur.outputImage?.cropped(to: smallExt) else { return input }
+
+        let invScale = 1.0 / downScale
+        let blurredHalation = blurredSmall
+            .clampedToExtent()
+            .transformed(by: CGAffineTransform(scaleX: invScale, y: invScale))
+            .cropped(to: extent)
 
         // Nhuom do cam ruc ro dac trung lop than Remjet bi boc tren phim nhua chieu bong
         guard let tint = CIFilter(name: "CIColorMatrix") else { return input }
         tint.setValue(blurredHalation, forKey: kCIInputImageKey)
-        tint.setValue(CIVector(x: CGFloat(intensity * 1.8), y: 0, z: 0, w: 0), forKey: "inputRVector")
-        tint.setValue(CIVector(x: 0, y: CGFloat(intensity * 0.40), z: 0, w: 0), forKey: "inputGVector")
+        tint.setValue(CIVector(x: CGFloat(intensity * 1.85), y: 0, z: 0, w: 0), forKey: "inputRVector")
+        tint.setValue(CIVector(x: 0, y: CGFloat(intensity * 0.42), z: 0, w: 0), forKey: "inputGVector")
         tint.setValue(CIVector(x: 0, y: 0, z: CGFloat(intensity * 0.10), w: 0), forKey: "inputBVector")
         guard let tintedGlow = tint.outputImage else { return input }
 
@@ -307,22 +334,42 @@ public enum FilmSimulationCore {
         return bloomFilter.outputImage?.cropped(to: extent) ?? input
     }
 
-    // MARK: - 5. Lens Diffusion Mist (Suong mo thau kinh co dien khong trang phu)
+    // MARK: - 5. Lens Diffusion Mist (Suong mo thau kinh co dien 1/4 do phan giai chay muot 60 FPS ca Live Preview & 48MP)
     public static func applyLensDiffusion(
         _ input: CIImage,
         intensity: Float = 0.18,
         radius: Float = 10.0
     ) -> CIImage {
-        guard intensity > 0.01, !isRealtimePreview else { return input }
+        guard intensity > 0.01 else { return input }
         let extent = input.extent
         let dim = max(extent.width, extent.height)
+        guard dim > 8 else { return input }
+
+        let downScale: CGFloat = dim > 480 ? 0.25 : 0.5
+        let smallExt = CGRect(
+            x: floor(extent.minX * downScale),
+            y: floor(extent.minY * downScale),
+            width: max(4, ceil(extent.width * downScale)),
+            height: max(4, ceil(extent.height * downScale))
+        )
+        let smallInput = input
+            .clampedToExtent()
+            .transformed(by: CGAffineTransform(scaleX: downScale, y: downScale))
+            .cropped(to: smallExt)
+
         let scaleFactor = max(0.2, min(8.0, dim / 1000.0))
-        let effectiveRadius = radius * Float(scaleFactor)
+        let effectiveRadius = max(1.5, radius * Float(scaleFactor * downScale))
 
         guard let blur = CIFilter(name: "CIGaussianBlur") else { return input }
-        blur.setValue(input, forKey: kCIInputImageKey)
+        blur.setValue(smallInput.clampedToExtent(), forKey: kCIInputImageKey)
         blur.setValue(effectiveRadius, forKey: kCIInputRadiusKey)
-        guard let blurred = blur.outputImage?.cropped(to: extent) else { return input }
+        guard let blurredSmall = blur.outputImage?.cropped(to: smallExt) else { return input }
+
+        let invScale = 1.0 / downScale
+        let blurred = blurredSmall
+            .clampedToExtent()
+            .transformed(by: CGAffineTransform(scaleX: invScale, y: invScale))
+            .cropped(to: extent)
 
         guard let opacity = CIFilter(name: "CIColorMatrix") else { return input }
         opacity.setValue(blurred, forKey: kCIInputImageKey)
@@ -461,7 +508,7 @@ public enum FilmSimulationCore {
         return blend.outputImage?.cropped(to: original.extent) ?? filtered
     }
 
-    // MARK: - 10. Hardware-Accelerated 3D Color Cube (Display P3 -> sRGB accurate LUT)
+    // MARK: - 10. Hardware-Accelerated 3D Color Cube (Pre-LUT Gamut Compress + C1 Highlight Rolloff -> sRGB LUT)
     private static let lutSRGBColorSpace: CGColorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
 
     public static func applyColorCube(
@@ -469,18 +516,33 @@ public enum FilmSimulationCore {
         cubeData: Data,
         dimension: Int = 32
     ) -> CIImage {
+        // Bảo vệ vùng sáng HDR & sắc độ âm của Display P3 bằng nén gamut + C1 highlight rolloff trước khi đi vào 3D LUT [0, 1]
+        let protectedInput = FilmicColorScience.applyPreLUTGamutAndHighlightProtection(to: input, threshold: 0.82)
         if let filter = CIFilter(name: "CIColorCubeWithColorSpace") {
-            filter.setValue(input, forKey: kCIInputImageKey)
+            filter.setValue(protectedInput, forKey: kCIInputImageKey)
             filter.setValue(dimension, forKey: "inputCubeDimension")
             filter.setValue(cubeData, forKey: "inputCubeData")
             filter.setValue(lutSRGBColorSpace, forKey: "inputColorSpace")
             if let out = filter.outputImage { return out }
         }
-        guard let filter = CIFilter(name: "CIColorCube") else { return input }
-        filter.setValue(input, forKey: kCIInputImageKey)
+        guard let filter = CIFilter(name: "CIColorCube") else { return protectedInput }
+        filter.setValue(protectedInput, forKey: kCIInputImageKey)
         filter.setValue(dimension, forKey: "inputCubeDimension")
         filter.setValue(cubeData, forKey: "inputCubeData")
-        return filter.outputImage ?? input
+        return filter.outputImage ?? protectedInput
+    }
+
+    // MARK: - 11. Local YIQ Shadow/Highlight Recovery & Vintage Matte Film Fade (Single-Pass Metal)
+    public static func applyLocalShadowHighlight(
+        _ input: CIImage,
+        shadows: Float,
+        highlights: Float
+    ) -> CIImage {
+        FilmicColorScience.applyLocalShadowHighlightRecovery(to: input, shadows: shadows, highlights: highlights)
+    }
+
+    public static func applyMatteFade(_ input: CIImage, intensity: Float) -> CIImage {
+        FilmicColorScience.applyMatteFadeAndExposure(to: input, fade: intensity, exposure: 0.0)
     }
 
     /// Trinh quan ly va nap 3D LUT dang binary (.bin) va van ban (.cube) voi bo nho dem RAM
