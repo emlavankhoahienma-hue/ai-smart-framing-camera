@@ -155,6 +155,8 @@ public struct PhotoboothViewfinderOverlay: View {
     let topInset: CGFloat
     let bottomInset: CGFloat
 
+    @State private var selectedLiveFrameCategory: PhotoboothFrameCategory = .all
+
     public init(viewModel: CameraViewModel, topInset: CGFloat, bottomInset: CGFloat) {
         self.viewModel = viewModel
         self.topInset = topInset
@@ -388,10 +390,38 @@ public struct PhotoboothViewfinderOverlay: View {
                 .padding(.horizontal, 12)
             }
 
-            // Hàng 2: 24 Khung in thật dạng thẻ vuông sắc cạnh (hiện đúng chất liệu vải/giấy studio)
+            // Hàng 2: Lọc nhóm khung (50 khung chia 5 chủ đề + Tất cả)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(PhotoboothFrameCategory.allCases) { cat in
+                        let isSel = selectedLiveFrameCategory == cat
+                        Button(action: {
+                            HapticFeedbackService.shared.triggerSelectionChange()
+                            selectedLiveFrameCategory = cat
+                        }) {
+                            VStack(spacing: 3) {
+                                Text(cat.rawValue)
+                                    .font(.system(size: 11, weight: isSel ? .semibold : .regular, design: .rounded))
+                                    .foregroundColor(isSel ? .white : .white.opacity(0.54))
+                                Rectangle()
+                                    .fill(isSel ? Color.white : Color.clear)
+                                    .frame(height: 1.5)
+                            }
+                            .fixedSize(horizontal: true, vertical: false)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 12)
+            }
+
+            // Hàng 3: 50 Khung in thật dạng thẻ vuông sắc cạnh (hiện đúng chất liệu vải/giấy studio)
+            let filteredLiveFrames = PhotoboothFrameStyle.allCases.filter { frame in
+                frame != .customAITexture && (selectedLiveFrameCategory == .all || frame.category == selectedLiveFrameCategory)
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(PhotoboothFrameStyle.allCases.filter { $0 != .customAITexture }) { frame in
+                    ForEach(filteredLiveFrames) { frame in
                         let isSel = (activeFrame == frame)
                         Button(action: {
                             viewModel.selectPhotoboothFrameStyle(frame)

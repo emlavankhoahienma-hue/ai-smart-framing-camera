@@ -385,29 +385,37 @@ public final class PhotoboothAssetManager: ObservableObject {
         }
     }
 
-    // MARK: - 5. AI Sticker Generation (Gemini Image / Pollinations AI + Vision Subject Cutout + Offline Fallback)
+    // MARK: - 5. AI Sticker Generation (Gemini Photo System Prompt Engine + Vision Subject Cutout + Offline Fallback)
 
-    public func generateAISticker(prompt: String) async -> (asset: PhotoboothStickerAsset?, backendUsed: String) {
+    public func generateAISticker(
+        prompt: String,
+        preset: PhotoboothAIStickerPreset? = nil
+    ) async -> (asset: PhotoboothStickerAsset?, backendUsed: String) {
         let cleanPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanPrompt.isEmpty else { return (nil, "Trống") }
+        let effectiveTitle = cleanPrompt.isEmpty ? (preset?.displayTitle ?? "Sticker AI") : cleanPrompt
+        guard !effectiveTitle.isEmpty else { return (nil, "Trống") }
 
         isGeneratingAI = true
         defer { isGeneratingAI = false }
 
-        let wrappedPrompt = "\(cleanPrompt), cute tactile die-cut vinyl photobooth sticker illustration, crisp clean contour, centered isolated on pure flat solid #FFFFFF white background, zero text, zero watermark, clean studio print quality"
+        let systemPrompt = PhotoboothAISystemPromptEngine.composeStickerSystemPrompt(
+            userInput: cleanPrompt,
+            preset: preset
+        )
 
         var rawCG: CGImage? = nil
         var backendLabel = "Offline Studio"
 
         if let geminiKey = activeGoogleGeminiKey(), NetworkMonitor.shared.checkConnection().isConnected {
-            rawCG = await fetchGeminiImage(prompt: wrappedPrompt, apiKey: geminiKey)
+            rawCG = await fetchGeminiImage(prompt: systemPrompt, apiKey: geminiKey)
             if rawCG != nil {
-                backendLabel = "Gemini Image"
+                backendLabel = "Gemini Photo"
             }
         }
 
         if rawCG == nil && NetworkMonitor.shared.checkConnection().isConnected {
-            rawCG = await fetchPollinationsImage(prompt: wrappedPrompt, width: 512, height: 512)
+            let shortPollinationsPrompt = "\(preset?.studioSubjectSpecification ?? PhotoboothAISystemPromptEngine.normalizeUserConcept(cleanPrompt, fallbackConcept: "cute photobooth sticker")), die-cut vinyl sticker on pure solid white #FFFFFF background, zero text, zero watermark"
+            rawCG = await fetchPollinationsImage(prompt: shortPollinationsPrompt, width: 512, height: 512)
             if rawCG != nil {
                 backendLabel = "Pollinations AI"
             }
@@ -422,7 +430,7 @@ public final class PhotoboothAssetManager: ObservableObject {
             }.value
         } else {
             backendLabel = "Offline Studio Stamp"
-            finalStickerUI = Self.renderOfflineProceduralSticker(title: cleanPrompt)
+            finalStickerUI = Self.renderOfflineProceduralSticker(title: effectiveTitle)
         }
 
         guard let stickerImg = finalStickerUI, let pngData = stickerImg.pngData() else {
@@ -436,51 +444,62 @@ public final class PhotoboothAssetManager: ObservableObject {
         try? pngData.write(to: dest, options: .atomic)
         imageCache[id] = stickerImg
 
-        let shortTitle = String(cleanPrompt.prefix(16))
+        let shortTitle = String(effectiveTitle.prefix(18))
         let asset = PhotoboothStickerAsset(
             id: id,
             title: shortTitle,
             category: .myStickers,
             source: .localFile(filename: filename),
+            anchorZone: preset?.anchorZone ?? .safeCorner,
             isAIGenerated: true
         )
         customStickers.insert(asset, at: 0)
         persistUserAssets()
-        lastStatusMessage = "Đã tạo sticker qua \(backendLabel)!"
+        lastStatusMessage = "Đã tạo sticker '\(shortTitle)' qua \(backendLabel)!"
         return (asset, backendLabel)
     }
 
-    // MARK: - 6. AI Custom Frame Paper Generator (Strict Zero-Text / Editorial Surface Guard)
+    // MARK: - 6. AI Custom Frame Paper Generator (Gemini Photo System Prompt Guardrail — Strict Zero-Text Surface)
 
-    public func generateAIFrameTexture(prompt: String, slotImages: [CGImage]) async -> (filename: String?, backendUsed: String) {
+    public func generateAIFrameTexture(
+        prompt: String,
+        preset: PhotoboothAIFramePreset? = nil,
+        slotImages: [CGImage]
+    ) async -> (filename: String?, backendUsed: String) {
         let cleanPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanPrompt.isEmpty else { return (nil, "Trống") }
+        let effectiveTitle = cleanPrompt.isEmpty ? (preset?.displayTitle ?? "Khung AI") : cleanPrompt
+        guard !effectiveTitle.isEmpty else { return (nil, "Trống") }
 
         isGeneratingAI = true
         defer { isGeneratingAI = false }
 
         let harmony = Self.extractHarmoniousColors(from: slotImages)
-        let wrappedPrompt = "\(cleanPrompt), seamless physical print paper background texture for a photo booth border, soft palette near \(harmony.pastelDesc), fine matte paper grain, tasteful minimalist pattern, strictly NO text, NO letters, NO words, NO faces, clean uniform framing surface"
+        let systemPrompt = PhotoboothAISystemPromptEngine.composeFrameSystemPrompt(
+            userInput: cleanPrompt,
+            preset: preset,
+            harmonyDescription: harmony.pastelDesc
+        )
 
         var resultImg: UIImage? = nil
         var backendLabel = "Offline Editorial Generator"
 
         if let geminiKey = activeGoogleGeminiKey(), NetworkMonitor.shared.checkConnection().isConnected {
-            if let cg = await fetchGeminiImage(prompt: wrappedPrompt, apiKey: geminiKey) {
+            if let cg = await fetchGeminiImage(prompt: systemPrompt, apiKey: geminiKey) {
                 resultImg = UIImage(cgImage: cg)
-                backendLabel = "Gemini Image"
+                backendLabel = "Gemini Photo"
             }
         }
 
         if resultImg == nil && NetworkMonitor.shared.checkConnection().isConnected {
-            if let cg = await fetchPollinationsImage(prompt: wrappedPrompt, width: 640, height: 960) {
+            let shortPollinationsPrompt = "\(preset?.surfaceSpecification ?? PhotoboothAISystemPromptEngine.normalizeUserConcept(cleanPrompt, fallbackConcept: "pastel linen paper")), seamless print paper texture near \(harmony.pastelDesc), strictly no text, no faces, no boxes"
+            if let cg = await fetchPollinationsImage(prompt: shortPollinationsPrompt, width: 640, height: 960) {
                 resultImg = UIImage(cgImage: cg)
                 backendLabel = "Pollinations AI"
             }
         }
 
         if resultImg == nil {
-            resultImg = Self.renderOfflineProceduralFramePaper(baseColor: harmony.uiColor, seedText: cleanPrompt)
+            resultImg = Self.renderOfflineProceduralFramePaper(baseColor: harmony.uiColor, seedText: effectiveTitle)
         }
 
         guard let finalImg = resultImg,
@@ -495,11 +514,11 @@ public final class PhotoboothAssetManager: ObservableObject {
         imageCache["frame_\(filename)"] = finalImg
         customAIFrameFilenames.insert(filename, at: 0)
         persistUserAssets()
-        lastStatusMessage = "Đã tạo nền khung in qua \(backendLabel)!"
+        lastStatusMessage = "Đã tạo nền khung '\(effectiveTitle)' qua \(backendLabel)!"
         return (filename, backendLabel)
     }
 
-    // MARK: - 7. AI Booth Portrait Stylization (Verified Gemini Interactions Image-to-Image)
+    // MARK: - 7. AI Booth Portrait Stylization (Verified Gemini Photo Interactions Image-to-Image + System Prompt Guardrail)
 
     public func stylizeBoothPhotoWithAI(_ cgImage: CGImage, style: PhotoboothAIStylePreset) async -> (image: CGImage?, errorMessage: String?) {
         guard NetworkMonitor.shared.checkConnection().isConnected else {
@@ -518,6 +537,7 @@ public final class PhotoboothAssetManager: ObservableObject {
             return (nil, "Không thể mã hóa ảnh đầu vào.")
         }
         let b64 = jpegData.base64EncodedString()
+        let systemPrompt = PhotoboothAISystemPromptEngine.composePortraitSystemPrompt(style: style)
 
         // Official Gemini Interactions Image-to-Image API (verified from Gemini API docs)
         guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/interactions") else {
@@ -533,7 +553,7 @@ public final class PhotoboothAssetManager: ObservableObject {
         let payload: [String: Any] = [
             "model": "gemini-nano-banana-2.1",
             "input": [
-                ["type": "text", "text": style.promptInstruction],
+                ["type": "text", "text": systemPrompt],
                 ["type": "image", "mime_type": "image/jpeg", "data": b64]
             ]
         ]
@@ -550,14 +570,14 @@ public final class PhotoboothAssetManager: ObservableObject {
             }
             if http.statusCode != 200 {
                 let errText = Self.extractAPIErrorMessage(from: data) ?? "HTTP \(http.statusCode)"
-                return (nil, "Gemini Image từ chối xử lý (\(errText)). Kiểm tra model hoặc quyền API Key.")
+                return (nil, "Gemini Photo từ chối xử lý (\(errText)). Kiểm tra model hoặc quyền API Key.")
             }
             if let outCG = Self.decodeBase64ImageFromInteractionsJSON(data) {
                 return (outCG, nil)
             }
             return (nil, "Phản hồi từ Gemini không chứa dữ liệu ảnh đầu ra.")
         } catch {
-            return (nil, "Lỗi kết nối Gemini Image: \(error.localizedDescription)")
+            return (nil, "Lỗi kết nối Gemini Photo: \(error.localizedDescription)")
         }
     }
 
@@ -576,7 +596,31 @@ public final class PhotoboothAssetManager: ObservableObject {
     }
 
     private func fetchGeminiImage(prompt: String, apiKey: String) async -> CGImage? {
-        // Verified OpenAI-compatible Gemini image generation endpoint
+        // 1. Try modern Gemini Interactions image generation endpoint (`gemini-nano-banana-2.1`)
+        if let interactionsURL = URL(string: "https://generativelanguage.googleapis.com/v1beta/interactions") {
+            var iReq = URLRequest(url: interactionsURL)
+            iReq.httpMethod = "POST"
+            iReq.timeoutInterval = 26
+            iReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            iReq.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+            iReq.setValue("2026-05-20", forHTTPHeaderField: "Api-Revision")
+            let iPayload: [String: Any] = [
+                "model": "gemini-nano-banana-2.1",
+                "input": [
+                    ["type": "text", "text": prompt]
+                ]
+            ]
+            if let iBody = try? JSONSerialization.data(withJSONObject: iPayload) {
+                iReq.httpBody = iBody
+                if let (iData, iResp) = try? await URLSession.shared.data(for: iReq),
+                   let iHttp = iResp as? HTTPURLResponse, iHttp.statusCode == 200,
+                   let cg = Self.decodeBase64ImageFromInteractionsJSON(iData) {
+                    return cg
+                }
+            }
+        }
+
+        // 2. Fallback to OpenAI-compatible Gemini Photo endpoint (`gemini-2.5-flash-image`)
         guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/openai/images/generations") else { return nil }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"

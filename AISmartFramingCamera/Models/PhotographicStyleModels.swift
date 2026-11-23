@@ -827,7 +827,145 @@ public enum PhotographicStyleRecipeStore {
     }
 }
 
-// MARK: - Decoupled Live HUD State (120Hz Zero-MainView-Rediff Updates While Dragging Control Pad)
+// MARK: - 1€ Velocity-Adaptive De-Jitter Filter + Stationary Deadband Lock (Casiez et al., CHI 2012)
+/// Bộ lọc khử rung thích ứng theo vận tốc ngón tay (1-Euro Filter kết hợp khóa Deadband tĩnh):
+/// - Khi giữ ngón tay đứng yên trên Bảng màu (vận tốc ~ 0): hạ tần số cắt xuống `minCutoff = 1.45 Hz` và khóa vùng chết vi mô `stationaryDeadband`,
+///   triệt tiêu 100% nhiễu rung điện dung của thịt ngón tay (dao động đầu ra = 0.000000 -> tuyệt đối không nháy màu hay nhảy số).
+/// - Khi rê ngón tay nhanh: tần số cắt `cutoff = minCutoff + beta * |dx/dt|` mở rộng tức thì (> 30 Hz), bám sát tay 120Hz không trễ.
+public struct PhotographicStyleOneEuroFilter1D: Sendable {
+    public let minCutoff: Double
+    public let beta: Double
+    public let dCutoff: Double
+    public let stationaryDeadband: Float
+    public let stationarySpeedThreshold: Double
+
+    private var isInitialized: Bool = false
+    private var xHat: Double = 0.0
+    private var dxHat: Double = 0.0
+    private var lastTimestamp: Double = 0.0
+    private var lastLockedOutput: Float = 0.0
+
+    public init(
+        minCutoff: Double = 1.45,
+        beta: Double = 0.36,
+        dCutoff: Double = 1.0,
+        stationaryDeadband: Float = 0.0042,
+        stationarySpeedThreshold: Double = 0.22
+    ) {
+        self.minCutoff = minCutoff
+        self.beta = beta
+        self.dCutoff = dCutoff
+        self.stationaryDeadband = stationaryDeadband
+        self.stationarySpeedThreshold = stationarySpeedThreshold
+    }
+
+    public mutating func reset(to initialValue: Float, timestamp: Double = CACurrentMediaTime()) {
+        isInitialized = true
+        xHat = Double(initialValue)
+        dxHat = 0.0
+        lastTimestamp = timestamp
+        lastLockedOutput = initialValue
+    }
+
+    public mutating func filter(_ rawValue: Float, timestamp: Double = CACurrentMediaTime()) -> Float {
+        guard rawValue.isFinite else { return lastLockedOutput }
+        let x = Double(rawValue)
+        if !isInitialized {
+            reset(to: rawValue, timestamp: timestamp)
+            return rawValue
+        }
+
+        let rawDt = timestamp - lastTimestamp
+        let dt = (rawDt.isFinite && rawDt > 0.0005 && rawDt < 0.25) ? rawDt : (1.0 / 120.0)
+        lastTimestamp = timestamp
+
+        let dx = (x - xHat) / dt
+        let alphaD = Self.smoothingFactor(dt: dt, cutoff: dCutoff)
+        dxHat = alphaD * dx + (1.0 - alphaD) * dxHat
+
+        let speed = abs(dxHat)
+        let cutoff = minCutoff + beta * speed
+        let alpha = Self.smoothingFactor(dt: dt, cutoff: cutoff)
+        xHat = alpha * x + (1.0 - alpha) * xHat
+
+        let filtered = Float(xHat)
+        let deltaFromLocked = abs(filtered - lastLockedOutput)
+        let rawDeltaFromLocked = abs(rawValue - lastLockedOutput)
+
+        // Khi ngón tay đang giữ yên (tốc độ thấp và biên độ dịch chuyển chỉ là nhiễu điện dung < deadband):
+        // khóa cứng đầu ra tại lastLockedOutput để màu trên GPU và con trỏ đứng im tuyệt đối.
+        if speed < stationarySpeedThreshold && deltaFromLocked < stationaryDeadband && rawDeltaFromLocked < (stationaryDeadband * 1.35) {
+            return lastLockedOutput
+        }
+
+        lastLockedOutput = filtered
+        return filtered
+    }
+
+    private static func smoothingFactor(dt: Double, cutoff: Double) -> Double {
+        let tau = 1.0 / (2.0 * Double.pi * max(0.01, cutoff))
+        return 1.0 / (1.0 + tau / max(1e-5, dt))
+    }
+}
+
+/// Bộ lọc 1€ hai chiều (Color X, Tone Y) với khóa bán kính Euclidean khi giữ ngón tay trên Bảng màu 2D.
+public struct PhotographicStyleOneEuroFilter2D: Sendable {
+    private var filterX: PhotographicStyleOneEuroFilter1D
+    private var filterY: PhotographicStyleOneEuroFilter1D
+    private var lastStableX: Float = 0.0
+    private var lastStableY: Float = 0.0
+    private var hasSeeded: Bool = false
+    private let radialDeadband: Float
+
+    public init(
+        minCutoff: Double = 1.45,
+        beta: Double = 0.36,
+        dCutoff: Double = 1.0,
+        radialDeadband: Float = 0.0045
+    ) {
+        self.filterX = PhotographicStyleOneEuroFilter1D(
+            minCutoff: minCutoff,
+            beta: beta,
+            dCutoff: dCutoff,
+            stationaryDeadband: radialDeadband * 0.85
+        )
+        self.filterY = PhotographicStyleOneEuroFilter1D(
+            minCutoff: minCutoff,
+            beta: beta,
+            dCutoff: dCutoff,
+            stationaryDeadband: radialDeadband * 0.85
+        )
+        self.radialDeadband = radialDeadband
+    }
+
+    public mutating func reset(x: Float, y: Float, timestamp: Double = CACurrentMediaTime()) {
+        filterX.reset(to: x, timestamp: timestamp)
+        filterY.reset(to: y, timestamp: timestamp)
+        lastStableX = x
+        lastStableY = y
+        hasSeeded = true
+    }
+
+    public mutating func filter(x: Float, y: Float, timestamp: Double = CACurrentMediaTime()) -> (x: Float, y: Float) {
+        if !hasSeeded {
+            reset(x: x, y: y, timestamp: timestamp)
+            return (x, y)
+        }
+        let fx = filterX.filter(x, timestamp: timestamp)
+        let fy = filterY.filter(y, timestamp: timestamp)
+
+        let radialDelta = hypot(fx - lastStableX, fy - lastStableY)
+        let rawRadialDelta = hypot(x - lastStableX, y - lastStableY)
+        if radialDelta < radialDeadband && rawRadialDelta < (radialDeadband * 1.35) {
+            return (lastStableX, lastStableY)
+        }
+        lastStableX = fx
+        lastStableY = fy
+        return (fx, fy)
+    }
+}
+
+// MARK: - Decoupled Live HUD State (120Hz Zero-MainView-Rediff Updates + Schmitt-Trigger Integer Hysteresis)
 /// Trạng thái tách riêng để chỉ cập nhật 3 con số HUD & icon 5x5 khi kéo bảng màu 120Hz,
 /// không gây re-diff toàn cây SwiftUI của CameraMainView (loại bỏ hoàn toàn giật khung khi kéo ngón tay).
 @MainActor
@@ -839,6 +977,10 @@ public final class PhotographicStyleLiveHUDState: ObservableObject {
     @Published public var isModifiedFromDefault: Bool = false
     @Published public var isInteracting: Bool = false
 
+    private var displayedToneInt: Int = 0
+    private var displayedColorInt: Int = 0
+    private var displayedPaletteInt: Int = 100
+
     public init() {}
 
     public func sync(from state: PhotographicStyleState) {
@@ -848,15 +990,51 @@ public final class PhotographicStyleLiveHUDState: ObservableObject {
         if abs(palette - state.palette) > 0.0005 { palette = state.palette }
         let modified = state.isModifiedFromPresetDefault
         if isModifiedFromDefault != modified { isModifiedFromDefault = modified }
+
+        // Schmitt-trigger hysteresis (±0.28 đơn vị khi đang giữ tay) ngăn con số nhảy qua lại ở ranh giới .5
+        let hysteresis: Float = isInteracting ? 0.28 : 0.0
+        displayedToneInt = Self.quantizeWithHysteresis(
+            scaledValue: state.tone * 100.0,
+            currentInt: displayedToneInt,
+            hysteresis: hysteresis,
+            range: -100...100
+        )
+        displayedColorInt = Self.quantizeWithHysteresis(
+            scaledValue: state.color * 100.0,
+            currentInt: displayedColorInt,
+            hysteresis: hysteresis,
+            range: -100...100
+        )
+        displayedPaletteInt = Self.quantizeWithHysteresis(
+            scaledValue: state.palette * 100.0,
+            currentInt: displayedPaletteInt,
+            hysteresis: hysteresis,
+            range: 0...100
+        )
+    }
+
+    private static func quantizeWithHysteresis(
+        scaledValue: Float,
+        currentInt: Int,
+        hysteresis: Float,
+        range: ClosedRange<Int>
+    ) -> Int {
+        guard scaledValue.isFinite else { return currentInt }
+        let diff = abs(scaledValue - Float(currentInt))
+        if hysteresis > 0.0 && diff <= (0.5 + hysteresis) {
+            return min(range.upperBound, max(range.lowerBound, currentInt))
+        }
+        let rounded = Int(round(scaledValue))
+        return min(range.upperBound, max(range.lowerBound, rounded))
     }
 
     public var currentStyleSnapshot: PhotographicStyleState {
         PhotographicStyleState(preset: preset, tone: tone, color: color, palette: palette)
     }
 
-    public var toneHUDNumber: String { currentStyleSnapshot.toneHUDNumber }
-    public var colorHUDNumber: String { currentStyleSnapshot.colorHUDNumber }
-    public var paletteHUDNumber: String { currentStyleSnapshot.paletteHUDNumber }
+    public var toneHUDNumber: String { "\(displayedToneInt)" }
+    public var colorHUDNumber: String { "\(displayedColorInt)" }
+    public var paletteHUDNumber: String { "\(displayedPaletteInt)" }
 }
 
 // MARK: - Physical Device Orientation Monitor for Photographic Styles (Portrait / Landscape-Left / Landscape-Right)

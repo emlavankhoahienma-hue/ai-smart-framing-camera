@@ -35,13 +35,16 @@ public struct PhotoboothEditorSheetView: View {
     @State private var showReplacePhotoPicker: Bool = false
     @State private var replacePhotoItem: PhotosPickerItem? = nil
 
-    // Sticker Browser State
+    // Frame & Sticker Browser State
+    @State private var selectedFrameCategory: PhotoboothFrameCategory = .all
     @State private var stickerCategory: PhotoboothAssetCategory = .coquette
     @State private var selectedOnlinePack: PhotoboothOnlinePackCategory = .bowsPastel
 
-    // AI Studio State (Housed Cleanly Inside "Thêm" Sheet)
+    // AI Studio State (Housed Cleanly Inside "Thêm" Sheet — Powered by Gemini Photo System Prompt Engine)
     @State private var aiStickerPrompt: String = ""
     @State private var aiFramePrompt: String = ""
+    @State private var selectedAIStickerPreset: PhotoboothAIStickerPreset = .catRibbon
+    @State private var selectedAIFramePreset: PhotoboothAIFramePreset = .seoulMinimalLinen
     @State private var selectedAIPortraitStyle: PhotoboothAIStylePreset = .koreanStudio
     @State private var aiFeedbackMessage: String? = nil
     @State private var isStylizingSlots: Bool = false
@@ -553,10 +556,39 @@ public struct PhotoboothEditorSheetView: View {
                 .padding(.horizontal, 16)
             }
 
-            // 25 Real Frames Swatch Strip (Sharp 90° Cards Showing Actual Fabric/Paper Texture)
+            // Category Filter Tabs for 50 Frames (Tất cả · Hàn & Studio · Dễ thương · Y2K & Nhạc · Phim & Cổ điển · Vé & Tạp chí)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ForEach(PhotoboothFrameCategory.allCases) { cat in
+                        let isSel = selectedFrameCategory == cat
+                        Button(action: {
+                            HapticFeedbackService.shared.triggerSelectionChange()
+                            selectedFrameCategory = cat
+                        }) {
+                            VStack(spacing: 4) {
+                                Text(cat.rawValue)
+                                    .font(.system(size: 11.5, weight: isSel ? .semibold : .regular, design: .rounded))
+                                    .foregroundColor(isSel ? .white : .white.opacity(0.52))
+                                Rectangle()
+                                    .fill(isSel ? Color.white : Color.clear)
+                                    .frame(height: 1.5)
+                            }
+                            .fixedSize(horizontal: true, vertical: false)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+
+            // 50 Real Frames Swatch Strip (Sharp 90° Cards Showing Actual Fabric/Paper Texture)
+            let visibleFrames: [PhotoboothFrameStyle] = selectedFrameCategory == .all
+                ? PhotoboothFrameStyle.allCases
+                : PhotoboothFrameStyle.allCases.filter { $0.category == selectedFrameCategory }
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ForEach(PhotoboothFrameStyle.allCases) { frame in
+                    ForEach(visibleFrames) { frame in
                         let isSel = viewModel.photoboothStripConfig.frameStyle == frame
                             && viewModel.photoboothStripConfig.customBackgroundHex == nil
                         Button(action: {
@@ -990,19 +1022,51 @@ public struct PhotoboothEditorSheetView: View {
                         .fill(Color.white.opacity(0.10))
                         .frame(height: 0.5)
 
-                    // Section 2: Studio AI (Tạo Sticker / Tạo Khung / Đổi Chân Dung)
+                    // Section 2: Studio AI (Gemini Photo + Built-In System Prompt Guardrail + 1-Tap Presets)
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("STUDIO AI")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .tracking(0.6)
-                            .foregroundColor(.white.opacity(0.52))
+                        HStack(spacing: 6) {
+                            Text("STUDIO AI · GEMINI PHOTO")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .tracking(0.6)
+                                .foregroundColor(.white.opacity(0.56))
+                            Spacer()
+                            Text("System Prompt Tự Động")
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .foregroundColor(Color(red: 0.35, green: 0.88, blue: 0.56))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(Color(red: 0.16, green: 0.44, blue: 0.28).opacity(0.45)))
+                        }
 
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Tạo Sticker nền trong suốt")
+                        // 1. Tạo Sticker AI (Có sẵn 10 mẫu 1 chạm + System Prompt chống chữ rác / nền trắng sạch)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Tạo Sticker tách nền (Chạm mẫu có sẵn hoặc nhập tùy ý)")
                                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                                .foregroundColor(.white.opacity(0.72))
+                                .foregroundColor(.white.opacity(0.76))
+
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(PhotoboothAIStickerPreset.allCases) { preset in
+                                        let isSel = selectedAIStickerPreset == preset && aiStickerPrompt.isEmpty
+                                        Button(action: {
+                                            selectedAIStickerPreset = preset
+                                            aiStickerPrompt = ""
+                                            runGenerateAIStickerPreset(preset)
+                                        }) {
+                                            Text(preset.displayTitle)
+                                                .font(.system(size: 11.5, weight: isSel ? .semibold : .regular, design: .rounded))
+                                                .foregroundColor(isSel ? .black : .white.opacity(0.84))
+                                                .padding(.horizontal, 11)
+                                                .frame(height: 29)
+                                                .background(Capsule().fill(isSel ? Color.white : Color.white.opacity(0.09)))
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
                             HStack(spacing: 8) {
-                                TextField("vd: mèo đeo kính râm, nơ bạc...", text: $aiStickerPrompt)
+                                TextField("Hoặc gõ ngắn gọn (System Prompt tự chuẩn hóa)...", text: $aiStickerPrompt)
                                     .font(.system(size: 13, weight: .regular, design: .rounded))
                                     .foregroundColor(.white)
                                     .padding(.horizontal, 12)
@@ -1018,16 +1082,38 @@ public struct PhotoboothEditorSheetView: View {
                                         .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
                                 }
                                 .buttonStyle(.plain)
-                                .disabled(aiStickerPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             }
                         }
 
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Tạo nền khung in AI")
+                        // 2. Tạo Nền Khung In AI (Có sẵn 10 mẫu giấy/vải 1 chạm + System Prompt cấm vẽ chữ/ô giả)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Tạo nền khung in AI (Chạm mẫu giấy/vải hoặc nhập tùy ý)")
                                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                                .foregroundColor(.white.opacity(0.72))
+                                .foregroundColor(.white.opacity(0.76))
+
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(PhotoboothAIFramePreset.allCases) { preset in
+                                        let isSel = selectedAIFramePreset == preset && aiFramePrompt.isEmpty
+                                        Button(action: {
+                                            selectedAIFramePreset = preset
+                                            aiFramePrompt = ""
+                                            runGenerateAIFramePreset(preset)
+                                        }) {
+                                            Text(preset.displayTitle)
+                                                .font(.system(size: 11.5, weight: isSel ? .semibold : .regular, design: .rounded))
+                                                .foregroundColor(isSel ? .black : .white.opacity(0.84))
+                                                .padding(.horizontal, 11)
+                                                .frame(height: 29)
+                                                .background(Capsule().fill(isSel ? Color.white : Color.white.opacity(0.09)))
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
                             HStack(spacing: 8) {
-                                TextField("vd: vải lanh kem, hoa nhí tối giản...", text: $aiFramePrompt)
+                                TextField("Hoặc gõ chất liệu (System Prompt tự khóa phẳng)...", text: $aiFramePrompt)
                                     .font(.system(size: 13, weight: .regular, design: .rounded))
                                     .foregroundColor(.white)
                                     .padding(.horizontal, 12)
@@ -1043,14 +1129,14 @@ public struct PhotoboothEditorSheetView: View {
                                         .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
                                 }
                                 .buttonStyle(.plain)
-                                .disabled(aiFramePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                             }
                         }
 
+                        // 3. Chuyển chân dung Booth bằng Gemini Photo (8 phong cách khóa chặt khuôn mặt)
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Chuyển chân dung Booth bằng AI")
+                            Text("Chuyển chân dung Booth bằng Gemini Photo")
                                 .font(.system(size: 12, weight: .medium, design: .rounded))
-                                .foregroundColor(.white.opacity(0.72))
+                                .foregroundColor(.white.opacity(0.76))
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 6) {
                                     ForEach(PhotoboothAIStylePreset.allCases) { st in
@@ -1283,13 +1369,28 @@ public struct PhotoboothEditorSheetView: View {
 
     private func runGenerateAISticker() {
         let prompt = aiStickerPrompt
+        let preset = selectedAIStickerPreset
         aiFeedbackMessage = nil
         Task {
-            let result = await assetManager.generateAISticker(prompt: prompt)
+            let result = await assetManager.generateAISticker(prompt: prompt, preset: preset)
             if let created = result.asset {
                 placeSticker(created)
                 aiStickerPrompt = ""
-                aiFeedbackMessage = "Đã tạo sticker bằng \(result.backendUsed) và đặt lên khung."
+                aiFeedbackMessage = "Đã tạo sticker '\(created.title)' bằng \(result.backendUsed) và đặt lên khung."
+            } else {
+                aiFeedbackMessage = assetManager.lastStatusMessage
+            }
+        }
+    }
+
+    private func runGenerateAIStickerPreset(_ preset: PhotoboothAIStickerPreset) {
+        HapticFeedbackService.shared.triggerLight()
+        aiFeedbackMessage = nil
+        Task {
+            let result = await assetManager.generateAISticker(prompt: "", preset: preset)
+            if let created = result.asset {
+                placeSticker(created)
+                aiFeedbackMessage = "Đã tạo mẫu '\(preset.displayTitle)' qua \(result.backendUsed) và đặt lên khung."
             } else {
                 aiFeedbackMessage = assetManager.lastStatusMessage
             }
@@ -1298,16 +1399,34 @@ public struct PhotoboothEditorSheetView: View {
 
     private func runGenerateAIFrame() {
         let prompt = aiFramePrompt
+        let preset = selectedAIFramePreset
         aiFeedbackMessage = nil
         let slotImgs = viewModel.photoboothSlots.compactMap { $0?.displayImage }
         Task {
-            let result = await assetManager.generateAIFrameTexture(prompt: prompt, slotImages: slotImgs)
+            let result = await assetManager.generateAIFrameTexture(prompt: prompt, preset: preset, slotImages: slotImgs)
             if let fname = result.filename {
                 viewModel.photoboothStripConfig.customBackgroundHex = nil
                 viewModel.photoboothStripConfig.customAITextureFilename = fname
                 viewModel.photoboothStripConfig.frameStyle = .customAITexture
                 aiFramePrompt = ""
                 aiFeedbackMessage = "Đã áp dụng khung nền từ \(result.backendUsed)."
+            } else {
+                aiFeedbackMessage = assetManager.lastStatusMessage
+            }
+        }
+    }
+
+    private func runGenerateAIFramePreset(_ preset: PhotoboothAIFramePreset) {
+        HapticFeedbackService.shared.triggerLight()
+        aiFeedbackMessage = nil
+        let slotImgs = viewModel.photoboothSlots.compactMap { $0?.displayImage }
+        Task {
+            let result = await assetManager.generateAIFrameTexture(prompt: "", preset: preset, slotImages: slotImgs)
+            if let fname = result.filename {
+                viewModel.photoboothStripConfig.customBackgroundHex = nil
+                viewModel.photoboothStripConfig.customAITextureFilename = fname
+                viewModel.photoboothStripConfig.frameStyle = .customAITexture
+                aiFeedbackMessage = "Đã áp dụng khung mẫu '\(preset.displayTitle)' qua \(result.backendUsed)."
             } else {
                 aiFeedbackMessage = assetManager.lastStatusMessage
             }

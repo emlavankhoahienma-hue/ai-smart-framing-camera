@@ -73,8 +73,16 @@ public enum PhotoboothStripRenderer {
                     drawBoardingPassSlotDivider(cg: cg, rect: rect, index: photoIdx, canvasWidth: w)
                 }
 
-                if config.frameStyle == .kodak35mmSprocket {
+                if config.frameStyle == .kodak35mmSprocket || config.frameStyle == .filmContactSheet {
                     drawFilmFrameIndex(index: photoIdx + 1, slotRect: rect, canvasWidth: w)
+                }
+                if config.frameStyle == .filmContactSheet && photoIdx == 0 {
+                    cg.saveGState()
+                    UIColor(red: 0.90, green: 0.20, blue: 0.18, alpha: 0.88).setStroke()
+                    let proofBox = UIBezierPath(rect: rect.insetBy(dx: -w * 0.006, dy: -w * 0.006))
+                    proofBox.lineWidth = max(1.8, w * 0.0038)
+                    proofBox.stroke()
+                    cg.restoreGState()
                 }
             }
 
@@ -434,6 +442,286 @@ public enum PhotoboothStripRenderer {
         case .softPearl:
             UIColor(red: 0.988, green: 0.988, blue: 0.992, alpha: 1.0).setFill()
             cg.fill(rect)
+
+        case .seoulSubwaySign:
+            UIColor(red: 0.96, green: 0.97, blue: 0.95, alpha: 1.0).setFill()
+            cg.fill(rect)
+            let lineGreen = UIColor(red: 0.16, green: 0.62, blue: 0.34, alpha: 1.0)
+            lineGreen.setFill()
+            cg.fill(CGRect(x: 0, y: 0, width: w, height: h * 0.026))
+            cg.fill(CGRect(x: 0, y: h * 0.982, width: w, height: h * 0.018))
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.monospacedSystemFont(ofSize: max(6.5, w * 0.016), weight: .bold),
+                .foregroundColor: UIColor.white
+            ]
+            NSString(string: "LINE 02 · HONGDAE 239").draw(at: CGPoint(x: w * 0.068, y: h * 0.005), withAttributes: attrs)
+
+        case .y2kFlipPhone:
+            drawVerticalGradient(cg: cg, rect: rect,
+                top: UIColor(red: 0.88, green: 0.91, blue: 0.95, alpha: 1.0),
+                bottom: UIColor(red: 0.72, green: 0.78, blue: 0.87, alpha: 1.0))
+            UIColor(red: 0.22, green: 0.34, blue: 0.52, alpha: 0.85).setFill()
+            cg.fill(CGRect(x: w * 0.068, y: h * 0.008, width: w * 0.864, height: h * 0.017))
+            let lcdAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.monospacedSystemFont(ofSize: max(6.0, w * 0.014), weight: .bold),
+                .foregroundColor: UIColor(red: 0.82, green: 0.96, blue: 1.0, alpha: 0.95)
+            ]
+            NSString(string: "5G  CAM 2.0MP   [FULL]").draw(at: CGPoint(x: w * 0.082, y: h * 0.010), withAttributes: lcdAttrs)
+
+        case .musicPlayerCard:
+            drawVerticalGradient(cg: cg, rect: rect,
+                top: UIColor(red: 0.09, green: 0.10, blue: 0.14, alpha: 1.0),
+                bottom: UIColor(red: 0.05, green: 0.06, blue: 0.09, alpha: 1.0))
+
+        case .strawberryMilkCarton:
+            UIColor(red: 0.995, green: 0.945, blue: 0.955, alpha: 1.0).setFill()
+            cg.fill(rect)
+            UIColor(red: 0.95, green: 0.48, blue: 0.62, alpha: 1.0).setFill()
+            cg.fill(CGRect(x: 0, y: 0, width: w, height: h * 0.024))
+            let milkAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: max(6.5, w * 0.016), weight: .heavy),
+                .foregroundColor: UIColor.white
+            ]
+            NSString(string: "STRAWBERRY MILK · 250ML").draw(at: CGPoint(x: w * 0.068, y: h * 0.005), withAttributes: milkAttrs)
+
+        case .checkerboardRetro:
+            UIColor(red: 0.96, green: 0.95, blue: 0.92, alpha: 1.0).setFill()
+            cg.fill(rect)
+            let tile = max(12.0, w * 0.048)
+            UIColor(red: 0.12, green: 0.12, blue: 0.13, alpha: 0.90).setFill()
+            let cols = Int(ceil(w / tile))
+            let rows = Int(ceil(h / tile))
+            for r in 0..<rows {
+                for c in 0..<cols where (r + c) % 2 == 0 {
+                    let isEdge = (c == 0 || c == cols - 1 || r == 0 || r == rows - 1)
+                    if isEdge {
+                        cg.fill(CGRect(x: CGFloat(c) * tile, y: CGFloat(r) * tile, width: tile, height: tile))
+                    }
+                }
+            }
+
+        case .polaroidGalleryNote:
+            UIColor(red: 0.97, green: 0.96, blue: 0.93, alpha: 1.0).setFill()
+            cg.fill(rect)
+            let ruleColor = UIColor(red: 0.22, green: 0.20, blue: 0.18, alpha: 0.40)
+            ruleColor.setStroke()
+            let inset = rect.insetBy(dx: w * 0.026, dy: w * 0.026)
+            let p = UIBezierPath(rect: inset)
+            p.lineWidth = max(0.8, w * 0.0018)
+            p.stroke()
+            let exAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.monospacedSystemFont(ofSize: max(6.5, w * 0.015), weight: .medium),
+                .foregroundColor: UIColor(red: 0.24, green: 0.22, blue: 0.20, alpha: 0.78)
+            ]
+            NSString(string: "ARCHIVE EXHIBIT NO. 07").draw(at: CGPoint(x: w * 0.068, y: h * 0.009), withAttributes: exAttrs)
+
+        case .passportStamp:
+            drawVerticalGradient(cg: cg, rect: rect,
+                top: UIColor(red: 0.09, green: 0.14, blue: 0.26, alpha: 1.0),
+                bottom: UIColor(red: 0.06, green: 0.10, blue: 0.20, alpha: 1.0))
+            let gold = UIColor(red: 0.84, green: 0.70, blue: 0.38, alpha: 0.82)
+            gold.setStroke()
+            let border = UIBezierPath(rect: rect.insetBy(dx: w * 0.025, dy: w * 0.025))
+            border.lineWidth = max(1.0, w * 0.0022)
+            border.stroke()
+            let passAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.monospacedSystemFont(ofSize: max(6.5, w * 0.016), weight: .bold),
+                .foregroundColor: gold
+            ]
+            NSString(string: "PASSPORT · REPUBLIC OF MEMORIES").draw(at: CGPoint(x: w * 0.068, y: h * 0.008), withAttributes: passAttrs)
+
+        case .cherryBlossomSpring:
+            drawVerticalGradient(cg: cg, rect: rect,
+                top: UIColor(red: 0.995, green: 0.925, blue: 0.948, alpha: 1.0),
+                bottom: UIColor(red: 0.965, green: 0.815, blue: 0.875, alpha: 1.0))
+
+        case .cyberMatrixNeon:
+            UIColor(red: 0.045, green: 0.065, blue: 0.098, alpha: 1.0).setFill()
+            cg.fill(rect)
+            let cyan = UIColor(red: 0.20, green: 0.88, blue: 0.96, alpha: 0.75)
+            cyan.setStroke()
+            let hudInset = rect.insetBy(dx: w * 0.024, dy: w * 0.024)
+            let hudPath = UIBezierPath(rect: hudInset)
+            hudPath.lineWidth = max(1.0, w * 0.0020)
+            hudPath.stroke()
+            let cyberAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.monospacedSystemFont(ofSize: max(6.5, w * 0.015), weight: .bold),
+                .foregroundColor: cyan
+            ]
+            NSString(string: "SYS.CYBER // 2000.Y2K").draw(at: CGPoint(x: w * 0.068, y: h * 0.008), withAttributes: cyberAttrs)
+
+        case .frenchPatisserie:
+            UIColor(red: 0.985, green: 0.958, blue: 0.895, alpha: 1.0).setFill()
+            cg.fill(rect)
+            let gold = UIColor(red: 0.76, green: 0.60, blue: 0.30, alpha: 0.80)
+            gold.setStroke()
+            let outer = UIBezierPath(rect: rect.insetBy(dx: w * 0.022, dy: w * 0.022))
+            outer.lineWidth = max(1.2, w * 0.0024)
+            outer.stroke()
+            let inner = UIBezierPath(rect: rect.insetBy(dx: w * 0.032, dy: w * 0.032))
+            inner.lineWidth = max(0.6, w * 0.0012)
+            inner.stroke()
+
+        case .matchaLatteMenu:
+            UIColor(red: 0.94, green: 0.96, blue: 0.90, alpha: 1.0).setFill()
+            cg.fill(rect)
+            let matchaInk = UIColor(red: 0.28, green: 0.44, blue: 0.24, alpha: 0.88)
+            let mAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.monospacedSystemFont(ofSize: max(6.5, w * 0.015), weight: .bold),
+                .foregroundColor: matchaInk
+            ]
+            NSString(string: "CAFE MATCHA · [X] ICED  [ ] HOT").draw(at: CGPoint(x: w * 0.068, y: h * 0.008), withAttributes: mAttrs)
+
+        case .vintagePostcard:
+            UIColor(red: 0.96, green: 0.93, blue: 0.86, alpha: 1.0).setFill()
+            cg.fill(rect)
+            let stripeStep = max(16.0, w * 0.06)
+            let edgeW = max(5.0, w * 0.016)
+            var pos: CGFloat = 0
+            var idx = 0
+            while pos < h {
+                let col = (idx % 2 == 0)
+                    ? UIColor(red: 0.76, green: 0.22, blue: 0.22, alpha: 0.82)
+                    : UIColor(red: 0.16, green: 0.30, blue: 0.56, alpha: 0.82)
+                col.setFill()
+                cg.fill(CGRect(x: 0, y: pos, width: edgeW, height: stripeStep * 0.65))
+                cg.fill(CGRect(x: w - edgeW, y: pos, width: edgeW, height: stripeStep * 0.65))
+                pos += stripeStep
+                idx += 1
+            }
+
+        case .cassetteMixtape:
+            UIColor(red: 0.95, green: 0.92, blue: 0.85, alpha: 1.0).setFill()
+            cg.fill(rect)
+            UIColor(red: 0.88, green: 0.42, blue: 0.20, alpha: 0.92).setFill()
+            cg.fill(CGRect(x: w * 0.068, y: h * 0.008, width: w * 0.864, height: h * 0.010))
+            UIColor(red: 0.92, green: 0.66, blue: 0.24, alpha: 0.92).setFill()
+            cg.fill(CGRect(x: w * 0.068, y: h * 0.018, width: w * 0.864, height: h * 0.006))
+
+        case .magazineCoverEditorial:
+            UIColor(red: 0.98, green: 0.975, blue: 0.965, alpha: 1.0).setFill()
+            cg.fill(rect)
+            let magInk = UIColor(red: 0.10, green: 0.10, blue: 0.11, alpha: 0.95)
+            let magAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont(name: "Georgia-Bold", size: max(9.5, w * 0.025)) ?? UIFont.boldSystemFont(ofSize: w * 0.025),
+                .foregroundColor: magInk
+            ]
+            NSString(string: "VOGUE · EDITION 09").draw(at: CGPoint(x: w * 0.068, y: h * 0.005), withAttributes: magAttrs)
+
+        case .heartLaceRed:
+            drawVerticalGradient(cg: cg, rect: rect,
+                top: UIColor(red: 0.56, green: 0.08, blue: 0.14, alpha: 1.0),
+                bottom: UIColor(red: 0.36, green: 0.04, blue: 0.08, alpha: 1.0))
+            cg.saveGState()
+            UIColor(red: 0.99, green: 0.95, blue: 0.92, alpha: 0.78).setStroke()
+            let laceRect = rect.insetBy(dx: w * 0.022, dy: w * 0.022)
+            let lp = UIBezierPath(rect: laceRect)
+            lp.lineWidth = max(1.4, w * 0.0028)
+            lp.setLineDash([max(3, w * 0.008), max(3, w * 0.008)], count: 2, phase: 0)
+            lp.stroke()
+            cg.restoreGState()
+
+        case .cloudsDaydream:
+            drawVerticalGradient(cg: cg, rect: rect,
+                top: UIColor(red: 0.76, green: 0.89, blue: 0.99, alpha: 1.0),
+                bottom: UIColor(red: 0.94, green: 0.98, blue: 1.00, alpha: 1.0))
+
+        case .monochromeGallery:
+            UIColor(red: 0.13, green: 0.13, blue: 0.14, alpha: 1.0).setFill()
+            cg.fill(rect)
+            UIColor(white: 0.82, alpha: 0.35).setStroke()
+            let monoPath = UIBezierPath(rect: rect.insetBy(dx: w * 0.024, dy: w * 0.024))
+            monoPath.lineWidth = max(0.8, w * 0.0016)
+            monoPath.stroke()
+
+        case .honeyButterBear:
+            UIColor(red: 0.995, green: 0.955, blue: 0.820, alpha: 1.0).setFill()
+            cg.fill(rect)
+            let cell = max(18.0, w * 0.072)
+            UIColor(red: 0.90, green: 0.67, blue: 0.28, alpha: 0.15).setFill()
+            var gx: CGFloat = 0
+            while gx < w {
+                cg.fill(CGRect(x: gx, y: 0, width: cell * 0.5, height: h))
+                gx += cell
+            }
+            var gy: CGFloat = 0
+            while gy < h {
+                cg.fill(CGRect(x: 0, y: gy, width: w, height: cell * 0.5))
+                gy += cell
+            }
+
+        case .midnightDisco:
+            drawVerticalGradient(cg: cg, rect: rect,
+                top: UIColor(red: 0.08, green: 0.07, blue: 0.17, alpha: 1.0),
+                bottom: UIColor(red: 0.16, green: 0.14, blue: 0.30, alpha: 1.0))
+
+        case .pistachioGelato:
+            UIColor(red: 0.90, green: 0.96, blue: 0.87, alpha: 1.0).setFill()
+            cg.fill(rect)
+            let stripeW = max(14.0, w * 0.055)
+            UIColor(red: 0.72, green: 0.86, blue: 0.68, alpha: 0.42).setFill()
+            var px: CGFloat = 0
+            while px < w {
+                cg.fill(CGRect(x: px, y: 0, width: stripeW * 0.5, height: h))
+                px += stripeW
+            }
+
+        case .oldBookPage:
+            UIColor(red: 0.935, green: 0.890, blue: 0.795, alpha: 1.0).setFill()
+            cg.fill(rect)
+            let bookInk = UIColor(red: 0.24, green: 0.20, blue: 0.16, alpha: 0.80)
+            let bkAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont(name: "Georgia-Italic", size: max(8.0, w * 0.020)) ?? UIFont.italicSystemFont(ofSize: w * 0.020),
+                .foregroundColor: bookInk
+            ]
+            NSString(string: "Chapter IV · Unforgettable Days").draw(at: CGPoint(x: w * 0.068, y: h * 0.007), withAttributes: bkAttrs)
+
+        case .filmContactSheet:
+            UIColor(red: 0.07, green: 0.07, blue: 0.075, alpha: 1.0).setFill()
+            cg.fill(rect)
+            let csAttrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.monospacedSystemFont(ofSize: max(6.5, w * 0.015), weight: .bold),
+                .foregroundColor: UIColor(red: 0.92, green: 0.66, blue: 0.24, alpha: 0.88)
+            ]
+            NSString(string: "KODAK SAFETY FILM 5063 · PROOF").draw(at: CGPoint(x: w * 0.068, y: h * 0.008), withAttributes: csAttrs)
+
+        case .peachSodaPop:
+            drawVerticalGradient(cg: cg, rect: rect,
+                top: UIColor(red: 0.995, green: 0.900, blue: 0.845, alpha: 1.0),
+                bottom: UIColor(red: 0.975, green: 0.730, blue: 0.675, alpha: 1.0))
+
+        case .royalVelvetGold:
+            drawVerticalGradient(cg: cg, rect: rect,
+                top: UIColor(red: 0.34, green: 0.06, blue: 0.11, alpha: 1.0),
+                bottom: UIColor(red: 0.20, green: 0.03, blue: 0.06, alpha: 1.0))
+            let gold = UIColor(red: 0.88, green: 0.73, blue: 0.38, alpha: 0.85)
+            gold.setStroke()
+            let rOuter = UIBezierPath(rect: rect.insetBy(dx: w * 0.022, dy: w * 0.022))
+            rOuter.lineWidth = max(1.2, w * 0.0024)
+            rOuter.stroke()
+            let rInner = UIBezierPath(rect: rect.insetBy(dx: w * 0.030, dy: w * 0.030))
+            rInner.lineWidth = max(0.7, w * 0.0014)
+            rInner.stroke()
+
+        case .minimalGridNotebook:
+            UIColor(red: 0.982, green: 0.980, blue: 0.968, alpha: 1.0).setFill()
+            cg.fill(rect)
+            let gridStep = max(12.0, w * 0.042)
+            UIColor(red: 0.56, green: 0.66, blue: 0.76, alpha: 0.20).setStroke()
+            cg.setLineWidth(max(0.6, w * 0.0011))
+            var gx: CGFloat = gridStep
+            while gx < w {
+                cg.move(to: CGPoint(x: gx, y: 0))
+                cg.addLine(to: CGPoint(x: gx, y: h))
+                gx += gridStep
+            }
+            var gy: CGFloat = gridStep
+            while gy < h {
+                cg.move(to: CGPoint(x: 0, y: gy))
+                cg.addLine(to: CGPoint(x: w, y: gy))
+                gy += gridStep
+            }
+            cg.strokePath()
         }
     }
 
@@ -530,6 +818,18 @@ public enum PhotoboothStripRenderer {
             case .denimScrapbook: return "Photo Story"
             case .boardingPass: return "PHOTO TIME"
             case .oldmoonWhite: return "ALIGN STUDIO"
+            case .seoulSubwaySign: return "SEOUL METRO 02"
+            case .y2kFlipPhone: return "CYBER SHOT 2004"
+            case .musicPlayerCard: return "NOW PLAYING · 01:28"
+            case .strawberryMilkCarton: return "SWEET BERRY STUDIO"
+            case .polaroidGalleryNote: return "MUSEUM ARCHIVE"
+            case .passportStamp: return "ARRIVAL · APPROVED"
+            case .frenchPatisserie: return "MAISON DE PARIS"
+            case .matchaLatteMenu: return "MATCHA CLUB"
+            case .cassetteMixtape: return "SIDE A · MIXTAPE 90S"
+            case .magazineCoverEditorial: return "EDITORIAL ISSUE"
+            case .oldBookPage: return "PAGE 104"
+            case .filmContactSheet: return "CONTACT SHEET #01"
             default: return "ALIGN STUDIO"
             }
         }()
@@ -548,7 +848,7 @@ public enum PhotoboothStripRenderer {
             let cw = colRect.width
             let cx0 = colRect.minX
 
-            if config.frameStyle == .thermalReceipt {
+            if config.frameStyle == .thermalReceipt || config.frameStyle == .magazineCoverEditorial {
                 let barW = cw * 0.44
                 let barX = cx0 + (cw - barW) * 0.5
                 let barY = footerTop + footerH * 0.44
@@ -564,6 +864,36 @@ public enum PhotoboothStripRenderer {
                     bx += lw + max(1.0, cw * 0.002)
                     k += 1
                 }
+            }
+
+            // Thanh tiến trình bài hát cho khung Trình Phát Nhạc (Music Player Card)
+            if config.frameStyle == .musicPlayerCard {
+                let trackW = cw * 0.68
+                let trackX = cx0 + (cw - trackW) * 0.5
+                let trackY = footerTop + footerH * 0.14
+                let trackH = max(2.0, cw * 0.005)
+                UIColor.white.withAlphaComponent(0.24).setFill()
+                cg.fill(CGRect(x: trackX, y: trackY, width: trackW, height: trackH))
+                UIColor.white.withAlphaComponent(0.92).setFill()
+                cg.fill(CGRect(x: trackX, y: trackY, width: trackW * 0.42, height: trackH))
+                let knobR = max(3.5, cw * 0.009)
+                cg.fillEllipse(in: CGRect(x: trackX + trackW * 0.42 - knobR, y: trackY + trackH * 0.5 - knobR, width: knobR * 2, height: knobR * 2))
+            }
+
+            // Con dấu mộc tròn cho khung Hộ Chiếu Du Lịch & Bưu Thiếp Cổ
+            if config.frameStyle == .passportStamp || config.frameStyle == .vintagePostcard {
+                let stampR = min(footerH * 0.34, cw * 0.075)
+                let sx = cx0 + cw - cw * 0.08 - stampR * 2
+                let sy = footerTop + (footerH - stampR * 2) * 0.5
+                cg.saveGState()
+                let stampCol = config.frameStyle == .passportStamp
+                    ? UIColor(red: 0.88, green: 0.72, blue: 0.38, alpha: 0.65)
+                    : UIColor(red: 0.76, green: 0.24, blue: 0.22, alpha: 0.58)
+                stampCol.setStroke()
+                cg.setLineWidth(max(1.0, cw * 0.0025))
+                cg.strokeEllipse(in: CGRect(x: sx, y: sy, width: stampR * 2, height: stampR * 2))
+                cg.strokeEllipse(in: CGRect(x: sx + stampR * 0.22, y: sy + stampR * 0.22, width: stampR * 1.56, height: stampR * 1.56))
+                cg.restoreGState()
             }
 
             // Huy hiệu oval tối giản chuẩn Oldmoon (ảnh mẫu 3)

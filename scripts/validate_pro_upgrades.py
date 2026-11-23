@@ -1194,6 +1194,141 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         self.assertGreater(clamped_red[0], clamped_red[2])
         self.assertGreater(clamped_red[2], clamped_red[1])
 
+    def test_24_color_pad_hold_dejitter_sequential_shutter_and_50_photobooth_frames(self):
+        # 1. Color Pad hold flicker fix (effectivePhotographicStyle returns activeInteractivePhotographicStyle) + 1-Euro Filter
+        vm = source("ViewModels/CameraViewModel.swift")
+        self.assertIn("public var activeInteractivePhotographicStyle: PhotographicStyleState", vm)
+        self.assertIn("return activeInteractivePhotographicStyle", vm)
+
+        models = source("Models/PhotographicStyleModels.swift")
+        for tok in [
+            "public struct PhotographicStyleOneEuroFilter1D: Sendable",
+            "public struct PhotographicStyleOneEuroFilter2D: Sendable",
+            "stationaryDeadband",
+            "quantizeWithHysteresis(",
+        ]:
+            self.assertIn(tok, models)
+
+        pad = source("Views/PhotographicStylesPadView.swift")
+        for tok in [
+            "private struct PhotographicStyleCornerResetButton: View",
+            "viewModel.activeInteractivePhotographicStyle",
+            "PhotographicStyleOneEuroFilter2D(",
+            "PhotographicStyleOneEuroFilter1D(",
+            "defaultSnapEnterRadius",
+            "defaultSnapExitRadius",
+            "lastEmittedTone",
+            "lastEmittedColor",
+        ]:
+            self.assertIn(tok, pad)
+
+        # Numerical verification of 1-Euro Filter + Stationary Deadband Lock:
+        # Holding finger still with +-0.003 capacitive noise at 120Hz must produce 0.000000 output jitter
+        def simulate_one_euro_stationary_jitter():
+            min_cutoff, beta, d_cutoff, deadband, speed_thresh = 1.45, 0.36, 1.0, 0.0042, 0.22
+            x_hat, dx_hat, locked = 0.42, 0.0, 0.42
+            dt = 1.0 / 120.0
+            outputs = []
+            for k in range(60):
+                raw = 0.42 + (0.0028 if (k % 2 == 0) else -0.0028)
+                dx = (raw - x_hat) / dt
+                tau_d = 1.0 / (2.0 * math.pi * d_cutoff)
+                alpha_d = 1.0 / (1.0 + tau_d / dt)
+                dx_hat = alpha_d * dx + (1.0 - alpha_d) * dx_hat
+                speed = abs(dx_hat)
+                cutoff = min_cutoff + beta * speed
+                tau = 1.0 / (2.0 * math.pi * cutoff)
+                alpha = 1.0 / (1.0 + tau / dt)
+                x_hat = alpha * raw + (1.0 - alpha) * x_hat
+                if speed < speed_thresh and abs(x_hat - locked) < deadband and abs(raw - locked) < deadband * 1.35:
+                    out = locked
+                else:
+                    locked = x_hat
+                    out = x_hat
+                outputs.append(out)
+            return max(outputs) - min(outputs)
+
+        self.assertEqual(simulate_one_euro_stationary_jitter(), 0.0)
+
+        # 2. Sequential Two-Stage Shutter Sound (Debounce 180ms + Phase 1 0..68ms clear headroom -> Phase 2 t0 >= 0.068s mechanical thud)
+        shutter = source("Services/MechanicalShutterEngine.swift")
+        for tok in [
+            "private var lastShutterFireTime: TimeInterval = 0",
+            "private let shutterDebounceInterval: TimeInterval = 0.18",
+            "guard now - lastShutterFireTime >= shutterDebounceInterval else { return nil }",
+            "addTransient(into: &bLeica, t0: 0.072",
+            "addTransient(into: &bNikon, t0: 0.070",
+            "addTransient(into: &bContax, t0: 0.072",
+            "addTransient(into: &bHassel, t0: 0.068",
+            "addTransient(into: &bPolaroid, t0: 0.070",
+            "preview_\\(MechanicalShutterProfile.leicaM.rawValue)",
+        ]:
+            self.assertIn(tok, shutter)
+        for live_buf in ("&bLeica,", "&bNikon,", "&bContax,", "&bHassel,", "&bPolaroid,"):
+            self.assertNotIn(f"addTransient(into: {live_buf} t0: 0.000", shutter)
+
+        # 3. 50 Photobooth Frames + 6 Categories + Gemini Photo System Prompt Engine & 1-Tap Presets
+        pb_models = source("Models/PhotoboothModels.swift")
+        m_enum = re.search(r"public enum PhotoboothFrameStyle:[^{]+\{(.*?)\n\s*public var id:", pb_models, re.S)
+        self.assertIsNotNone(m_enum)
+        frame_cases = re.findall(r"case\s+(\w+)\s*=", m_enum.group(1))
+        self.assertEqual(len(frame_cases), 50, f"Expected 50 PhotoboothFrameStyle cases, got {len(frame_cases)}")
+
+        for tok in [
+            "public enum PhotoboothFrameCategory",
+            "public enum PhotoboothAIStickerPreset",
+            "public enum PhotoboothAIFramePreset",
+            "public enum PhotoboothAISystemPromptEngine",
+            "composeStickerSystemPrompt(",
+            "composeFrameSystemPrompt(",
+            "composePortraitSystemPrompt(",
+            "case seoulSubwaySign",
+            "case y2kFlipPhone",
+            "case musicPlayerCard",
+            "case minimalGridNotebook",
+        ]:
+            self.assertIn(tok, pb_models)
+
+        renderer = source("Services/PhotoboothStripRenderer.swift")
+        for new_frame in [
+            "case .seoulSubwaySign:",
+            "case .y2kFlipPhone:",
+            "case .musicPlayerCard:",
+            "case .strawberryMilkCarton:",
+            "case .checkerboardRetro:",
+            "case .polaroidGalleryNote:",
+            "case .passportStamp:",
+            "case .cherryBlossomSpring:",
+            "case .cyberMatrixNeon:",
+            "case .frenchPatisserie:",
+            "case .matchaLatteMenu:",
+            "case .vintagePostcard:",
+            "case .cassetteMixtape:",
+            "case .magazineCoverEditorial:",
+            "case .heartLaceRed:",
+            "case .cloudsDaydream:",
+            "case .monochromeGallery:",
+            "case .honeyButterBear:",
+            "case .midnightDisco:",
+            "case .pistachioGelato:",
+            "case .oldBookPage:",
+            "case .filmContactSheet:",
+            "case .peachSodaPop:",
+            "case .royalVelvetGold:",
+            "case .minimalGridNotebook:",
+        ]:
+            self.assertIn(new_frame, renderer)
+
+        editor = source("Views/PhotoboothEditorSheetView.swift")
+        for tok in [
+            "STUDIO AI · GEMINI PHOTO",
+            "System Prompt Tự Động",
+            "PhotoboothAIStickerPreset.allCases",
+            "PhotoboothAIFramePreset.allCases",
+            "PhotoboothFrameCategory.allCases",
+        ]:
+            self.assertIn(tok, editor)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -220,8 +220,20 @@ public enum PhotoboothLayout: String, CaseIterable, Identifiable, Codable, Senda
     }
 }
 
-// MARK: - 24 Editorial & Textured Photobooth Frames (Sắc cạnh chuẩn in thật — Có chất liệu vải/giấy tạo từ Studio)
+// MARK: - Photobooth Frame Categories & 50 Authentic Editorial / Studio Frames
+public enum PhotoboothFrameCategory: String, CaseIterable, Identifiable, Codable, Sendable {
+    case all = "Tất cả"
+    case koreanStudio = "Hàn & Studio"
+    case coquetteCute = "Dễ thương"
+    case y2kCyber = "Y2K & Nhạc"
+    case retroFilm = "Phim & Cổ điển"
+    case editorialTicket = "Vé & Tạp chí"
+
+    public var id: String { rawValue }
+}
+
 public enum PhotoboothFrameStyle: String, CaseIterable, Identifiable, Codable, Sendable {
+    // 25 khung gốc
     case oldmoonWhite = "oldmoon_white"
     case photoismObsidian = "photoism_obsidian"
     case boardingPass = "boarding_pass"
@@ -246,6 +258,32 @@ public enum PhotoboothFrameStyle: String, CaseIterable, Identifiable, Codable, S
     case cocoaVintage = "cocoa_vintage"
     case sunsetSilk = "sunset_silk"
     case softPearl = "soft_pearl"
+    // 25 khung mở rộng mới (Tổng cộng 50 khung đa dạng phong cách)
+    case seoulSubwaySign = "seoul_subway"
+    case y2kFlipPhone = "y2k_flip_phone"
+    case musicPlayerCard = "music_player"
+    case strawberryMilkCarton = "strawberry_milk"
+    case checkerboardRetro = "checkerboard_retro"
+    case polaroidGalleryNote = "gallery_note"
+    case passportStamp = "passport_stamp"
+    case cherryBlossomSpring = "cherry_blossom"
+    case cyberMatrixNeon = "cyber_matrix"
+    case frenchPatisserie = "french_patisserie"
+    case matchaLatteMenu = "matcha_menu"
+    case vintagePostcard = "vintage_postcard"
+    case cassetteMixtape = "cassette_mixtape"
+    case magazineCoverEditorial = "magazine_cover"
+    case heartLaceRed = "heart_lace_red"
+    case cloudsDaydream = "clouds_daydream"
+    case monochromeGallery = "monochrome_gallery"
+    case honeyButterBear = "honey_butter"
+    case midnightDisco = "midnight_disco"
+    case pistachioGelato = "pistachio_gelato"
+    case oldBookPage = "old_book_page"
+    case filmContactSheet = "film_contact_sheet"
+    case peachSodaPop = "peach_soda_pop"
+    case royalVelvetGold = "royal_velvet_gold"
+    case minimalGridNotebook = "grid_notebook"
     case customAITexture = "custom_ai"
 
     public var id: String { rawValue }
@@ -276,7 +314,47 @@ public enum PhotoboothFrameStyle: String, CaseIterable, Identifiable, Codable, S
         case .cocoaVintage: return "Nâu Cacao"
         case .sunsetSilk: return "Hoàng Hôn"
         case .softPearl: return "Trắng Ngọc"
+        case .seoulSubwaySign: return "Ga Tàu Seoul"
+        case .y2kFlipPhone: return "Máy Gập Y2K"
+        case .musicPlayerCard: return "Nhạc Vinyl"
+        case .strawberryMilkCarton: return "Hộp Sữa Dâu"
+        case .checkerboardRetro: return "Caro Đen Trắng"
+        case .polaroidGalleryNote: return "Triển Lãm"
+        case .passportStamp: return "Hộ Chiếu"
+        case .cherryBlossomSpring: return "Hoa Anh Đào"
+        case .cyberMatrixNeon: return "Cyber Neon"
+        case .frenchPatisserie: return "Tiệm Bánh Paris"
+        case .matchaLatteMenu: return "Menu Matcha"
+        case .vintagePostcard: return "Bưu Thiếp Cổ"
+        case .cassetteMixtape: return "Băng Cassette"
+        case .magazineCoverEditorial: return "Bìa Tạp Chí"
+        case .heartLaceRed: return "Ren Đỏ"
+        case .cloudsDaydream: return "Trời Mây Trắng"
+        case .monochromeGallery: return "Xám Kiến Trúc"
+        case .honeyButterBear: return "Bơ Mật Ong"
+        case .midnightDisco: return "Đêm Disco"
+        case .pistachioGelato: return "Kem Pistachio"
+        case .oldBookPage: return "Trang Sách Cổ"
+        case .filmContactSheet: return "Bản In Phim"
+        case .peachSodaPop: return "Soda Đào"
+        case .royalVelvetGold: return "Nhung Hoàng Gia"
+        case .minimalGridNotebook: return "Sổ Ô Ly Muji"
         case .customAITexture: return "AI Thiết Kế"
+        }
+    }
+
+    public var category: PhotoboothFrameCategory {
+        switch self {
+        case .oldmoonWhite, .photoismObsidian, .life4CutsCream, .haruSkyBlue, .softPearl, .matchaGarden, .sunsetSilk, .seoulSubwaySign, .monochromeGallery, .minimalGridNotebook, .customAITexture:
+            return .koreanStudio
+        case .coquettePinstripe, .pinkPlushRibbon, .lavenderWatercolor, .cafeGingham, .butterCream, .coquetteSilkRibbon, .strawberryMilkCarton, .cherryBlossomSpring, .heartLaceRed, .cloudsDaydream, .honeyButterBear, .pistachioGelato, .peachSodaPop:
+            return .coquetteCute
+        case .denimScrapbook, .starryVelvet, .y2kBrushedChrome, .y2kFlipPhone, .musicPlayerCard, .checkerboardRetro, .cyberMatrixNeon, .cassetteMixtape, .midnightDisco:
+            return .y2kCyber
+        case .kodak35mmSprocket, .vintageKraftPaper, .berryNightFlash, .cocoaVintage, .oldBookPage, .filmContactSheet, .royalVelvetGold, .frenchPatisserie:
+            return .retroFilm
+        case .boardingPass, .dailyNewspaper, .vintageCinemaTicket, .thermalReceipt, .polaroidGalleryNote, .passportStamp, .matchaLatteMenu, .vintagePostcard, .magazineCoverEditorial:
+            return .editorialTicket
         }
     }
 
@@ -296,7 +374,8 @@ public enum PhotoboothFrameStyle: String, CaseIterable, Identifiable, Codable, S
 
     public var usesLightInk: Bool {
         switch self {
-        case .photoismObsidian, .boardingPass, .starryVelvet, .kodak35mmSprocket, .berryNightFlash, .cocoaVintage, .denimScrapbook:
+        case .photoismObsidian, .boardingPass, .starryVelvet, .kodak35mmSprocket, .berryNightFlash, .cocoaVintage, .denimScrapbook,
+             .musicPlayerCard, .passportStamp, .cyberMatrixNeon, .heartLaceRed, .monochromeGallery, .midnightDisco, .filmContactSheet, .royalVelvetGold:
             return true
         default:
             return false
@@ -329,6 +408,31 @@ public enum PhotoboothFrameStyle: String, CaseIterable, Identifiable, Codable, S
         case .cocoaVintage: return [Color(red: 0.24, green: 0.17, blue: 0.14), Color(red: 0.36, green: 0.26, blue: 0.21)]
         case .sunsetSilk: return [Color(red: 0.98, green: 0.82, blue: 0.70), Color(red: 0.94, green: 0.62, blue: 0.56)]
         case .softPearl: return [Color(red: 0.99, green: 0.99, blue: 0.99), Color(red: 0.93, green: 0.93, blue: 0.95)]
+        case .seoulSubwaySign: return [Color(red: 0.95, green: 0.97, blue: 0.95), Color(red: 0.18, green: 0.64, blue: 0.36)]
+        case .y2kFlipPhone: return [Color(red: 0.86, green: 0.89, blue: 0.94), Color(red: 0.62, green: 0.71, blue: 0.85)]
+        case .musicPlayerCard: return [Color(red: 0.10, green: 0.11, blue: 0.15), Color(red: 0.20, green: 0.24, blue: 0.32)]
+        case .strawberryMilkCarton: return [Color(red: 0.99, green: 0.91, blue: 0.93), Color(red: 0.95, green: 0.55, blue: 0.67)]
+        case .checkerboardRetro: return [Color(red: 0.96, green: 0.95, blue: 0.92), Color(red: 0.15, green: 0.15, blue: 0.16)]
+        case .polaroidGalleryNote: return [Color(red: 0.97, green: 0.96, blue: 0.93), Color(red: 0.84, green: 0.82, blue: 0.77)]
+        case .passportStamp: return [Color(red: 0.10, green: 0.16, blue: 0.28), Color(red: 0.78, green: 0.65, blue: 0.38)]
+        case .cherryBlossomSpring: return [Color(red: 0.99, green: 0.92, blue: 0.95), Color(red: 0.95, green: 0.78, blue: 0.85)]
+        case .cyberMatrixNeon: return [Color(red: 0.05, green: 0.08, blue: 0.12), Color(red: 0.16, green: 0.78, blue: 0.86)]
+        case .frenchPatisserie: return [Color(red: 0.98, green: 0.95, blue: 0.88), Color(red: 0.82, green: 0.68, blue: 0.42)]
+        case .matchaLatteMenu: return [Color(red: 0.94, green: 0.96, blue: 0.90), Color(red: 0.48, green: 0.64, blue: 0.42)]
+        case .vintagePostcard: return [Color(red: 0.96, green: 0.93, blue: 0.86), Color(red: 0.75, green: 0.26, blue: 0.26)]
+        case .cassetteMixtape: return [Color(red: 0.95, green: 0.92, blue: 0.85), Color(red: 0.88, green: 0.46, blue: 0.24)]
+        case .magazineCoverEditorial: return [Color(red: 0.98, green: 0.97, blue: 0.96), Color(red: 0.14, green: 0.14, blue: 0.15)]
+        case .heartLaceRed: return [Color(red: 0.56, green: 0.09, blue: 0.15), Color(red: 0.38, green: 0.05, blue: 0.09)]
+        case .cloudsDaydream: return [Color(red: 0.80, green: 0.91, blue: 0.99), Color(red: 0.95, green: 0.98, blue: 1.00)]
+        case .monochromeGallery: return [Color(red: 0.16, green: 0.16, blue: 0.17), Color(red: 0.09, green: 0.09, blue: 0.10)]
+        case .honeyButterBear: return [Color(red: 0.99, green: 0.93, blue: 0.75), Color(red: 0.88, green: 0.65, blue: 0.32)]
+        case .midnightDisco: return [Color(red: 0.09, green: 0.08, blue: 0.18), Color(red: 0.46, green: 0.44, blue: 0.64)]
+        case .pistachioGelato: return [Color(red: 0.86, green: 0.94, blue: 0.82), Color(red: 0.68, green: 0.84, blue: 0.64)]
+        case .oldBookPage: return [Color(red: 0.93, green: 0.88, blue: 0.78), Color(red: 0.76, green: 0.68, blue: 0.55)]
+        case .filmContactSheet: return [Color(red: 0.08, green: 0.08, blue: 0.08), Color(red: 0.78, green: 0.22, blue: 0.20)]
+        case .peachSodaPop: return [Color(red: 0.99, green: 0.88, blue: 0.82), Color(red: 0.97, green: 0.68, blue: 0.62)]
+        case .royalVelvetGold: return [Color(red: 0.32, green: 0.06, blue: 0.11), Color(red: 0.82, green: 0.67, blue: 0.34)]
+        case .minimalGridNotebook: return [Color(red: 0.98, green: 0.98, blue: 0.96), Color(red: 0.82, green: 0.85, blue: 0.88)]
         case .customAITexture: return [Color(red: 0.90, green: 0.75, blue: 0.44), Color(red: 0.54, green: 0.42, blue: 0.88)]
         }
     }
@@ -370,38 +474,296 @@ public enum PhotoboothTimerOption: Int, CaseIterable, Identifiable, Codable, Sen
     }
 }
 
+// MARK: - Gemini Photo AI Booth Presets & Built-In System Prompt Guardrail Engine
+
+/// 10 mẫu Sticker AI 1 chạm (dùng sẵn System Prompt chuẩn Gemini Photo để người dùng không cần tự gõ câu lệnh phức tạp).
+public enum PhotoboothAIStickerPreset: String, CaseIterable, Identifiable, Codable, Sendable {
+    case catRibbon = "cat_ribbon"
+    case cyberGlasses = "cyber_glasses"
+    case teddyHeart = "teddy_heart"
+    case princessCrown = "princess_crown"
+    case matchaBoba = "matcha_boba"
+    case bunnyPlushEars = "bunny_ears"
+    case vintageCamera = "vintage_camera"
+    case pinkTulips = "pink_tulips"
+    case retroHeadphones = "retro_headphones"
+    case chromeStarbow = "chrome_starbow"
+
+    public var id: String { rawValue }
+
+    public var displayTitle: String {
+        switch self {
+        case .catRibbon: return "Mèo trắng nơ hồng"
+        case .cyberGlasses: return "Kính râm bạc Y2K"
+        case .teddyHeart: return "Gấu bông ôm tim"
+        case .princessCrown: return "Vương miện pha lê"
+        case .matchaBoba: return "Trà sữa Matcha"
+        case .bunnyPlushEars: return "Tai thỏ bông"
+        case .vintageCamera: return "Máy ảnh phim cổ"
+        case .pinkTulips: return "Bó hoa Tulip hồng"
+        case .retroHeadphones: return "Tai nghe bạc Y2K"
+        case .chromeStarbow: return "Nơ bạc ánh kim"
+        }
+    }
+
+    public var anchorZone: PhotoboothStickerAnchorZone {
+        switch self {
+        case .catRibbon, .teddyHeart, .pinkTulips: return .shoulderBack
+        case .cyberGlasses: return .eyeBridge
+        case .princessCrown, .bunnyPlushEars, .retroHeadphones: return .headCrown
+        case .chromeStarbow: return .hairTemple
+        case .matchaBoba, .vintageCamera: return .safeCorner
+        }
+    }
+
+    public var studioSubjectSpecification: String {
+        switch self {
+        case .catRibbon:
+            return "a single adorable fluffy white kitten wearing a pastel pink satin bow tie, Korean photobooth prop style"
+        case .cyberGlasses:
+            return "a single sleek Y2K metallic chrome oval sunglasses prop with subtle silver reflection"
+        case .teddyHeart:
+            return "a single soft cream plush teddy bear holding a pastel pink fabric heart"
+        case .princessCrown:
+            return "a single delicate silver tiara crown with tiny clear crystal pearls"
+        case .matchaBoba:
+            return "a single aesthetic iced matcha latte cup with tapioca pearls and a cute striped straw"
+        case .bunnyPlushEars:
+            return "a single pair of fluffy white and blush pink plush bunny ears headband prop"
+        case .vintageCamera:
+            return "a single classic silver and black 35mm rangefinder film camera icon prop"
+        case .pinkTulips:
+            return "a single small bouquet of fresh pastel pink tulips wrapped in cream kraft paper with a satin ribbon"
+        case .retroHeadphones:
+            return "a single pair of retro Y2K silver metallic over-ear headphones"
+        case .chromeStarbow:
+            return "a single glossy silver metallic Y2K ribbon bow with a tiny four-point sparkle charm"
+        }
+    }
+}
+
+/// 10 mẫu Nền Khung In AI 1 chạm (System Prompt khóa chặt bề mặt giấy/vải phẳng, không chữ rác, không vẽ ô giả).
+public enum PhotoboothAIFramePreset: String, CaseIterable, Identifiable, Codable, Sendable {
+    case coquetteSilkLace = "coquette_silk_lace"
+    case seoulMinimalLinen = "seoul_minimal_linen"
+    case y2kDenimPatch = "y2k_denim_patch"
+    case midnightStarVelvet = "midnight_star_velvet"
+    case matchaBotanical = "matcha_botanical"
+    case pastelGinghamNote = "pastel_gingham_note"
+    case vintageNewsprint = "vintage_newsprint"
+    case holoSilverFoil = "holo_silver_foil"
+    case cherryBlossomWash = "cherry_blossom_wash"
+    case burgundyStudioVelvet = "burgundy_studio_velvet"
+
+    public var id: String { rawValue }
+
+    public var displayTitle: String {
+        switch self {
+        case .coquetteSilkLace: return "Lụa hồng viền ren"
+        case .seoulMinimalLinen: return "Vải lanh kem Hàn"
+        case .y2kDenimPatch: return "Denim bạc Y2K"
+        case .midnightStarVelvet: return "Nhung đêm sao bạc"
+        case .matchaBotanical: return "Giấy trà xanh hoa nhí"
+        case .pastelGinghamNote: return "Caro pastel bơ"
+        case .vintageNewsprint: return "Giấy cổ điển ấm"
+        case .holoSilverFoil: return "Bạc ánh kim Holo"
+        case .cherryBlossomWash: return "Màu nước anh đào"
+        case .burgundyStudioVelvet: return "Nhung đỏ Studio"
+        }
+    }
+
+    public var surfaceSpecification: String {
+        switch self {
+        case .coquetteSilkLace:
+            return "soft blush pink coquette brushed cotton paper with subtle tonal micro-ribbons and delicate ivory lace texture"
+        case .seoulMinimalLinen:
+            return "warm Korean photo studio ivory museum linen paper with fine woven organic fiber grain"
+        case .y2kDenimPatch:
+            return "authentic light-wash blue denim fabric texture with subtle diagonal twill weave and faint silver thread sheen"
+        case .midnightStarVelvet:
+            return "deep midnight navy velvet paper with tiny understated silver foil micro-star flecks"
+        case .matchaBotanical:
+            return "soft sage matcha green handmade deckle paper with subtle pressed botanical leaf fibers"
+        case .pastelGinghamNote:
+            return "warm butter-cream and pastel apricot micro-gingham woven picnic stationery pattern"
+        case .vintageNewsprint:
+            return "warm archival cream cotton parchment paper with subtle vintage letterpress paper grain"
+        case .holoSilverFoil:
+            return "brushed Y2K metallic silver Pearl matte foil cardstock with soft pearlescent gradient"
+        case .cherryBlossomWash:
+            return "airy sakura blush watercolor wash on cold-press cotton art paper with soft pastel cloud transitions"
+        case .burgundyStudioVelvet:
+            return "deep burgundy wine velvet matte studio cardstock with fine warm undertone"
+        }
+    }
+}
+
 public enum PhotoboothAIStylePreset: String, CaseIterable, Identifiable, Codable, Sendable {
     case koreanStudio = "korean_studio"
+    case fujifilmJapanese = "fujifilm_japanese"
+    case y2kDirectFlash = "y2k_direct_flash"
     case anime90s = "anime_90s"
-    case watercolorEditorial = "watercolor"
     case pastelPorcelain = "pastel_porcelain"
+    case watercolorEditorial = "watercolor"
     case magazineVogue = "magazine_vogue"
+    case cyberNeonBooth = "cyber_neon_booth"
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
-        case .koreanStudio: return "Studio Hàn Quốc"
+        case .koreanStudio: return "Studio Hàn (Life4Cuts)"
+        case .fujifilmJapanese: return "Phim Nhật (Fujifilm)"
+        case .y2kDirectFlash: return "Flash Y2K Cổ Điển"
         case .anime90s: return "Anime Thập Niên 90"
+        case .pastelPorcelain: return "Sứ Pastel Trong Trẻo"
         case .watercolorEditorial: return "Màu Nước Nghệ Thuật"
-        case .pastelPorcelain: return "Sứ Pastel Nhẹ"
-        case .magazineVogue: return "Bìa Tạp Chí"
+        case .magazineVogue: return "Tạp Chí Đen Trắng"
+        case .cyberNeonBooth: return "Cyber Neon Seoul"
         }
     }
 
     public var promptInstruction: String {
         switch self {
         case .koreanStudio:
-            return "Transform into a crisp high-end Korean Seoul photo studio portrait with flattering softbox beauty light, clean glowing skin tones, keeping exact facial identity and pose."
+            return "Enhance into an authentic Seoul Life4Cuts / Photoism high-end photo booth portrait with flattering diffused softbox beauty lighting, natural luminous porcelain skin texture, clean studio backdrop, and crisp catchlights in the eyes."
+        case .fujifilmJapanese:
+            return "Grade and refine into an authentic Japanese Fujifilm Pro 400H medium-format film portrait with airy pastel cyan-green highlights, delicate organic silver halide grain, and gentle warm skin tones."
+        case .y2kDirectFlash:
+            return "Restyle as a nostalgic early-2000s Y2K compact CCD camera direct-flash party booth photo with crisp specular highlights, rich contrast, and warm retro color science."
         case .anime90s:
-            return "Redraw as clean 1990s retro hand-painted cel anime illustration with soft film grain and warm highlights, strictly preserving the person's exact pose, hairstyle, expression, and outfit."
-        case .watercolorEditorial:
-            return "Transform into delicate fine-art fashion editorial watercolor and ink illustration on textured cream paper, preserving facial likeness and expression."
+            return "Redraw as a clean 1990s retro hand-painted Japanese cel anime portrait with soft film grain and warm highlights, while keeping every person's exact pose, glasses, hairstyle, expression, and outfit."
         case .pastelPorcelain:
-            return "Transform into a soft pastel Korean aesthetic illustration portrait with silky gentle lighting and clean pastel tones, preserving facial identity."
+            return "Transform into a dreamy soft pastel Korean editorial illustration portrait with silky lighting and harmonious pastel tones, strictly preserving facial likeness."
+        case .watercolorEditorial:
+            return "Transform into a delicate fine-art fashion editorial watercolor and ink portrait on cold-press cream paper, preserving exact facial likeness and pose."
         case .magazineVogue:
-            return "Elevate into a dramatic editorial fashion magazine monochrome & high-contrast studio portrait with crisp rim lighting, preserving exact likeness."
+            return "Elevate into a timeless high-fashion monochrome silver-gelatin studio portrait with sculptural key lighting and rich tonal gradation, preserving exact facial identity."
+        case .cyberNeonBooth:
+            return "Relight as a stylish Hongdae futuristic neon photo booth portrait with soft cyan and magenta rim lighting on the hair and shoulders while keeping skin tones clean and natural."
         }
+    }
+}
+
+/// Bộ chuẩn hóa System Prompt tự động cho Gemini Photo:
+/// - Tự động dịch & làm giàu mọi từ khóa tiếng Việt ngắn/lộn xộn của người dùng thành câu lệnh chuẩn Studio.
+/// - Áp hàng rào âm bản (Negative Guardrails) nghiêm ngặt để Gemini Photo không bao giờ vẽ chữ sai, watermark, hay làm biến dạng khuôn mặt.
+public enum PhotoboothAISystemPromptEngine {
+    private static let vietnameseKeywordDictionary: [(String, String)] = [
+        ("mèo", "cute fluffy kitten"),
+        ("chó", "cute puppy"),
+        ("thỏ", "fluffy bunny rabbit"),
+        ("gấu", "soft plush teddy bear"),
+        ("nơ", "satin ribbon bow"),
+        ("kính", "stylish Y2K sunglasses"),
+        ("vương miện", "delicate crystal tiara crown"),
+        ("hoa", "fresh pastel flower bouquet"),
+        ("tulip", "pastel tulip flowers"),
+        ("anh đào", "sakura cherry blossom"),
+        ("trà sữa", "aesthetic boba milk tea cup"),
+        ("matcha", "iced matcha latte"),
+        ("cà phê", "iced latte coffee cup"),
+        ("bánh", "pastel strawberry shortcake"),
+        (" dâu", "sweet red strawberry"),
+        ("cherry", "glossy twin cherries"),
+        ("tim", "glossy pastel heart charm"),
+        ("sao", "metallic chrome four-point star"),
+        ("mây", "fluffy daydream cloud"),
+        ("máy ảnh", "vintage 35mm film camera"),
+        ("tai nghe", "retro Y2K silver headphones"),
+        ("bướm", "holographic silver butterfly"),
+        ("hồng", "soft blush pastel pink"),
+        ("xanh", "airy pastel sky blue"),
+        ("tím", "dreamy pastel lavender"),
+        ("vàng", "warm butter cream yellow"),
+        ("đen", "sleek matte obsidian black"),
+        ("trắng", "clean pearl white"),
+        ("bạc", "brushed metallic chrome silver"),
+        ("đỏ", "deep cherry velvet red"),
+        ("cổ điển", "vintage retro archival style"),
+        ("dễ thương", "adorable Korean coquette aesthetic"),
+        ("hàn quốc", "clean Seoul Life4Cuts photo studio style"),
+        ("lấp lánh", "subtle sparkling crystal accents"),
+        ("ren", "delicate ivory lace trim"),
+        ("caro", "pastel gingham check pattern"),
+        ("nhung", "rich matte velvet texture"),
+        ("vải", "fine woven studio linen texture"),
+        ("giấy", "tactile matte cotton print paper")
+    ]
+
+    /// Chuẩn hóa chuỗi người dùng nhập (loại bỏ ký tự nhiễu, tự động bổ sung ngữ nghĩa tiếng Anh nếu người dùng gõ tiếng Việt ngắn).
+    public static func normalizeUserConcept(_ rawInput: String, fallbackConcept: String) -> String {
+        let cleaned = rawInput
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
+        guard !cleaned.isEmpty else { return fallbackConcept }
+
+        let lower = cleaned.lowercased()
+        var mappedHints: [String] = []
+        for (vi, en) in vietnameseKeywordDictionary where lower.contains(vi) {
+            mappedHints.append(en)
+        }
+        let clippedUser = String(cleaned.prefix(90))
+        if mappedHints.isEmpty {
+            return clippedUser
+        }
+        return "\(clippedUser) (\(mappedHints.prefix(4).joined(separator: ", ")))"
+    }
+
+    /// System Prompt chuẩn Gemini Photo cho tạo Sticker tách nền Die-Cut.
+    public static func composeStickerSystemPrompt(
+        userInput: String,
+        preset: PhotoboothAIStickerPreset? = nil
+    ) -> String {
+        let baseConcept: String
+        if let preset, userInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            baseConcept = preset.studioSubjectSpecification
+        } else {
+            let fallback = preset?.studioSubjectSpecification ?? PhotoboothAIStickerPreset.catRibbon.studioSubjectSpecification
+            baseConcept = normalizeUserConcept(userInput, fallbackConcept: fallback)
+        }
+        return """
+        [SYSTEM INSTRUCTION — GEMINI PHOTO DIE-CUT STICKER STUDIO]:
+        Generate ONE single centered die-cut photobooth prop sticker of: \(baseConcept).
+        Visual Rules:
+        1. Style: High-craft tactile Korean Life4Cuts / Photoism vinyl sticker prop with clean silhouette, soft studio lighting, and charming physical detail.
+        2. Background: Pure flat solid #FFFFFF white background with at least 18% empty white padding around all sides so foreground masking is 100% clean.
+        3. Strict Negative Guardrails: STRICTLY NO text, NO letters, NO numbers, NO watermarks, NO logos, NO human faces, NO multiple scattered items, NO background room or table, NO cropped edges.
+        """
+    }
+
+    /// System Prompt chuẩn Gemini Photo cho tạo Nền Khung In 300 DPI.
+    public static func composeFrameSystemPrompt(
+        userInput: String,
+        preset: PhotoboothAIFramePreset? = nil,
+        harmonyDescription: String
+    ) -> String {
+        let baseSurface: String
+        if let preset, userInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            baseSurface = preset.surfaceSpecification
+        } else {
+            let fallback = preset?.surfaceSpecification ?? PhotoboothAIFramePreset.seoulMinimalLinen.surfaceSpecification
+            baseSurface = normalizeUserConcept(userInput, fallbackConcept: fallback)
+        }
+        return """
+        [SYSTEM INSTRUCTION — GEMINI PHOTO PRINT BORDER SURFACE STUDIO]:
+        Generate a seamless top-down flat-lay physical print paper or fabric background texture: \(baseSurface), harmonized with subtle tones near \(harmonyDescription).
+        Visual Rules:
+        1. Style: Authentic Korean photobooth print border surface, uniform edge-to-edge flat lighting, subtle tactile paper/fabric grain suitable for framing portraits.
+        2. Strict Negative Guardrails: STRICTLY NO photo frames, NO empty cutout boxes, NO rectangles, NO text, NO typography, NO letters, NO numbers, NO people, NO faces, NO watermarks, NO 3D perspective angle.
+        """
+    }
+
+    /// System Prompt chuẩn Gemini Photo cho chuyển đổi Chân Dung Booth (giữ nguyên danh tính khuôn mặt 100%).
+    public static func composePortraitSystemPrompt(style: PhotoboothAIStylePreset) -> String {
+        return """
+        [SYSTEM INSTRUCTION — GEMINI PHOTO BOOTH PORTRAIT ENGINE]:
+        Task: \(style.promptInstruction)
+        Identity & Geometry Guardrails:
+        1. Strictly preserve the exact number of people, their facial identity, facial proportions, eye direction, eyeglasses, hair silhouette, hand gestures, and framing.
+        2. Keep skin tones flattering and clean; never distort fingers, eyes, or teeth.
+        3. STRICTLY DO NOT add any text, captions, dates, frames, borders, or watermarks onto the photo.
+        """
     }
 }
 

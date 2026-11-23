@@ -509,7 +509,7 @@ public struct PhotographicStylesViewfinderOverlay: View {
     private var displayedStyle: PhotographicStyleState {
         viewModel.photographicStyleSplit.isActive
             ? viewModel.photographicStyleSplit.dominantStyle
-            : viewModel.photographicStyle
+            : viewModel.activeInteractivePhotographicStyle
     }
 
     private var activeStyleSubtitleTag: String? {
@@ -944,9 +944,40 @@ public struct PhotographicStylesViewfinderOverlay: View {
 }
 
 // MARK: - 4. Bottom Control Deck (Tự động xoay ngang Trái/Phải mượt như Camera gốc iPhone 16/17 + 120Hz Zero-Lag Drag)
+/// Nút Reset tách riêng để chỉ tự cập nhật khi `liveHUD.isModifiedFromDefault` đổi, tuyệt đối không làm re-diff Pad 2D khi đang kéo.
+private struct PhotographicStyleCornerResetButton: View {
+    @ObservedObject var viewModel: CameraViewModel
+    @ObservedObject var liveHUD: PhotographicStyleLiveHUDState
+    let angle: Double
+
+    var body: some View {
+        Button(action: {
+            viewModel.resetActivePhotographicStylePreset()
+        }) {
+            Image(systemName: "arrow.counterclockwise")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(
+                    liveHUD.isModifiedFromDefault
+                        ? AlignTheme.studioInkPrimary
+                        : AlignTheme.studioInkPrimary.opacity(0.28)
+                )
+                .rotationEffect(.degrees(angle))
+                .frame(width: 34, height: 34)
+                .background(
+                    Circle()
+                        .fill(Color.white.opacity(liveHUD.isModifiedFromDefault ? 0.13 : 0.06))
+                        .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 0.6))
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(!liveHUD.isModifiedFromDefault)
+        .accessibilityLabel("Đặt lại bảng màu về mặc định")
+    }
+}
+
 public struct PhotographicStylesBottomControlDeck: View {
     @ObservedObject var viewModel: CameraViewModel
-    @ObservedObject private var liveHUD: PhotographicStyleLiveHUDState
     @ObservedObject private var orientationMonitor: PhotographicStyleOrientationMonitor
     let compact: Bool
 
@@ -956,15 +987,14 @@ public struct PhotographicStylesBottomControlDeck: View {
 
     public init(viewModel: CameraViewModel, compact: Bool = false) {
         self.viewModel = viewModel
-        self._liveHUD = ObservedObject(wrappedValue: viewModel.liveStyleHUD)
         self._orientationMonitor = ObservedObject(wrappedValue: viewModel.styleOrientationMonitor)
         self.compact = compact
     }
 
     public var body: some View {
         let split = viewModel.photographicStyleSplit
-        let style = split.isActive ? split.dominantStyle : viewModel.photographicStyle
-        let hasTextureOrGrain = viewModel.photographicStyle.hasTextureOrGrain
+        let style = split.isActive ? split.dominantStyle : viewModel.activeInteractivePhotographicStyle
+        let hasTextureOrGrain = style.hasTextureOrGrain
         let orientation = orientationMonitor.orientation
         let isLandscape = orientation.isLandscape
         let angle = orientation.rotationDegrees
@@ -1064,28 +1094,11 @@ public struct PhotographicStylesBottomControlDeck: View {
                 // Góc dưới-phải: nút Reset nhanh (khớp video mẫu, xoay thuận chiều ngang/dọc)
                 VStack {
                     Spacer()
-                    Button(action: {
-                        viewModel.resetActivePhotographicStylePreset()
-                    }) {
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(
-                                liveHUD.isModifiedFromDefault
-                                    ? AlignTheme.studioInkPrimary
-                                    : AlignTheme.studioInkPrimary.opacity(0.28)
-                            )
-                            .rotationEffect(.degrees(angle))
-                            .frame(width: 34, height: 34)
-                            .background(
-                                Circle()
-                                    .fill(Color.white.opacity(liveHUD.isModifiedFromDefault ? 0.13 : 0.06))
-                                    .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 0.6))
-                            )
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(!liveHUD.isModifiedFromDefault)
-                    .accessibilityLabel("Đặt lại bảng màu về mặc định")
+                    PhotographicStyleCornerResetButton(
+                        viewModel: viewModel,
+                        liveHUD: viewModel.liveStyleHUD,
+                        angle: angle
+                    )
                 }
                 .padding(.vertical, compact ? 10 : 12)
             }
@@ -1732,7 +1745,7 @@ private struct PhotographicStyleLuminousCursor: View, Animatable {
     }
 }
 
-// MARK: - Interactive Compact 2D Control Pad (Zero-Latency 120Hz Direct Drag + Tap-to-Glide + Double-Tap Reset)
+// MARK: - Interactive Compact 2D Control Pad (Zero-Latency 120Hz Direct Drag + 1€ De-Jitter Filter + Tap-to-Glide + Double-Tap Reset)
 private struct PhotographicStyleDotGridPad: View {
     let preset: PhotographicStylePreset
     let tone: Float
@@ -1752,13 +1765,24 @@ private struct PhotographicStyleDotGridPad: View {
     @State private var dragStartColor: Float = 0.0
     @State private var snappedToZeroX: Bool = true
     @State private var snappedToZeroY: Bool = true
+    @State private var snappedToPresetDefault: Bool = false
+    @State private var oneEuroFilter = PhotographicStyleOneEuroFilter2D(
+        minCutoff: 1.45,
+        beta: 0.36,
+        dCutoff: 1.0,
+        radialDeadband: 0.0045
+    )
+    @State private var lastEmittedTone: Float = 0.0
+    @State private var lastEmittedColor: Float = 0.0
     @State private var lastTickStepX: Int = 0
     @State private var lastTickStepY: Int = 0
     @State private var lastTapTimestamp: CFTimeInterval = 0
 
-    // Magnetic zero-snap hysteresis thresholds
+    // Magnetic zero-snap & preset-default snap hysteresis thresholds
     private let snapEnterDeadzone: Float = 0.04
     private let snapExitDeadzone: Float = 0.065
+    private let defaultSnapEnterRadius: Float = 0.035
+    private let defaultSnapExitRadius: Float = 0.058
 
     private var gridInset: CGFloat { padSize * 0.115 }
     private var usableSpan: CGFloat { max(1, padSize - gridInset * 2.0) }
@@ -1847,6 +1871,7 @@ private struct PhotographicStyleDotGridPad: View {
         .highPriorityGesture(
             DragGesture(minimumDistance: 0, coordinateSpace: .local)
                 .onChanged { value in
+                    let now = CACurrentMediaTime()
                     if !dragSessionActive {
                         dragSessionActive = true
                         hasMovedPastTapThreshold = false
@@ -1854,8 +1879,12 @@ private struct PhotographicStyleDotGridPad: View {
                         dragStartColor = color
                         dragTone = tone
                         dragColor = color
+                        lastEmittedTone = tone
+                        lastEmittedColor = color
                         snappedToZeroX = abs(color) < 0.005
                         snappedToZeroY = abs(tone) < 0.005
+                        snappedToPresetDefault = hypot(color - preset.defaultColor, tone - preset.defaultTone) < 0.008
+                        oneEuroFilter.reset(x: color, y: tone, timestamp: now)
                         lastTickStepX = Int(round(color * 10.0))
                         lastTickStepY = Int(round(tone * 10.0))
                         isDragging = true
@@ -1870,18 +1899,37 @@ private struct PhotographicStyleDotGridPad: View {
 
                     // Relative 1:1 Delta Drag trong hệ tọa độ cục bộ (tự đúng hướng ở cả 0°, +90°, -90°)
                     let halfSpan = max(1.0, usableSpan * 0.5)
-                    let rawColor = max(-1.0, min(1.0, dragStartColor + Float(value.translation.width / halfSpan)))
-                    let rawTone = max(-1.0, min(1.0, dragStartTone - Float(value.translation.height / halfSpan)))
+                    let unsmoothedColor = max(-1.0, min(1.0, dragStartColor + Float(value.translation.width / halfSpan)))
+                    let unsmoothedTone = max(-1.0, min(1.0, dragStartTone - Float(value.translation.height / halfSpan)))
 
-                    var finalColor = applyHysteresisSnap(raw: rawColor, wasSnapped: &snappedToZeroX)
-                    var finalTone = applyHysteresisSnap(raw: rawTone, wasSnapped: &snappedToZeroY)
+                    // Lọc khử rung 1€ thích ứng theo tốc độ + khóa Deadband khi giữ yên ngón tay
+                    let filtered = oneEuroFilter.filter(x: unsmoothedColor, y: unsmoothedTone, timestamp: now)
+                    var finalColor = applyHysteresisSnap(raw: filtered.x, wasSnapped: &snappedToZeroX)
+                    var finalTone = applyHysteresisSnap(raw: filtered.y, wasSnapped: &snappedToZeroY)
 
-                    if (abs(preset.defaultColor) > 0.01 || abs(preset.defaultTone) > 0.01),
-                       hypot(finalColor - preset.defaultColor, finalTone - preset.defaultTone) < 0.045 {
-                        finalColor = preset.defaultColor
-                        finalTone = preset.defaultTone
+                    // Hysteresis 2 ngưỡng cho mốc mặc định của Preset (ngăn nhảy ±4.5% qua lại khi giữ tay sát chấm mặc định)
+                    if abs(preset.defaultColor) > 0.01 || abs(preset.defaultTone) > 0.01 {
+                        let distToDefault = hypot(finalColor - preset.defaultColor, finalTone - preset.defaultTone)
+                        if snappedToPresetDefault {
+                            if distToDefault < defaultSnapExitRadius {
+                                finalColor = preset.defaultColor
+                                finalTone = preset.defaultTone
+                            } else {
+                                snappedToPresetDefault = false
+                            }
+                        } else if distToDefault <= defaultSnapEnterRadius {
+                            snappedToPresetDefault = true
+                            finalColor = preset.defaultColor
+                            finalTone = preset.defaultTone
+                        }
                     }
 
+                    // Cổng chặn vi sai (Emission Deadband Gate): khi ngón tay giữ yên, không phát lại lệnh GPU/HUD thừa
+                    guard abs(finalTone - lastEmittedTone) >= 0.0008 || abs(finalColor - lastEmittedColor) >= 0.0008 else {
+                        return
+                    }
+                    lastEmittedTone = finalTone
+                    lastEmittedColor = finalColor
                     dragTone = finalTone
                     dragColor = finalColor
                     fireDetentHaptics(newColor: finalColor, newTone: finalTone)
@@ -1958,7 +2006,7 @@ private struct PhotographicStyleDotGridPad: View {
     }
 }
 
-// MARK: - Compact Pill Palette Slider (Zero-Latency 120Hz Direct Drag + Native Capsule Gradient + Auto-Rotates With Pad)
+// MARK: - Compact Pill Palette Slider (Zero-Latency 120Hz Direct Drag + 1€ De-Jitter Filter + Auto-Rotates With Pad)
 private struct PhotographicPalettePillSlider: View {
     let value: Float
     let preset: PhotographicStylePreset
@@ -1969,7 +2017,18 @@ private struct PhotographicPalettePillSlider: View {
 
     @State private var isDragging: Bool = false
     @State private var dragValue: Float = 1.0
+    @State private var lastEmittedValue: Float = 1.0
+    @State private var snappedToMidpoint: Bool = false
+    @State private var oneEuroFilter = PhotographicStyleOneEuroFilter1D(
+        minCutoff: 1.50,
+        beta: 0.36,
+        dCutoff: 1.0,
+        stationaryDeadband: 0.0035
+    )
     @State private var lastNotch: Int = 10
+
+    private let midSnapEnter: Float = 0.016
+    private let midSnapExit: Float = 0.028
 
     var body: some View {
         let shownValue = isDragging ? dragValue : value
@@ -2023,15 +2082,39 @@ private struct PhotographicPalettePillSlider: View {
         .highPriorityGesture(
             DragGesture(minimumDistance: 0, coordinateSpace: .local)
                 .onChanged { drag in
+                    let now = CACurrentMediaTime()
                     if !isDragging {
                         isDragging = true
                         dragValue = value
+                        lastEmittedValue = value
+                        snappedToMidpoint = abs(value - 0.5) < 0.008
+                        oneEuroFilter.reset(to: value, timestamp: now)
                         lastNotch = Int(round(value * 10.0))
                         onDragStateChanged(true)
                     }
                     let norm = (drag.location.x - (thumbDiameter * 0.5 + 1.5)) / travelSpan
                     let raw = Float(max(0.0, min(1.0, norm)))
-                    let finalVal: Float = abs(raw - 0.5) < 0.02 ? 0.5 : raw
+                    let filtered = oneEuroFilter.filter(raw, timestamp: now)
+
+                    let finalVal: Float
+                    let distMid = abs(filtered - 0.5)
+                    if snappedToMidpoint {
+                        if distMid < midSnapExit {
+                            finalVal = 0.5
+                        } else {
+                            snappedToMidpoint = false
+                            finalVal = filtered
+                        }
+                    } else if distMid <= midSnapEnter {
+                        snappedToMidpoint = true
+                        finalVal = 0.5
+                    } else {
+                        finalVal = filtered
+                    }
+
+                    guard abs(finalVal - lastEmittedValue) >= 0.0008 else { return }
+                    lastEmittedValue = finalVal
+
                     let notch = Int(round(finalVal * 10.0))
                     if notch != lastNotch {
                         if notch == 0 || notch == 5 || notch == 10 {

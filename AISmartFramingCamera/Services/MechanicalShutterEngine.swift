@@ -125,8 +125,10 @@ public final class MechanicalShutterEngine: @unchecked Sendable {
     // CoreHaptics Engine
     private var hapticEngine: CHHapticEngine?
     private var supportsHaptics: Bool = false
+    private var lastShutterFireTime: TimeInterval = 0
     private var lastDialTickTime: TimeInterval = 0
     private var lastHalfPressTime: TimeInterval = 0
+    private let shutterDebounceInterval: TimeInterval = 0.18
 
     // Fallback UIKit haptics for older devices
     private let impactHeavy = UIImpactFeedbackGenerator(style: .heavy)
@@ -242,11 +244,19 @@ public final class MechanicalShutterEngine: @unchecked Sendable {
         }
     }
 
-    /// Kích hoạt âm thanh màn trập & rung cơ học khi chụp (tự động im lặng loa nếu đang ở Video Mode để không lọt vào mic).
+    /// Kích hoạt âm thanh màn trập & rung cơ học khi chụp:
+    /// - Chống trùng lặp (debounce 180ms) nếu nhiều callback chụp báo về gần nhau.
+    /// - Pha 1 (0..68ms): nhường khoảng trống sạch 100% cho tiếng chụp màn trập đầu tiên chạy trước, tuyệt đối không đè 2 tiếng click tại t = 0ms.
+    /// - Pha 2 (t0 = 68..120ms): phát tiếng đập gương lật / hồi màn trập cơ học trầm chắc (kèm nhịp rung đập cơ học đồng bộ).
     public func fireShutter() {
-        let state = lock.withLock {
-            (_selectedProfile, _activeFilmPreset, _soundVolume, _hapticIntensity, _respectSilentSwitch, _isVideoCaptureMode)
+        let now = CACurrentMediaTime()
+        let state: (MechanicalShutterProfile, FilmPreset, Float, Float, Bool, Bool)? = lock.withLock {
+            guard now - lastShutterFireTime >= shutterDebounceInterval else { return nil }
+            lastShutterFireTime = now
+            return (_selectedProfile, _activeFilmPreset, _soundVolume, _hapticIntensity, _respectSilentSwitch, _isVideoCaptureMode)
         }
+        guard let state else { return }
+
         let resolved = state.0.resolved(for: state.1)
         let hapticScale = state.3
         let playAudio = !state.5 && state.2 > 0.01 && resolved != .silentHaptic
@@ -259,7 +269,7 @@ public final class MechanicalShutterEngine: @unchecked Sendable {
         }
     }
 
-    /// Phát thử tức thì âm thanh & rung theo đúng hồ sơ đang chọn (kể cả trong Cài đặt).
+    /// Phát thử tức thì âm thanh & rung theo đúng hồ sơ đang chọn (gồm đủ cả tiếng click mở màn trập lẫn tiếng đập hồi gương).
     public func firePreviewTest(profile: MechanicalShutterProfile) {
         let state = lock.withLock { (_activeFilmPreset, _soundVolume, _hapticIntensity, _respectSilentSwitch) }
         let resolved = profile.resolved(for: state.0)
@@ -267,7 +277,9 @@ public final class MechanicalShutterEngine: @unchecked Sendable {
         let hap = max(0.35, state.2)
 
         if resolved != .silentHaptic && state.1 > 0.01 {
-            playSoundKey(resolved.rawValue, volume: vol, respectSilent: state.3)
+            let previewKey = "preview_\(resolved.rawValue)"
+            let hasPreviewKey = lock.withLock { pcmBuffers[previewKey] != nil }
+            playSoundKey(hasPreviewKey ? previewKey : resolved.rawValue, volume: vol, respectSilent: state.3)
         }
         playShutterHaptic(profile: resolved, scale: hap)
     }
@@ -494,20 +506,50 @@ public final class MechanicalShutterEngine: @unchecked Sendable {
                 )
             }
 
+            // Nhịp rung 2 pha khớp hoàn toàn với âm thanh:
+            // - Pha 1 (t = 0.000s): nhịp nhả cò màn trập sắc gọn khớp tiếng chụp đầu tiên
+            // - Pha 2 (t = 0.070s..0.118s): cú đập hồi màn trập / gương lật cơ học trầm chắc khớp tiếng đập phía sau
             let events: [CHHapticEvent]
             switch profile {
             case .autoMatch, .leicaM:
-                events = [tEv(0.0, 0.90, 0.95), tEv(0.014, 0.45, 0.85)]
+                events = [
+                    tEv(0.000, 0.68, 0.92),
+                    tEv(0.072, 0.92, 0.38),
+                    tEv(0.098, 0.56, 0.48)
+                ]
             case .nikonFM2:
-                events = [tEv(0.0, 0.95, 0.48), cEv(0.004, 0.026, 0.54, 0.30), tEv(0.012, 0.86, 0.92), tEv(0.042, 0.72, 0.62)]
+                events = [
+                    tEv(0.000, 0.72, 0.88),
+                    tEv(0.070, 0.98, 0.34),
+                    cEv(0.074, 0.028, 0.58, 0.26),
+                    tEv(0.116, 0.86, 0.42)
+                ]
             case .contaxT2:
-                events = [tEv(0.0, 0.88, 0.92), tEv(0.088, 0.28, 0.68), tEv(0.130, 0.28, 0.72), tEv(0.172, 0.26, 0.72), tEv(0.214, 0.22, 0.70)]
+                events = [
+                    tEv(0.000, 0.68, 0.90),
+                    tEv(0.072, 0.90, 0.40),
+                    tEv(0.115, 0.30, 0.68),
+                    tEv(0.155, 0.28, 0.70),
+                    tEv(0.195, 0.25, 0.70)
+                ]
             case .hasselblad500:
-                events = [tEv(0.0, 1.00, 0.36), cEv(0.005, 0.045, 0.66, 0.24), tEv(0.056, 0.52, 0.68)]
+                events = [
+                    tEv(0.000, 0.74, 0.82),
+                    tEv(0.068, 1.00, 0.28),
+                    cEv(0.072, 0.042, 0.68, 0.22),
+                    tEv(0.118, 0.82, 0.36)
+                ]
             case .polaroidSX70:
-                events = [tEv(0.0, 0.86, 0.82), cEv(0.058, 0.300, 0.40, 0.28)]
+                events = [
+                    tEv(0.000, 0.68, 0.86),
+                    tEv(0.070, 0.92, 0.36),
+                    cEv(0.106, 0.280, 0.42, 0.28)
+                ]
             case .silentHaptic:
-                events = [tEv(0.0, 0.64, 0.74)]
+                events = [
+                    tEv(0.000, 0.58, 0.82),
+                    tEv(0.070, 0.76, 0.38)
+                ]
             }
 
             if let pattern = try? CHHapticPattern(events: events, parameters: []),
@@ -628,39 +670,55 @@ public final class MechanicalShutterEngine: @unchecked Sendable {
     private func buildAllPCMBuffers() {
         var map: [String: AVAudioPCMBuffer] = [:]
 
-        // 1. Leica M Rangefinder (75ms silky cloth-curtain snick-tick)
-        var bLeica = [Double](repeating: 0.0, count: Int(0.075 * sampleRate))
-        addTransient(into: &bLeica, t0: 0.000, dur: 0.018, freq: 2200, q: 2.8, gain: 1.55, bodyHz: 165, seed: 11)
-        addTransient(into: &bLeica, t0: 0.012, dur: 0.022, freq: 3100, q: 3.2, gain: 1.25, bodyHz: 210, seed: 12)
-        addTransient(into: &bLeica, t0: 0.026, dur: 0.014, freq: 1450, q: 1.8, gain: 0.62, bodyHz: 120, seed: 13)
+        // Kiến trúc âm thanh 2 pha chống đè tiếng chụp (Sequential Shutter-Then-Mechanical-Thud):
+        // - Khi chụp thực tế (`fireShutter()`): Pha 1 (0..68ms) giữ im lặng hoàn toàn để tiếng chụp màn trập đầu tiên chạy trước,
+        //   sau đó tại Pha 2 (t0 = 68..120ms) mới phát tiếng đập hồi màn trập / gương lật cơ học trầm ấm ("âm thanh chụp chạy trước -> âm thanh đập chạy sau").
+        // - Khi nghe thử độc lập (`firePreviewTest()`): bản `preview_<profile>` có thêm tiếng click mở màn trập ở t0 = 0.000s.
+
+        // 1. Leica M Rangefinder (Pha 2 tại 72ms & 98ms: tiếng đập phanh màn vải lụa & chốt ngàm đồng trầm gọn)
+        var bLeica = [Double](repeating: 0.0, count: Int(0.155 * sampleRate))
+        addTransient(into: &bLeica, t0: 0.072, dur: 0.026, freq: 1180, q: 2.2, gain: 1.58, bodyHz: 138, seed: 12)
+        addTransient(into: &bLeica, t0: 0.098, dur: 0.022, freq: 860,  q: 1.8, gain: 1.02, bodyHz: 108, seed: 13)
         if let p = makeStereoPCMBuffer(from: bLeica) { map[MechanicalShutterProfile.leicaM.rawValue] = p }
+        var bLeicaPreview = bLeica
+        addTransient(into: &bLeicaPreview, t0: 0.000, dur: 0.018, freq: 2200, q: 2.8, gain: 1.35, bodyHz: 165, seed: 11)
+        if let p = makeStereoPCMBuffer(from: bLeicaPreview) { map["preview_\(MechanicalShutterProfile.leicaM.rawValue)"] = p }
 
-        // 2. Nikon FM2 SLR (130ms metallic mirror-up + curtain + mirror return)
-        var bNikon = [Double](repeating: 0.0, count: Int(0.130 * sampleRate))
-        addTransient(into: &bNikon, t0: 0.000, dur: 0.026, freq: 980,  q: 1.8, gain: 1.70, bodyHz: 86,  seed: 21)
-        addTransient(into: &bNikon, t0: 0.011, dur: 0.022, freq: 2650, q: 2.6, gain: 1.55, bodyHz: 180, seed: 22)
-        addTransient(into: &bNikon, t0: 0.042, dur: 0.032, freq: 1180, q: 2.0, gain: 1.32, bodyHz: 98,  seed: 23)
+        // 2. Nikon FM2 SLR (Pha 2 tại 70ms & 116ms: cú đập hộp gương lật SLR & tiếng hồi gương kim loại đanh chắc)
+        var bNikon = [Double](repeating: 0.0, count: Int(0.185 * sampleRate))
+        addTransient(into: &bNikon, t0: 0.070, dur: 0.032, freq: 920,  q: 1.7, gain: 1.74, bodyHz: 84,  seed: 22)
+        addTransient(into: &bNikon, t0: 0.116, dur: 0.036, freq: 760,  q: 1.9, gain: 1.46, bodyHz: 76,  seed: 23)
         if let p = makeStereoPCMBuffer(from: bNikon) { map[MechanicalShutterProfile.nikonFM2.rawValue] = p }
+        var bNikonPreview = bNikon
+        addTransient(into: &bNikonPreview, t0: 0.000, dur: 0.022, freq: 2450, q: 2.5, gain: 1.38, bodyHz: 160, seed: 21)
+        if let p = makeStereoPCMBuffer(from: bNikonPreview) { map["preview_\(MechanicalShutterProfile.nikonFM2.rawValue)"] = p }
 
-        // 3. Contax T2 35mm Compact (320ms crisp click + subtle micro-gear film advance whirr)
-        var bContax = [Double](repeating: 0.0, count: Int(0.320 * sampleRate))
-        addTransient(into: &bContax, t0: 0.000, dur: 0.020, freq: 2400, q: 2.6, gain: 1.65, bodyHz: 195, seed: 31)
-        addTransient(into: &bContax, t0: 0.015, dur: 0.014, freq: 1650, q: 2.0, gain: 0.85, bodyHz: 140, seed: 32)
-        addMotorWhirr(into: &bContax, t0: 0.088, dur: 0.175, modHz: 42, bandpassHz: 920, gain: 0.76, seed: 33)
+        // 3. Contax T2 35mm Compact (Pha 2 tại 72ms: tiếng đập lá trập Titan + 112ms: mô-tơ tua phim bánh răng)
+        var bContax = [Double](repeating: 0.0, count: Int(0.340 * sampleRate))
+        addTransient(into: &bContax, t0: 0.072, dur: 0.026, freq: 1240, q: 2.1, gain: 1.52, bodyHz: 132, seed: 32)
+        addMotorWhirr(into: &bContax, t0: 0.112, dur: 0.170, modHz: 42, bandpassHz: 920, gain: 0.78, seed: 33)
         if let p = makeStereoPCMBuffer(from: bContax) { map[MechanicalShutterProfile.contaxT2.rawValue] = p }
+        var bContaxPreview = bContax
+        addTransient(into: &bContaxPreview, t0: 0.000, dur: 0.018, freq: 2400, q: 2.6, gain: 1.40, bodyHz: 195, seed: 31)
+        if let p = makeStereoPCMBuffer(from: bContaxPreview) { map["preview_\(MechanicalShutterProfile.contaxT2.rawValue)"] = p }
 
-        // 4. Hasselblad 500C (150ms deep medium-format leaf-shutter thock)
-        var bHassel = [Double](repeating: 0.0, count: Int(0.150 * sampleRate))
-        addTransient(into: &bHassel, t0: 0.000, dur: 0.034, freq: 640,  q: 1.6, gain: 1.80, bodyHz: 68,  seed: 41)
-        addTransient(into: &bHassel, t0: 0.016, dur: 0.028, freq: 1320, q: 2.2, gain: 1.05, bodyHz: 112, seed: 42)
-        addTransient(into: &bHassel, t0: 0.056, dur: 0.024, freq: 820,  q: 2.4, gain: 0.82, bodyHz: 82,  seed: 43)
+        // 4. Hasselblad 500C (Pha 2 tại 68ms & 118ms: cú đập cửa sập hậu Medium Format V-System cực trầm)
+        var bHassel = [Double](repeating: 0.0, count: Int(0.195 * sampleRate))
+        addTransient(into: &bHassel, t0: 0.068, dur: 0.038, freq: 580,  q: 1.5, gain: 1.84, bodyHz: 64,  seed: 42)
+        addTransient(into: &bHassel, t0: 0.118, dur: 0.034, freq: 720,  q: 2.0, gain: 1.32, bodyHz: 74,  seed: 43)
         if let p = makeStereoPCMBuffer(from: bHassel) { map[MechanicalShutterProfile.hasselblad500.rawValue] = p }
+        var bHasselPreview = bHassel
+        addTransient(into: &bHasselPreview, t0: 0.000, dur: 0.024, freq: 1520, q: 2.2, gain: 1.25, bodyHz: 112, seed: 41)
+        if let p = makeStereoPCMBuffer(from: bHasselPreview) { map["preview_\(MechanicalShutterProfile.hasselblad500.rawValue)"] = p }
 
-        // 5. Polaroid SX-70 (430ms click + iconic instant roller ejection motor)
-        var bPolaroid = [Double](repeating: 0.0, count: Int(0.430 * sampleRate))
-        addTransient(into: &bPolaroid, t0: 0.000, dur: 0.024, freq: 1850, q: 2.2, gain: 1.55, bodyHz: 148, seed: 51)
-        addMotorWhirr(into: &bPolaroid, t0: 0.058, dur: 0.320, modHz: 56, bandpassHz: 740, gain: 0.88, seed: 52)
+        // 5. Polaroid SX-70 (Pha 2 tại 70ms: tiếng đập gương lật + 106ms: mô-tơ con lăn đẩy ảnh lấy liền)
+        var bPolaroid = [Double](repeating: 0.0, count: Int(0.440 * sampleRate))
+        addTransient(into: &bPolaroid, t0: 0.070, dur: 0.030, freq: 1050, q: 1.9, gain: 1.58, bodyHz: 118, seed: 52)
+        addMotorWhirr(into: &bPolaroid, t0: 0.106, dur: 0.300, modHz: 56, bandpassHz: 740, gain: 0.88, seed: 53)
         if let p = makeStereoPCMBuffer(from: bPolaroid) { map[MechanicalShutterProfile.polaroidSX70.rawValue] = p }
+        var bPolaroidPreview = bPolaroid
+        addTransient(into: &bPolaroidPreview, t0: 0.000, dur: 0.020, freq: 1850, q: 2.2, gain: 1.35, bodyHz: 148, seed: 51)
+        if let p = makeStereoPCMBuffer(from: bPolaroidPreview) { map["preview_\(MechanicalShutterProfile.polaroidSX70.rawValue)"] = p }
 
         // 6. Countdown Normal (warm 784Hz studio chime) & Final (1046.5Hz harmonic studio chime)
         func makeChime(freqHz: Double, dur: Double) -> AVAudioPCMBuffer? {

@@ -428,12 +428,16 @@ public final class CameraViewModel: ObservableObject {
 
     /// Trạng thái Photographic Styles 2D Control Pad (mặc định Tiêu chuẩn khi khởi chạy; lưu bộ nhớ theo từng preset trong phiên).
     private var photographicStyleMemory: [PhotographicStylePreset: PhotographicStyleState] = [:]
+    /// Trạng thái bảng màu tức thời (bao gồm cả tọa độ đang giữ/kéo ngón tay trên Pad chưa nhả) để ngăn hiện tượng giật nháy màu khi giữ tay.
+    public var activeInteractivePhotographicStyle: PhotographicStyleState {
+        pendingInteractivePhotographicStyle ?? photographicStyle
+    }
     /// Tự động đưa về `.standard` khi đang ở chế độ Video, chụp RAW DNG hoặc người dùng đang nhấn giữ so sánh ảnh gốc.
     public var effectivePhotographicStyle: PhotographicStyleState {
         if captureMode.isVideo || selectedPhotoFormat == .dng || isHoldingCompareOriginalStyle {
             return .standard
         }
-        return photographicStyle
+        return activeInteractivePhotographicStyle
     }
     public var effectiveVintageLightLeak: VintageLightLeakConfig {
         (captureMode.isVideo || selectedPhotoFormat == .dng) ? .off : vintageLightLeak
@@ -576,7 +580,8 @@ public final class CameraViewModel: ObservableObject {
     /// Đường dẫn siêu mượt 120Hz khi đang kéo tay trên Pad 2D / thanh Palette:
     /// đẩy trực tiếp sang Metal GPU (<0.005ms) + chỉ cập nhật HUD/icon tách rời, không re-diff toàn bộ CameraMainView.
     public func updatePhotographicStyleInteractive(tone: Float? = nil, color: Float? = nil, palette: Float? = nil) {
-        var next = pendingInteractivePhotographicStyle ?? photographicStyle
+        let current = pendingInteractivePhotographicStyle ?? photographicStyle
+        var next = current
         if let tone {
             next.tone = tone.isFinite ? max(-1.0, min(1.0, tone)) : 0.0
         }
@@ -586,15 +591,20 @@ public final class CameraViewModel: ObservableObject {
         if let palette {
             next.palette = palette.isFinite ? max(0.0, min(1.0, palette)) : 1.0
         }
+        if pendingInteractivePhotographicStyle != nil,
+           abs(next.tone - current.tone) < 0.0004,
+           abs(next.color - current.color) < 0.0004,
+           abs(next.palette - current.palette) < 0.0004 {
+            return
+        }
         pendingInteractivePhotographicStyle = next
+        photographicStyleMemory[next.preset] = next
         if !liveStyleHUD.isInteracting {
             liveStyleHUD.isInteracting = true
         }
         liveStyleHUD.sync(from: next)
 
-        let effective = (captureMode.isVideo || selectedPhotoFormat == .dng || isHoldingCompareOriginalStyle)
-            ? PhotographicStyleState.standard
-            : next
+        let effective = effectivePhotographicStyle
         FilmFilterEngine.shared.activePhotographicStyle = effective
         previewContainerView?.pushLiveColorStateFast(
             isFilmActive: isFilmSimulationActive,
