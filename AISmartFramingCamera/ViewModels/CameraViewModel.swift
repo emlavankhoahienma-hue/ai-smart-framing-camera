@@ -3789,7 +3789,7 @@ public final class CameraViewModel: ObservableObject {
                 let snap = self.frameProcessor.latestTrackingFrameSnapshot()
                 guard let buffer = snap?.0 ?? self.cameraService.currentMultiCamPixelBuffer() ?? self.latestCameraPixelBuffer() else { return }
                 let ci = CIImage(cvPixelBuffer: buffer)
-                guard let cg = self.windowedSharpnessCIContext.createCGImage(ci, from: ci.extent.integral) else { return }
+                guard let cg = Self.windowedSharpnessCIContext.createCGImage(ci, from: ci.extent.integral) else { return }
                 let now = CACurrentMediaTime()
                 let fallbackFrame = snap?.1 ?? TrackingFrameContext(
                     timestamp: now,
