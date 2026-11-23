@@ -129,11 +129,23 @@ jobs:
           test -d yolo12s.mlmodelc
 
       - name: Export, verify and compile pinned SigLIP
+        env:
+          HF_HUB_DOWNLOAD_TIMEOUT: "120"
+          HF_HUB_ETAG_TIMEOUT: "60"
         run: |
           pip install "torch==2.5.1" "transformers==4.46.3" \
             "huggingface_hub==0.26.2" "safetensors==0.4.5" \
             "numpy==1.26.4" "Pillow==11.0.0" "sentencepiece==0.2.0"
-          python scripts/export_siglip_coreml.py
+          for attempt in 1 2 3; do
+            if python scripts/export_siglip_coreml.py; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "SigLIP download/export failed on attempt $attempt; retrying in 10s..."
+            sleep 10
+          done
           xcrun coremlc compile SigLIPBaseImage.mlpackage .
           test -d SigLIPBaseImage.mlmodelc
           test -s SigLIPPrompts.json
@@ -147,6 +159,9 @@ jobs:
           restore-keys: composition-cadb-samp-v1
 
       - name: Export and verify pretrained SAMP-Net composition specialist
+        env:
+          HF_HUB_DOWNLOAD_TIMEOUT: "120"
+          HF_HUB_ETAG_TIMEOUT: "60"
         run: |
           pip install "torch==2.5.1" "torchvision==0.20.1" "numpy==1.26.4" \
             "coremltools==9.0" "opencv-python-headless==4.11.0.86" \
