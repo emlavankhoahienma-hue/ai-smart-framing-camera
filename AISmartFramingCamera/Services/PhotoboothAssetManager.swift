@@ -54,11 +54,17 @@ public final class PhotoboothAssetManager: ObservableObject {
 
     private func setupBundledCatalog() {
         let coquetteItems: [(String, String, PhotoboothStickerAnchorZone)] = [
+            ("pb_kitty_clip", "Kẹp mèo nơ đỏ", .hairTemple),
+            ("pb_crown_silver", "Vương miện bạc", .headCrown),
             ("pb_ribbon_pink", "Nơ lụa hồng", .hairTemple),
             ("pb_ribbon_black", "Nơ nhung đen", .hairTemple),
             ("pb_bunny_ears", "Tai thỏ bông", .headCrown),
             ("pb_cat_ears", "Tai mèo cài đầu", .headCrown),
+            ("pb_tulip_bouquet", "Bó hoa Tulip", .shoulderBack),
+            ("pb_teddy_head", "Đầu gấu bông", .shoulderBack),
             ("pb_bear_plush", "Gấu bông", .shoulderBack),
+            ("pb_speech_cute", "Bong bóng tim", .safeCorner),
+            ("pb_tape_washi", "Băng keo caro", .safeCorner),
             ("pb_cherry_twin", "Cherry đôi", .cheekAccent),
             ("pb_strawberry_cake", "Bánh dâu", .safeCorner),
             ("pb_iced_latte", "Cà phê sữa đá", .safeCorner),
@@ -68,6 +74,12 @@ public final class PhotoboothAssetManager: ObservableObject {
             ("pb_angel_wings", "Cánh thiên thần", .shoulderBack),
         ]
         let y2kItems: [(String, String, PhotoboothStickerAnchorZone)] = [
+            ("pb_camera_mini", "Máy ảnh bạc", .safeCorner),
+            ("pb_headphone_y2k", "Tai nghe Y2K", .headCrown),
+            ("pb_butterfly_silver", "Bướm bạc Holo", .hairTemple),
+            ("pb_heart_doodle", "Tim nét bút đôi", .cheekAccent),
+            ("pb_star_scribble", "Sao vẽ tay bạc", .safeCorner),
+            ("pb_peace_hand", "Tay chữ V", .safeCorner),
             ("pb_chrome_star", "Ngôi sao Chrome", .safeCorner),
             ("pb_sparkle_trio", "Lấp lánh Y2K", .safeCorner),
             ("pb_film_roll", "Cuộn phim 35mm", .safeCorner),
@@ -250,6 +262,24 @@ public final class PhotoboothAssetManager: ObservableObject {
         if let img = UIImage(contentsOfFile: url.path) {
             imageCache[key] = img
             return img
+        }
+        return nil
+    }
+
+    public func bundledFrameTextureImage(filename: String) -> UIImage? {
+        let key = "btex_\(filename)"
+        if let mem = imageCache[key] { return mem }
+        let baseName = (filename as NSString).deletingPathExtension
+        let ext = (filename as NSString).pathExtension
+        let paths = [
+            Bundle.main.path(forResource: baseName, ofType: ext, inDirectory: "PhotoboothAssets"),
+            Bundle.main.path(forResource: baseName, ofType: ext)
+        ].compactMap { $0 }
+        for path in paths {
+            if let img = UIImage(contentsOfFile: path) {
+                imageCache[key] = img
+                return img
+            }
         }
         return nil
     }

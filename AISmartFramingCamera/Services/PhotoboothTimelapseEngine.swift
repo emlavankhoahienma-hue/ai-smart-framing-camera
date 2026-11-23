@@ -5,17 +5,17 @@ import CoreGraphics
 import CoreVideo
 import UIKit
 
-/// Bộ ghi khung hình hậu trường siêu nhẹ (~6–7 FPS, nén JPEG nhỏ <= 420px, giới hạn vòng 36 khung/ô)
-/// để tạo Video Tua Nhanh kiểu Life4Cuts / Photoism sau khi chụp Photobooth mà không chạm vào CameraService bị khóa.
+/// Bộ ghi khung hình hậu trường siêu nhẹ (~8 FPS, nén JPEG nhỏ <= 360px, vòng đệm 48 khung/ô đủ trọn 6 giây tạo dáng)
+/// để tạo Video Tua Chậm/Nhanh kiểu Life4Cuts / Photoism mượt mà, không giật liveview và không chạm vào CameraService bị khóa.
 public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
     public static let shared = PhotoboothTimelapseRecorder()
 
     private let lock = NSLock()
     private let workQueue = DispatchQueue(label: "com.alignai.photobooth.timelapse.capture", qos: .utility)
-    private let ciContext = CIContext(options: [.useSoftwareRenderer: false, .highQualityDownsample: true, .cacheIntermediates: false])
+    private let ciContext = CIContext(options: [.useSoftwareRenderer: false, .highQualityDownsample: false, .cacheIntermediates: false])
 
     private var framesBySlot: [Int: [PhotoboothTimelapseClipFrame]] = [:]
-    private var maxFramesPerSlot: Int = 36
+    private var maxFramesPerSlot: Int = 48
     private var lastCaptureTime: CFTimeInterval = 0
     private var isSamplingBusy: Bool = false
 
@@ -44,7 +44,7 @@ public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
         lock.withLock { framesBySlot }
     }
 
-    /// Lấy mẫu 1 khung từ `CVPixelBuffer` đang phát live (throttle >= 140ms ~7 FPS, áp nhẹ màu phim/Photographic Style đang chọn).
+    /// Lấy mẫu 1 khung từ `CVPixelBuffer` đang phát live (throttle >= 125ms ~8 FPS, áp đồng bộ màu live đang bật).
     public func samplePixelBufferIfDue(
         _ pixelBuffer: CVPixelBuffer,
         slotIndex: Int,
@@ -54,7 +54,7 @@ public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
     ) {
         let now = CACurrentMediaTime()
         let shouldProceed: Bool = lock.withLock {
-            if isSamplingBusy || (now - lastCaptureTime) < 0.145 {
+            if isSamplingBusy || (now - lastCaptureTime) < 0.125 {
                 return false
             }
             lastCaptureTime = now
@@ -63,7 +63,6 @@ public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
         }
         guard shouldProceed else { return }
 
-        // CVPixelBuffer được retain tự động trong closure cho đến khi nén xong sang JPEG nhẹ
         struct PixelBufferBox: @unchecked Sendable {
             let buffer: CVPixelBuffer
         }
@@ -80,14 +79,14 @@ public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
                 let extent = ci.extent
                 guard extent.width > 32, extent.height > 32 else { return }
 
-                // Thu nhỏ về tối đa 420px cạnh ngang để giữ RAM thấp (~25–35KB/khung) và xuất MP4 cực nhanh
-                let targetMaxW: CGFloat = 420.0
+                // Thu nhỏ về tối đa 360px cạnh ngang để giữ RAM thấp (~20KB/khung) và dựng video 720p cực nhanh
+                let targetMaxW: CGFloat = 360.0
                 if extent.width > targetMaxW {
                     let s = targetMaxW / extent.width
                     ci = ci.transformed(by: CGAffineTransform(scaleX: s, y: s))
                 }
 
-                // Áp đồng bộ màu live (Photographic Styles / Film Simulation đang bật)
+                // Chỉ chạy filter khi người dùng thật sự bật màu phim hoặc Photographic Style
                 if isFilmActive && activeFilmPreset != .standard {
                     if let graded = FilmFilterEngine.shared.applyPreset(
                         to: ci,
@@ -106,7 +105,7 @@ public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
 
                 guard let cg = self.ciContext.createCGImage(ci, from: ci.extent.integral) else { return }
                 let ui = UIImage(cgImage: cg)
-                guard let jpeg = ui.jpegData(compressionQuality: 0.68) else { return }
+                guard let jpeg = ui.jpegData(compressionQuality: 0.65) else { return }
 
                 let clipFrame = PhotoboothTimelapseClipFrame(
                     slotIndex: slotIndex,
@@ -127,8 +126,8 @@ public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
     }
 }
 
-/// Bộ kết xuất Video Tua Nhanh Photobooth chuẩn dọc 9:16 Full HD (1080×1920 · 30 FPS · H.264 MP4)
-/// sẵn sàng đăng ngay lên TikTok / Instagram Reels / Facebook Story.
+/// Bộ kết xuất Video Tua Hậu Trường Photobooth chuẩn dọc 9:16 HD sắc nét (720×1280 · 24 FPS · H.264 MP4)
+/// tối ưu tiền-giải-mã & bộ nhớ đệm khung tĩnh giúp dựng nhanh gấp ~3 lần, mượt mà, không giật nóng máy.
 public enum PhotoboothTimelapseExporter {
     public enum ExportError: LocalizedError {
         case noPhotosAvailable
@@ -139,7 +138,7 @@ public enum PhotoboothTimelapseExporter {
         public var errorDescription: String? {
             switch self {
             case .noPhotosAvailable:
-                return "Cần ít nhất 1 khung ảnh để tạo video tua nhanh."
+                return "Cần ít nhất 1 khung ảnh để tạo video."
             case .writerInitializationFailed(let detail):
                 return "Không khởi tạo được bộ xuất video MP4: \(detail)"
             case .pixelBufferPoolUnavailable:
@@ -183,12 +182,12 @@ public enum PhotoboothTimelapseExporter {
             throw ExportError.noPhotosAvailable
         }
 
-        // Kích thước dải ảnh tỉ lệ gọn khớp màn hình 1080×1920 (giữ margin đẹp, đủ chỗ bóng đổ & viền)
-        let outW: CGFloat = 1080
-        let outH: CGFloat = 1920
+        // 720×1280 @ 24 FPS: chuẩn HD dọc mượt mắt cho TikTok/Reels, nhanh gấp ~3 lần 1080p30 và nhẹ bộ nhớ
+        let outW: CGFloat = 720
+        let outH: CGFloat = 1280
         let stripAspect = config.layout.aspectRatio
-        let maxStripW = outW * 0.80
-        let maxStripH = outH * 0.86
+        let maxStripW = outW * 0.82
+        let maxStripH = outH * 0.87
         let stripW = min(maxStripW, maxStripH * stripAspect)
         let stripH = stripW / max(0.2, stripAspect)
         let stripRenderSize = CGSize(width: round(stripW), height: round(stripH))
@@ -247,10 +246,10 @@ public enum PhotoboothTimelapseExporter {
     private static func darkenedBackdropColor(_ color: UIColor) -> UIColor {
         var r: CGFloat = 0.1, g: CGFloat = 0.1, b: CGFloat = 0.12, a: CGFloat = 1.0
         color.getRed(&r, green: &g, blue: &b, alpha: &a)
-        return UIColor(red: 0.05 + r * 0.24, green: 0.05 + g * 0.24, blue: 0.06 + b * 0.24, alpha: 1.0)
+        return UIColor(red: 0.04 + r * 0.22, green: 0.04 + g * 0.22, blue: 0.05 + b * 0.22, alpha: 1.0)
     }
 
-    // MARK: - Hardware H.264 MP4 Rendering (Off-Main-Thread)
+    // MARK: - Hardware H.264 MP4 Rendering (Off-Main-Thread, Zero Main-Thread Lag)
 
     private static func renderMP4OffMainThread(
         snapshot: RenderJobSnapshot,
@@ -269,14 +268,15 @@ public enum PhotoboothTimelapseExporter {
             throw ExportError.writerInitializationFailed(error.localizedDescription)
         }
 
+        let fps: Int32 = 24
         let videoSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: outW,
             AVVideoHeightKey: outH,
             AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: 8_500_000,
+                AVVideoAverageBitRateKey: 5_200_000,
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
-                AVVideoExpectedSourceFrameRateKey: 30
+                AVVideoExpectedSourceFrameRateKey: fps
             ]
         ]
 
@@ -306,9 +306,25 @@ public enum PhotoboothTimelapseExporter {
         }
 
         let slotCount = snapshot.layout.slotCount
-        let fps: Int32 = 30
+        let maxSlotRenderSide: CGFloat = {
+            if snapshot.style == .btsReelsReveal {
+                return CGFloat(outH)
+            }
+            let maxRectSide = snapshot.slotRectsInStrip.reduce(CGFloat(280)) { acc, r in
+                max(acc, max(r.width, r.height))
+            }
+            return min(CGFloat(outH), max(320, maxRectSide * 1.35))
+        }()
 
-        // Giải mã sẵn ảnh hậu trường cho từng ô (nếu người dùng nhập ảnh từ Thư viện thì tự tạo mảng khung mượt từ ảnh chính)
+        // Tiền thu nhỏ ảnh chụp gốc 1 lần duy nhất thay vì thu nhỏ ảnh 12MP lặp lại hàng trăm lần trong vòng lặp frame
+        var preScaledFinalCGs: [CGImage?] = Array(repeating: nil, count: slotCount)
+        for idx in 0..<slotCount {
+            if let raw = snapshot.finalSlotCGs[idx] {
+                preScaledFinalCGs[idx] = prescaleCGImageIfNeeded(raw, maxSide: maxSlotRenderSide)
+            }
+        }
+
+        // Giải mã sẵn các khung hậu trường 1 lần duy nhất
         var decodedClips: [[CGImage]] = Array(repeating: [], count: slotCount)
         for idx in 0..<slotCount {
             if let rawFrames = snapshot.recordedFramesBySlot[idx], !rawFrames.isEmpty {
@@ -323,28 +339,31 @@ public enum PhotoboothTimelapseExporter {
                     decodedClips[idx] = imgs
                 }
             }
-            if decodedClips[idx].isEmpty, let finalImg = snapshot.finalSlotCGs[idx] {
+            if decodedClips[idx].isEmpty, let finalImg = preScaledFinalCGs[idx] {
                 decodedClips[idx] = [finalImg]
             }
         }
 
-        // Xây dựng kịch bản từng frame ở 30 FPS tùy theo tốc độ tua (2x / 3x / 4x)
-        let framesPerSlotMotion: Int = {
+        // Nhịp tua chậm rãi mượt mắt hơn (ở 24 FPS — mặc định 2x ~1.75s/ô; 8 ô rút gọn nhẹ để tổng độ dài cân đối)
+        let baseMotionFrames: Int = {
             switch snapshot.speed {
-            case .x2: return 42   // ~1.4s / ô
-            case .x3: return 28   // ~0.93s / ô
-            case .x4: return 20   // ~0.66s / ô
+            case .x1_5: return 54   // ~2.25s / ô — chậm rãi mơ màng
+            case .x2:   return 42   // ~1.75s / ô — cân bằng mượt mắt (mặc định)
+            case .x3:   return 28   // ~1.17s / ô — nhịp nhanh gọn Reels
             }
         }()
-        let flashFrames = 4
+        let framesPerSlotMotion: Int = slotCount >= 7 ? max(20, Int(round(Double(baseMotionFrames) * 0.72))) : baseMotionFrames
+        let flashFrames = 3
         let postSnapHoldFrames = 6
-        let simultaneousLoopFrames = (snapshot.style == .movingStrip) ? 45 : 0  // 1.5s tất cả các ô cùng động
-        let finalHeroHoldFrames = 52                                            // ~1.7s giữ bản in hoàn chỉnh
+        let simultaneousLoopFrames = (snapshot.style == .movingStrip) ? 44 : 0  // ~1.83s tất cả các ô cùng động
+        let finalHeroHoldFrames = 48                                            // 2.0s giữ bản in hoàn chỉnh
 
         let stripOriginX = (CGFloat(outW) - snapshot.stripCanvasSize.width) * 0.5
         let stripOriginY = (CGFloat(outH) - snapshot.stripCanvasSize.height) * 0.5
         let stripFrameInOut = CGRect(origin: CGPoint(x: stripOriginX, y: stripOriginY), size: snapshot.stripCanvasSize)
-        let slotCorner = min(snapshot.stripCanvasSize.width, snapshot.stripCanvasSize.height) * snapshot.stripCornerRadiusRatio
+        let slotCorner = snapshot.stripCornerRadiusRatio > 0.0005
+            ? (min(snapshot.stripCanvasSize.width, snapshot.stripCanvasSize.height) * snapshot.stripCornerRadiusRatio)
+            : 0.0
 
         // Vẽ sẵn nền tĩnh 9:16 có bóng đổ dưới dải ảnh (tái sử dụng cho mọi frame)
         let staticBackdropCG = buildBackdropCanvas(
@@ -368,7 +387,7 @@ public enum PhotoboothTimelapseExporter {
 
         func appendFrame(_ drawBlock: (CGContext) -> Void) async throws {
             while !input.isReadyForMoreMediaData {
-                try await Task.sleep(nanoseconds: 5_000_000)
+                try await Task.sleep(nanoseconds: 4_000_000)
             }
             var pxBufOut: CVPixelBuffer?
             let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pxBufOut)
@@ -389,10 +408,9 @@ public enum PhotoboothTimelapseExporter {
                    space: colorSpace,
                    bitmapInfo: bitmapInfo
                ) {
-                // Đưa hệ tọa độ về chuẩn Top-Left giống UIKit để vẽ đồng nhất 100%
                 cg.translateBy(x: 0, y: CGFloat(outH))
                 cg.scaleBy(x: 1.0, y: -1.0)
-                cg.interpolationQuality = .high
+                cg.interpolationQuality = .medium
                 drawBlock(cg)
             }
 
@@ -400,13 +418,13 @@ public enum PhotoboothTimelapseExporter {
             adaptor.append(pxBuf, withPresentationTime: pts)
             frameCursor += 1
 
-            if frameCursor % 6 == 0 || Int(frameCursor) >= totalEstimatedFrames {
+            if frameCursor % 5 == 0 || Int(frameCursor) >= totalEstimatedFrames {
                 let pct = min(0.98, Double(frameCursor) / Double(max(1, totalEstimatedFrames)))
                 await progressHandler(pct)
             }
         }
 
-        // Helper vẽ dải ảnh với trạng thái khung hình cụ thể của từng ô + hiệu ứng flash
+        // Helper vẽ dải ảnh với hỗ trợ đầy đủ 2×4, 2×4 Đôi (twin2x4 đồng bộ cả 2 cột) & ô vuông sắc cạnh 90°
         func drawStripComposite(
             cg: CGContext,
             slotImages: [CGImage?],
@@ -426,7 +444,7 @@ public enum PhotoboothTimelapseExporter {
                     cg.scaleBy(x: stripScale, y: stripScale)
                     cg.translateBy(x: -fullRect.midX, y: -fullRect.midY)
                 }
-                cg.setShadow(offset: CGSize(width: 0, height: 18), blur: 36, color: UIColor.black.withAlphaComponent(0.55).cgColor)
+                cg.setShadow(offset: CGSize(width: 0, height: 14), blur: 26, color: UIColor.black.withAlphaComponent(0.52).cgColor)
                 drawCGImageUpright(snapshot.frameBackgroundCG, in: stripFrameInOut, cg: cg)
                 cg.restoreGState()
             }
@@ -438,26 +456,31 @@ public enum PhotoboothTimelapseExporter {
                 cg.translateBy(x: -fullRect.midX, y: -fullRect.midY)
             }
 
-            for idx in 0..<min(slotCount, snapshot.slotRectsInStrip.count) {
-                let localSlot = snapshot.slotRectsInStrip[idx]
+            for rectIdx in 0..<snapshot.slotRectsInStrip.count {
+                let photoIdx = snapshot.layout.photoIndex(forRenderedRectIndex: rectIdx)
+                let localSlot = snapshot.slotRectsInStrip[rectIdx]
                 let dst = localSlot.offsetBy(dx: stripFrameInOut.minX, dy: stripFrameInOut.minY)
 
                 cg.saveGState()
-                let clip = CGPath(roundedRect: dst, cornerWidth: slotCorner, cornerHeight: slotCorner, transform: nil)
-                cg.addPath(clip)
-                cg.clip()
+                if slotCorner > 0.5 {
+                    let clip = CGPath(roundedRect: dst, cornerWidth: slotCorner, cornerHeight: slotCorner, transform: nil)
+                    cg.addPath(clip)
+                    cg.clip()
+                } else {
+                    cg.clip(to: dst)
+                }
 
-                if idx < slotImages.count, let img = slotImages[idx] {
-                    let z = idx < zoomFactors.count ? zoomFactors[idx] : 1.0
-                    let mir = idx < snapshot.slotMirrors.count ? snapshot.slotMirrors[idx] : false
+                if photoIdx < slotImages.count, let img = slotImages[photoIdx] {
+                    let z = photoIdx < zoomFactors.count ? zoomFactors[photoIdx] : 1.0
+                    let mir = photoIdx < snapshot.slotMirrors.count ? snapshot.slotMirrors[photoIdx] : false
                     drawAspectFillUpright(img, in: dst, zoom: z, mirrored: mir, cg: cg)
                 } else {
-                    let placeholder = snapshot.usesLightInk ? UIColor(white: 0.14, alpha: 1.0) : UIColor(white: 0.88, alpha: 1.0)
+                    let placeholder = snapshot.usesLightInk ? UIColor(white: 0.14, alpha: 1.0) : UIColor(white: 0.90, alpha: 1.0)
                     cg.setFillColor(placeholder.cgColor)
                     cg.fill(dst)
                 }
 
-                if flashSlotIndex == idx && flashAlpha > 0.01 {
+                if flashSlotIndex == photoIdx && flashAlpha > 0.01 {
                     cg.setFillColor(UIColor.white.withAlphaComponent(flashAlpha).cgColor)
                     cg.fill(dst)
                 }
@@ -472,7 +495,27 @@ public enum PhotoboothTimelapseExporter {
             cg.restoreGState()
         }
 
-        // MARK: - Render Phase 1: Từng ô ảnh tua nhanh quá trình tạo dáng & chụp
+        // Helper tạo sẵn 1 khung ảnh phẳng để blit tức thì cho các frame giữ nhịp tĩnh
+        func bakeStaticCompositeFrame(_ drawBlock: (CGContext) -> Void) -> CGImage? {
+            guard let cg = CGContext(
+                data: nil,
+                width: outW,
+                height: outH,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: colorSpace,
+                bitmapInfo: bitmapInfo
+            ) else { return nil }
+            cg.translateBy(x: 0, y: CGFloat(outH))
+            cg.scaleBy(x: 1.0, y: -1.0)
+            cg.interpolationQuality = .high
+            drawBlock(cg)
+            return cg.makeImage()
+        }
+
+        let fullCanvasRect = CGRect(x: 0, y: 0, width: CGFloat(outW), height: CGFloat(outH))
+
+        // MARK: - Render Phase 1: Từng ô ảnh chuyển động tạo dáng mượt mà & nháy đèn chụp
         for activeSlot in 0..<slotCount {
             let clip = decodedClips[activeSlot]
             let isStaticOnly = clip.count <= 1
@@ -480,24 +523,22 @@ public enum PhotoboothTimelapseExporter {
             for f in 0..<framesPerSlotMotion {
                 let progress = Double(f) / Double(max(1, framesPerSlotMotion - 1))
                 let clipIdx = min(max(0, clip.count - 1), Int(progress * Double(max(0, clip.count - 1))))
-                let motionZoom: CGFloat = isStaticOnly ? (1.08 - CGFloat(progress) * 0.08) : 1.0
+                let motionZoom: CGFloat = isStaticOnly ? (1.07 - CGFloat(progress) * 0.07) : 1.0
 
                 try await appendFrame { cg in
                     if snapshot.style == .movingStrip {
                         var slotImgs: [CGImage?] = Array(repeating: nil, count: slotCount)
                         var zooms: [CGFloat] = Array(repeating: 1.0, count: slotCount)
                         for prev in 0..<activeSlot {
-                            slotImgs[prev] = snapshot.finalSlotCGs[prev]
+                            slotImgs[prev] = preScaledFinalCGs[prev]
                         }
-                        slotImgs[activeSlot] = clip.isEmpty ? snapshot.finalSlotCGs[activeSlot] : clip[clipIdx]
+                        slotImgs[activeSlot] = clip.isEmpty ? preScaledFinalCGs[activeSlot] : clip[clipIdx]
                         zooms[activeSlot] = motionZoom
                         drawStripComposite(cg: cg, slotImages: slotImgs, zoomFactors: zooms, flashSlotIndex: nil, flashAlpha: 0)
                     } else {
-                        // Style 2: Hậu trường Full-Bleed Reels 9:16
-                        let fullRect = CGRect(x: 0, y: 0, width: CGFloat(outW), height: CGFloat(outH))
-                        if let img = (clip.isEmpty ? snapshot.finalSlotCGs[activeSlot] : clip[clipIdx]) {
+                        if let img = (clip.isEmpty ? preScaledFinalCGs[activeSlot] : clip[clipIdx]) {
                             let mir = activeSlot < snapshot.slotMirrors.count ? snapshot.slotMirrors[activeSlot] : false
-                            drawAspectFillUpright(img, in: fullRect, zoom: motionZoom, mirrored: mir, cg: cg)
+                            drawAspectFillUpright(img, in: fullCanvasRect, zoom: motionZoom, mirrored: mir, cg: cg)
                         }
                         drawReelsRecBadge(cg: cg, outW: CGFloat(outW), slotIndex: activeSlot + 1, totalSlots: slotCount)
                     }
@@ -506,42 +547,45 @@ public enum PhotoboothTimelapseExporter {
 
             // Nháy đèn Flash chụp ảnh sắc nét
             for fl in 0..<flashFrames {
-                let alpha = CGFloat(1.0 - Double(fl) / Double(flashFrames)) * 0.92
+                let alpha = CGFloat(1.0 - Double(fl) / Double(flashFrames)) * 0.90
                 try await appendFrame { cg in
                     if snapshot.style == .movingStrip {
                         var slotImgs: [CGImage?] = Array(repeating: nil, count: slotCount)
                         for prev in 0...activeSlot {
-                            slotImgs[prev] = snapshot.finalSlotCGs[prev]
+                            slotImgs[prev] = preScaledFinalCGs[prev]
                         }
                         drawStripComposite(cg: cg, slotImages: slotImgs, zoomFactors: Array(repeating: 1.0, count: slotCount), flashSlotIndex: activeSlot, flashAlpha: alpha)
                     } else {
-                        let fullRect = CGRect(x: 0, y: 0, width: CGFloat(outW), height: CGFloat(outH))
-                        if let img = snapshot.finalSlotCGs[activeSlot] {
+                        if let img = preScaledFinalCGs[activeSlot] {
                             let mir = activeSlot < snapshot.slotMirrors.count ? snapshot.slotMirrors[activeSlot] : false
-                            drawAspectFillUpright(img, in: fullRect, zoom: 1.0, mirrored: mir, cg: cg)
+                            drawAspectFillUpright(img, in: fullCanvasRect, zoom: 1.0, mirrored: mir, cg: cg)
                         }
                         cg.setFillColor(UIColor.white.withAlphaComponent(alpha).cgColor)
-                        cg.fill(fullRect)
+                        cg.fill(fullCanvasRect)
                     }
                 }
             }
 
-            // Dừng nhịp ngắn cho người xem thấy tấm ảnh vừa chụp
+            // Dừng nhịp rõ nét sau mỗi tấm vừa chụp (dựng 1 lần, blit nhanh cho toàn bộ frame hold)
+            let postHoldBaked = bakeStaticCompositeFrame { cg in
+                if snapshot.style == .movingStrip {
+                    var slotImgs: [CGImage?] = Array(repeating: nil, count: slotCount)
+                    for prev in 0...activeSlot {
+                        slotImgs[prev] = preScaledFinalCGs[prev]
+                    }
+                    drawStripComposite(cg: cg, slotImages: slotImgs, zoomFactors: Array(repeating: 1.0, count: slotCount), flashSlotIndex: nil, flashAlpha: 0)
+                } else {
+                    if let img = preScaledFinalCGs[activeSlot] {
+                        let mir = activeSlot < snapshot.slotMirrors.count ? snapshot.slotMirrors[activeSlot] : false
+                        drawAspectFillUpright(img, in: fullCanvasRect, zoom: 1.0, mirrored: mir, cg: cg)
+                    }
+                    drawReelsRecBadge(cg: cg, outW: CGFloat(outW), slotIndex: activeSlot + 1, totalSlots: slotCount)
+                }
+            }
             for _ in 0..<postSnapHoldFrames {
                 try await appendFrame { cg in
-                    if snapshot.style == .movingStrip {
-                        var slotImgs: [CGImage?] = Array(repeating: nil, count: slotCount)
-                        for prev in 0...activeSlot {
-                            slotImgs[prev] = snapshot.finalSlotCGs[prev]
-                        }
-                        drawStripComposite(cg: cg, slotImages: slotImgs, zoomFactors: Array(repeating: 1.0, count: slotCount), flashSlotIndex: nil, flashAlpha: 0)
-                    } else {
-                        let fullRect = CGRect(x: 0, y: 0, width: CGFloat(outW), height: CGFloat(outH))
-                        if let img = snapshot.finalSlotCGs[activeSlot] {
-                            let mir = activeSlot < snapshot.slotMirrors.count ? snapshot.slotMirrors[activeSlot] : false
-                            drawAspectFillUpright(img, in: fullRect, zoom: 1.0, mirrored: mir, cg: cg)
-                        }
-                        drawReelsRecBadge(cg: cg, outW: CGFloat(outW), slotIndex: activeSlot + 1, totalSlots: slotCount)
+                    if let baked = postHoldBaked {
+                        drawCGImageUpright(baked, in: fullCanvasRect, cg: cg)
                     }
                 }
             }
@@ -559,28 +603,42 @@ public enum PhotoboothTimelapseExporter {
                         let cIdx = min(clip.count - 1, Int(t * Double(clip.count - 1)))
                         slotImgs[idx] = clip[cIdx]
                     } else {
-                        slotImgs[idx] = snapshot.finalSlotCGs[idx]
-                        zooms[idx] = 1.0 + CGFloat(sin(t * .pi)) * 0.04
+                        slotImgs[idx] = preScaledFinalCGs[idx]
+                        zooms[idx] = 1.0 + CGFloat(sin(t * .pi)) * 0.035
                     }
                 }
                 drawStripComposite(cg: cg, slotImages: slotImgs, zoomFactors: zooms, flashSlotIndex: nil, flashAlpha: 0)
             }
         }
 
-        // MARK: - Render Phase 3: Lật ảnh & giữ bản in Photobooth hoàn chỉnh tuyệt đẹp
+        // MARK: - Render Phase 3: Lật ảnh & giữ bản in Photobooth hoàn chỉnh sắc nét
+        let finalHeroBaked = bakeStaticCompositeFrame { cg in
+            drawStripComposite(
+                cg: cg,
+                slotImages: preScaledFinalCGs,
+                zoomFactors: Array(repeating: 1.0, count: slotCount),
+                flashSlotIndex: nil,
+                flashAlpha: 0,
+                stripScale: 1.0
+            )
+        }
         for f in 0..<finalHeroHoldFrames {
-            let revealT = min(1.0, Double(f) / 14.0)
+            let revealT = min(1.0, Double(f) / 11.0)
             let eased = 1.0 - pow(1.0 - revealT, 3.0)
-            let scale = (snapshot.style == .btsReelsReveal) ? CGFloat(0.90 + 0.10 * eased) : 1.0
+            let scale = (snapshot.style == .btsReelsReveal) ? CGFloat(0.91 + 0.09 * eased) : 1.0
             try await appendFrame { cg in
-                drawStripComposite(
-                    cg: cg,
-                    slotImages: snapshot.finalSlotCGs,
-                    zoomFactors: Array(repeating: 1.0, count: slotCount),
-                    flashSlotIndex: nil,
-                    flashAlpha: 0,
-                    stripScale: scale
-                )
+                if abs(scale - 1.0) < 0.001, let baked = finalHeroBaked {
+                    drawCGImageUpright(baked, in: fullCanvasRect, cg: cg)
+                } else {
+                    drawStripComposite(
+                        cg: cg,
+                        slotImages: preScaledFinalCGs,
+                        zoomFactors: Array(repeating: 1.0, count: slotCount),
+                        flashSlotIndex: nil,
+                        flashAlpha: 0,
+                        stripScale: scale
+                    )
+                }
             }
         }
 
@@ -595,7 +653,25 @@ public enum PhotoboothTimelapseExporter {
         return outputURL
     }
 
-    // MARK: - CoreGraphics Drawing Primitives (Top-Left Flipped Space)
+    // MARK: - CoreGraphics Drawing & Pre-Scaling Primitives
+
+    private static func prescaleCGImageIfNeeded(_ img: CGImage, maxSide: CGFloat) -> CGImage {
+        let w = CGFloat(max(1, img.width))
+        let h = CGFloat(max(1, img.height))
+        let longest = max(w, h)
+        guard longest > maxSide * 1.15 else { return img }
+        let ratio = maxSide / longest
+        let nw = max(2, Int(round(w * ratio)))
+        let nh = max(2, Int(round(h * ratio)))
+        let cs = CGColorSpaceCreateDeviceRGB()
+        let bi = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        guard let ctx = CGContext(data: nil, width: nw, height: nh, bitsPerComponent: 8, bytesPerRow: 0, space: cs, bitmapInfo: bi) else {
+            return img
+        }
+        ctx.interpolationQuality = .high
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: nw, height: nh))
+        return ctx.makeImage() ?? img
+    }
 
     private static func buildBackdropCanvas(
         outW: Int,
@@ -615,7 +691,7 @@ public enum PhotoboothTimelapseExporter {
             drawGradient(cg: cg, rect: CGRect(origin: .zero, size: size), top: topColor, bottom: bottomColor)
             if includeStripBase {
                 cg.saveGState()
-                cg.setShadow(offset: CGSize(width: 0, height: 18), blur: 36, color: UIColor.black.withAlphaComponent(0.55).cgColor)
+                cg.setShadow(offset: CGSize(width: 0, height: 14), blur: 26, color: UIColor.black.withAlphaComponent(0.52).cgColor)
                 UIImage(cgImage: frameBackgroundCG).draw(in: stripFrame)
                 cg.restoreGState()
             }
@@ -633,7 +709,6 @@ public enum PhotoboothTimelapseExporter {
         }
     }
 
-    /// Vẽ CGImage đứng đúng chiều trong CGContext đã lật trục Y top-left.
     private static func drawCGImageUpright(_ img: CGImage, in rect: CGRect, cg: CGContext) {
         cg.saveGState()
         cg.translateBy(x: rect.minX, y: rect.maxY)
@@ -664,29 +739,31 @@ public enum PhotoboothTimelapseExporter {
     }
 
     private static func drawReelsRecBadge(cg: CGContext, outW: CGFloat, slotIndex: Int, totalSlots: Int) {
-        let pillRect = CGRect(x: 42, y: 74, width: 224, height: 52)
+        let safeSlots = max(1, totalSlots)
+        let pillW: CGFloat = min(outW - 56, max(160, 44 + CGFloat(safeSlots) * 20))
+        let pillRect = CGRect(x: 28, y: 48, width: pillW, height: 36)
         cg.saveGState()
-        let path = CGPath(roundedRect: pillRect, cornerWidth: 26, cornerHeight: 26, transform: nil)
+        let path = CGPath(roundedRect: pillRect, cornerWidth: 18, cornerHeight: 18, transform: nil)
         cg.addPath(path)
-        cg.setFillColor(UIColor.black.withAlphaComponent(0.58).cgColor)
+        cg.setFillColor(UIColor.black.withAlphaComponent(0.55).cgColor)
         cg.fillPath()
 
         cg.setFillColor(UIColor(red: 0.96, green: 0.24, blue: 0.24, alpha: 1.0).cgColor)
-        cg.fillEllipse(in: CGRect(x: pillRect.minX + 18, y: pillRect.midY - 7, width: 14, height: 14))
+        cg.fillEllipse(in: CGRect(x: pillRect.minX + 13, y: pillRect.midY - 4.5, width: 9, height: 9))
 
-        // Vẽ chỉ báo số ô chụp gọn gàng bằng các thanh chấm (tránh dùng NSString.draw ngoài UIGraphics context)
-        let dotY = pillRect.midY - 5
-        let startX = pillRect.minX + 48
-        let dotW: CGFloat = min(28, (pillRect.width - 72) / CGFloat(max(1, totalSlots)))
-        for i in 0..<totalSlots {
-            let x = startX + CGFloat(i) * (dotW + 8)
+        let startX = pillRect.minX + 32
+        let gap: CGFloat = safeSlots > 5 ? 4.5 : 6.0
+        let availW = pillRect.width - 46
+        let dotW: CGFloat = max(8, (availW - gap * CGFloat(safeSlots - 1)) / CGFloat(safeSlots))
+        let dotY = pillRect.midY - 3.5
+        for i in 0..<safeSlots {
+            let x = startX + CGFloat(i) * (dotW + gap)
             let isDone = (i + 1) <= slotIndex
             cg.setFillColor((isDone ? UIColor.white : UIColor.white.withAlphaComponent(0.28)).cgColor)
-            let bar = CGPath(roundedRect: CGRect(x: x, y: dotY, width: dotW, height: 10), cornerWidth: 5, cornerHeight: 5, transform: nil)
+            let bar = CGPath(roundedRect: CGRect(x: x, y: dotY, width: dotW, height: 7), cornerWidth: 3.5, cornerHeight: 3.5, transform: nil)
             cg.addPath(bar)
             cg.fillPath()
         }
         cg.restoreGState()
-        _ = outW
     }
 }

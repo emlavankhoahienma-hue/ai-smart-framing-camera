@@ -4,58 +4,56 @@ import PhotosUI
 import AVKit
 import AVFoundation
 
-private enum PhotoboothEditorTab: String, CaseIterable, Identifiable {
-    case frames = "Khung"
-    case stickers = "Sticker"
-    case aiStudio = "AI Studio"
-    case printMeta = "In & Chữ"
-
-    var id: String { rawValue }
-
-    var iconName: String {
-        switch self {
-        case .frames: return "photo.artframe"
-        case .stickers: return "sparkles"
-        case .aiStudio: return "wand.and.stars"
-        case .printMeta: return "printer"
-        }
-    }
+private enum PhotoboothFocusedDrawer: Equatable {
+    case frames
+    case stickers
 }
 
-/// Studio Trang Trí & Xuất In Photobooth 300 DPI:
-/// - Chạm khung ảnh để Chụp lại / Đổi ảnh từ Thư viện / Lật gương / Đổi sang chân dung AI / Tách chủ thể làm sticker
-/// - Kho Sticker 24 hình đóng gói sẵn + 36+ gói tải Online + Tạo Sticker AI + Tạo Khung AI đồng bộ màu trang phục
-/// - Tương tác kéo / phóng to / xoay / nhân bản / xóa sticker mượt mà trên nền dải ảnh thật
+/// Màn Hình Xem & Chỉnh Bản In Photobooth (Thiết kế tối giản chuẩn Gallery/Studio):
+/// - Mặc định mở ra là không gian xem ảnh rộng thoáng (>80% màn hình), hỗ trợ phóng to 1.0x–4.5x, kéo 4 hướng, chạm đúp phóng to từng ảnh
+/// - Thanh công cụ dưới chỉ có 4 mục gọn gàng: Khung · Sticker · Video · Thêm (ngăn kéo chỉ mở khi cần, bấm Xong để thu gọn)
+/// - Ô ảnh vuông sắc cạnh 90° chuẩn máy in tiệm thật, đầy đủ 8 bố cục (gồm 2×4 & 2×4 Đôi) và 25 khung có chất liệu giấy/vải thật
 public struct PhotoboothEditorSheetView: View {
     @ObservedObject var viewModel: CameraViewModel
     @ObservedObject private var assetManager = PhotoboothAssetManager.shared
     @Environment(\.dismiss) private var dismiss
 
-    @State private var activeTab: PhotoboothEditorTab = .frames
+    // Focused Drawer & Secondary Sheet
+    @State private var activeDrawer: PhotoboothFocusedDrawer? = nil
+    @State private var showMoreOptionsSheet: Bool = false
+
+    // Zoom & Pan Inspection State (1.0x -> 4.5x Smooth Gallery Viewer)
+    @State private var stripZoomScale: CGFloat = 1.0
+    @State private var stripLastZoomScale: CGFloat = 1.0
+    @State private var stripPanOffset: CGSize = .zero
+    @State private var stripLastPanOffset: CGSize = .zero
+
+    // Sticker & Slot Actions
     @State private var selectedStickerID: UUID? = nil
     @State private var selectedSlotForAction: Int? = nil
     @State private var showSlotActionDialog: Bool = false
     @State private var showReplacePhotoPicker: Bool = false
     @State private var replacePhotoItem: PhotosPickerItem? = nil
 
-    // Sticker browser sub-tabs
+    // Sticker Browser State
     @State private var stickerCategory: PhotoboothAssetCategory = .coquette
     @State private var selectedOnlinePack: PhotoboothOnlinePackCategory = .bowsPastel
 
-    // AI Studio prompts & status
+    // AI Studio State (Housed Cleanly Inside "Thêm" Sheet)
     @State private var aiStickerPrompt: String = ""
     @State private var aiFramePrompt: String = ""
     @State private var selectedAIPortraitStyle: PhotoboothAIStylePreset = .koreanStudio
     @State private var aiFeedbackMessage: String? = nil
     @State private var isStylizingSlots: Bool = false
 
-    // Saving / Sharing / 9:16 Timelapse Video
+    // Save / Share / Timelapse
     @State private var isSavingStrip: Bool = false
+    @State private var justSavedStrip: Bool = false
     @State private var shareImage: UIImage? = nil
     @State private var showShareSheet: Bool = false
     @State private var showTimelapseSheet: Bool = false
 
-    // 120Hz Cached Base Strip Preview + On-Device Vision Semantic Face/Space Anchors
+    // 120Hz Cached Base Strip Preview (960px Crisp for Deep Zoom) + Vision Anchors
     @State private var cachedBaseStripImage: UIImage? = nil
     @State private var baseStripRevision: Int = 0
     @State private var slotSemanticMaps: [PhotoboothSlotSemanticMap] = []
@@ -69,36 +67,41 @@ public struct PhotoboothEditorSheetView: View {
     public var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.045, green: 0.047, blue: 0.056).ignoresSafeArea()
+                Color(red: 0.04, green: 0.04, blue: 0.05).ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    editorHeaderBar
+                    calmTopHeaderBar
 
-                    interactiveStripCanvasArea
+                    zoomableStripStage
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 14)
 
-                    bottomStudioToolbox
+                    if let drawer = activeDrawer {
+                        focusedDrawerContainer(drawer)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    } else {
+                        calmBottomActionBar
+                            .transition(.opacity)
+                    }
                 }
 
+                // Lớp thông báo tiến trình khi lưu bản in 300 DPI hoặc xử lý AI
                 if isSavingStrip || assetManager.isGeneratingAI || isStylizingSlots {
                     ZStack {
-                        Color.black.opacity(0.45).ignoresSafeArea()
+                        Color.black.opacity(0.48).ignoresSafeArea()
                         VStack(spacing: 10) {
                             ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: AlignTheme.studioAccent))
-                                .scaleEffect(1.15)
-                            Text(isSavingStrip ? "Đang xuất bản in 300 DPI..." : "Đang xử lý tài nguyên Studio AI...")
-                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                .scaleEffect(1.05)
+                            Text(isSavingStrip ? "Đang lưu ảnh 300 DPI..." : "Đang xử lý tài nguyên...")
+                                .font(.system(size: 13, weight: .medium, design: .rounded))
                                 .foregroundColor(.white)
                         }
-                        .padding(.horizontal, 20)
+                        .padding(.horizontal, 22)
                         .padding(.vertical, 16)
                         .background(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .fill(Color(red: 0.11, green: 0.11, blue: 0.13))
-                                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.15), lineWidth: 0.7))
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Color(red: 0.11, green: 0.11, blue: 0.12))
+                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(0.14), lineWidth: 0.5))
                         )
                     }
                 }
@@ -106,7 +109,7 @@ public struct PhotoboothEditorSheetView: View {
             .toolbar(.hidden, for: .navigationBar)
             .preferredColorScheme(.dark)
             .confirmationDialog(
-                "Tùy chỉnh Khung ảnh #\(selectedSlotForAction.map { $0 + 1 } ?? 1)",
+                "Ảnh khung #\(selectedSlotForAction.map { $0 + 1 } ?? 1)",
                 isPresented: $showSlotActionDialog,
                 titleVisibility: .visible
             ) {
@@ -122,11 +125,15 @@ public struct PhotoboothEditorSheetView: View {
                         toggleMirrorSlot(idx)
                     }
                     if idx < viewModel.photoboothSlots.count, let slot = viewModel.photoboothSlots[idx] {
-                        Button("Tách người / vật làm Sticker viền trắng") {
+                        Button("Tách chủ thể làm Sticker") {
                             Task {
                                 if let created = await assetManager.createCutoutStickerFromPhoto(slot.displayImage, title: "Tự tách #\(idx + 1)") {
                                     placeSticker(created)
-                                    withAnimation { activeTab = .stickers; stickerCategory = .myStickers }
+                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                                        resetStripZoom()
+                                        activeDrawer = .stickers
+                                        stickerCategory = .myStickers
+                                    }
                                 }
                             }
                         }
@@ -152,6 +159,11 @@ public struct PhotoboothEditorSheetView: View {
                     replacePhotoItem = nil
                 }
             }
+            .sheet(isPresented: $showMoreOptionsSheet) {
+                moreOptionsSheet
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
             .sheet(isPresented: $showShareSheet) {
                 if let shareImage {
                     PhotoboothShareSheet(items: [shareImage])
@@ -168,107 +180,84 @@ public struct PhotoboothEditorSheetView: View {
                 refreshVisionSlotAnchors()
             }
             .onChangeCompatible(of: viewModel.photoboothStripConfig) { _ in
+                justSavedStrip = false
                 rebuildBaseStripPreviewCache()
                 refreshVisionSlotAnchors()
             }
             .onChangeCompatible(of: baseStripRevision) { _ in
+                justSavedStrip = false
                 rebuildBaseStripPreviewCache()
                 refreshVisionSlotAnchors()
             }
         }
     }
 
-    // MARK: - 1. Top Editor Bar
+    // MARK: - 1. Calm 3-Element Top Header Bar
 
-    private var editorHeaderBar: some View {
-        HStack(spacing: 10) {
+    private var calmTopHeaderBar: some View {
+        let layout = viewModel.photoboothStripConfig.layout
+        let frame = viewModel.photoboothStripConfig.frameStyle
+
+        return HStack(spacing: 12) {
             Button(action: {
                 viewModel.isShowingPhotoboothEditor = false
                 dismiss()
             }) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 14, weight: .bold))
+                Image(systemName: "xmark")
+                    .font(.system(size: 13.5, weight: .semibold))
                     .foregroundColor(.white)
                     .frame(width: 34, height: 34)
-                    .background(Circle().fill(Color.white.opacity(0.10)))
+                    .background(Circle().fill(Color.white.opacity(0.09)))
             }
             .buttonStyle(.plain)
-
-            Button(action: {
-                viewModel.resetPhotoboothSession()
-                viewModel.isShowingPhotoboothEditor = false
-                dismiss()
-            }) {
-                Text("Chụp mới")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white.opacity(0.85))
-                    .padding(.horizontal, 11)
-                    .frame(height: 32)
-                    .background(Capsule().fill(Color.white.opacity(0.08)))
-            }
-            .buttonStyle(.plain)
+            .accessibilityLabel("Đóng màn hình xem Photobooth")
 
             Spacer()
 
-            // Nút xem & xuất Video Tua Nhanh Hậu Trường 9:16 kiểu Life4Cuts / Reels
-            Button(action: {
-                HapticFeedbackService.shared.triggerLight()
-                showTimelapseSheet = true
-            }) {
+            Text("\(layout.shortBadge) · \(frame.displayName)")
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundColor(.white.opacity(0.78))
+                .lineLimit(1)
+
+            Spacer()
+
+            Button(action: saveStrip) {
                 HStack(spacing: 4.5) {
-                    Image(systemName: "play.rectangle.fill")
-                        .font(.system(size: 12, weight: .bold))
-                    Text("Video")
-                        .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                    if justSavedStrip {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11.5, weight: .bold))
+                    }
+                    Text(justSavedStrip ? "Đã lưu" : "Lưu")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
                 }
-                .foregroundColor(AlignTheme.studioAccent)
-                .padding(.horizontal, 10)
-                .frame(height: 34)
+                .foregroundColor(justSavedStrip ? .white : .black)
+                .padding(.horizontal, 15)
+                .frame(height: 32)
                 .background(
                     Capsule()
-                        .fill(AlignTheme.studioAccentSoft)
-                        .overlay(Capsule().stroke(AlignTheme.studioAccentBorder, lineWidth: 0.7))
+                        .fill(justSavedStrip ? Color(red: 0.20, green: 0.62, blue: 0.34) : Color.white)
                 )
             }
             .buttonStyle(.plain)
-            .disabled(viewModel.photoboothFilledCount == 0)
-            .accessibilityLabel("Xem video tua nhanh quá trình chụp")
-
-            Button(action: prepareShareStrip) {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(width: 34, height: 34)
-                    .background(Circle().fill(Color.white.opacity(0.10)))
-            }
-            .buttonStyle(.plain)
-
-            Button(action: saveStrip) {
-                HStack(spacing: 5) {
-                    Image(systemName: "square.and.arrow.down")
-                        .font(.system(size: 12, weight: .bold))
-                    Text("Lưu Ảnh")
-                        .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                }
-                .foregroundColor(.black)
-                .padding(.horizontal, 13)
-                .frame(height: 34)
-                .background(Capsule().fill(AlignTheme.studioAccent))
-            }
-            .buttonStyle(.plain)
+            .disabled(isSavingStrip)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
     }
 
-    // MARK: - 2. Interactive Live Print Strip Preview Canvas
+    // MARK: - 2. Full-Screen Spacious Zoomable Strip Viewer (Pinch 1.0x–4.5x · 4-Way Pan · Double-Tap Zoom)
 
-    private var interactiveStripCanvasArea: some View {
+    private var zoomableStripStage: some View {
         let stripAspect = viewModel.photoboothStripConfig.layout.aspectRatio
+        let isEditingStickers = (activeDrawer == .stickers)
+        let isZoomedIn = stripZoomScale > 1.02
 
         return GeometryReader { geo in
-            let availW = max(1, geo.size.width)
-            let availH = max(1, geo.size.height)
+            let padX: CGFloat = activeDrawer == nil ? 16 : 22
+            let padY: CGFloat = activeDrawer == nil ? 10 : 8
+            let availW = max(1, geo.size.width - padX * 2)
+            let availH = max(1, geo.size.height - padY * 2)
             let stripW = min(availW, availH * stripAspect)
             let stripH = stripW / max(0.2, stripAspect)
             let stripSize = CGSize(width: stripW, height: stripH)
@@ -277,45 +266,59 @@ public struct PhotoboothEditorSheetView: View {
                 marginScale: viewModel.photoboothStripConfig.marginScale
             )
 
-            // Sử dụng ảnh dải nền đã cache trong @State để kéo/phóng/xoay sticker mượt 120Hz không giật
             ZStack {
                 Color.clear
                     .contentShape(Rectangle())
-                    .onTapGesture {
+                    .onTapGesture(count: 2) {
+                        guard !isEditingStickers else { return }
+                        toggleSimpleCenterZoom()
+                    }
+                    .onTapGesture(count: 1) {
                         selectedStickerID = nil
                     }
 
+                // Dải ảnh Photobooth sắc cạnh chuẩn bản in thật
                 ZStack {
                     if let cachedBaseStripImage {
                         Image(uiImage: cachedBaseStripImage)
                             .resizable()
+                            .interpolation(.high)
                             .frame(width: stripSize.width, height: stripSize.height)
                     } else {
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(Color.white.opacity(0.08))
+                        Rectangle()
+                            .fill(Color.white.opacity(0.06))
                             .frame(width: stripSize.width, height: stripSize.height)
                     }
 
-                    // Interactive tap hit targets trên từng ô ảnh
-                    ForEach(Array(slotRects.enumerated()), id: \.offset) { idx, r in
+                    // Vùng chạm từng ô ảnh (hỗ trợ cả 2×4 & 2×4 Đôi; chạm đúp phóng to đúng ô, chạm đơn đổi/lật ảnh)
+                    ForEach(Array(slotRects.enumerated()), id: \.offset) { rectIdx, r in
+                        let photoIdx = viewModel.photoboothStripConfig.layout.photoIndex(forRenderedRectIndex: rectIdx)
                         Color.clear
                             .frame(width: r.width, height: r.height)
                             .contentShape(Rectangle())
                             .position(x: r.midX, y: r.midY)
-                            .onTapGesture {
-                                selectedStickerID = nil
-                                selectedSlotForAction = idx
-                                showSlotActionDialog = true
+                            .onTapGesture(count: 2) {
+                                guard !isEditingStickers else { return }
+                                toggleZoomFocusedOn(pointInStrip: CGPoint(x: r.midX, y: r.midY), stripSize: stripSize, viewportSize: geo.size)
+                            }
+                            .onTapGesture(count: 1) {
+                                if selectedStickerID != nil {
+                                    selectedStickerID = nil
+                                } else if !isEditingStickers && stripZoomScale <= 1.04 {
+                                    selectedSlotForAction = photoIdx
+                                    showSlotActionDialog = true
+                                }
                             }
                     }
 
-                    // Interactive Draggable / Pinchable / Rotatable Stickers Layer
+                    // Lớp Sticker tương tác kéo / phóng / xoay
                     ForEach($viewModel.photoboothPlacedStickers) { $sticker in
                         InteractiveStickerView(
                             sticker: $sticker,
                             stripSize: stripSize,
                             assetManager: assetManager,
                             isSelected: selectedStickerID == sticker.id,
+                            interactionEnabled: (stripZoomScale <= 1.04),
                             onSelect: { selectedStickerID = sticker.id },
                             onDelete: {
                                 viewModel.photoboothPlacedStickers.removeAll { $0.id == sticker.id }
@@ -326,74 +329,210 @@ public struct PhotoboothEditorSheetView: View {
                     }
                 }
                 .frame(width: stripSize.width, height: stripSize.height)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .shadow(color: Color.black.opacity(0.55), radius: 18, y: 8)
+                .clipShape(RoundedRectangle(cornerRadius: 2, style: .continuous))
+                .shadow(color: Color.black.opacity(0.62), radius: 22, y: 10)
+                .scaleEffect(stripZoomScale)
+                .offset(stripPanOffset)
+
+                // Huy hiệu thu gọn tinh tế chỉ hiện khi người dùng đang phóng to để soi ảnh
+                if isZoomedIn {
+                    VStack {
+                        Button(action: {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                                resetStripZoom()
+                            }
+                        }) {
+                            HStack(spacing: 6) {
+                                Text(String(format: "%.1fx", stripZoomScale))
+                                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                                Text("Thu gọn")
+                                    .font(.system(size: 11.5, weight: .medium, design: .rounded))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .frame(height: 28)
+                            .background(
+                                Capsule()
+                                    .fill(Color.black.opacity(0.72))
+                                    .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.5))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 8)
+                        Spacer()
+                    }
+                    .transition(.opacity)
+                }
             }
             .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
+            .coordinateSpace(name: "photoboothStripCanvasSpace")
+            .contentShape(Rectangle())
+            .gesture(
+                MagnificationGesture()
+                    .onChanged { val in
+                        guard !isEditingStickers && selectedStickerID == nil else { return }
+                        let nextScale = min(max(stripLastZoomScale * val, 1.0), 4.5)
+                        stripZoomScale = nextScale
+                        if nextScale <= 1.02 {
+                            stripPanOffset = .zero
+                        } else {
+                            let ratio = nextScale / max(1.0, stripLastZoomScale)
+                            let scaled = CGSize(
+                                width: stripLastPanOffset.width * ratio,
+                                height: stripLastPanOffset.height * ratio
+                            )
+                            stripPanOffset = clampStripPan(scaled, stripSize: stripSize, viewportSize: geo.size, scale: nextScale)
+                        }
+                    }
+                    .onEnded { _ in
+                        guard !isEditingStickers && selectedStickerID == nil else { return }
+                        if stripZoomScale < 1.05 {
+                            withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
+                                resetStripZoom()
+                            }
+                        } else {
+                            stripLastZoomScale = stripZoomScale
+                            stripPanOffset = clampStripPan(stripPanOffset, stripSize: stripSize, viewportSize: geo.size, scale: stripZoomScale)
+                            stripLastPanOffset = stripPanOffset
+                        }
+                    }
+            )
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 2, coordinateSpace: .named("photoboothStripCanvasSpace"))
+                    .onChanged { val in
+                        guard !isEditingStickers && selectedStickerID == nil && stripZoomScale > 1.02 else { return }
+                        let raw = CGSize(
+                            width: stripLastPanOffset.width + val.translation.width,
+                            height: stripLastPanOffset.height + val.translation.height
+                        )
+                        stripPanOffset = clampStripPan(raw, stripSize: stripSize, viewportSize: geo.size, scale: stripZoomScale)
+                    }
+                    .onEnded { _ in
+                        guard !isEditingStickers && selectedStickerID == nil && stripZoomScale > 1.02 else { return }
+                        stripLastPanOffset = stripPanOffset
+                    }
+            )
         }
     }
 
-    // MARK: - 3. Bottom Studio Toolbox
+    // MARK: - 3. Calm 4-Item Bottom Action Bar (Default Spacious Viewer Mode)
 
-    private var bottomStudioToolbox: some View {
-        VStack(spacing: 0) {
-            // Segmented Tabs
-            HStack(spacing: 4) {
-                ForEach(PhotoboothEditorTab.allCases) { tab in
-                    let isSel = activeTab == tab
-                    Button(action: {
-                        HapticFeedbackService.shared.triggerSelectionChange()
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.84)) {
-                            activeTab = tab
-                        }
-                    }) {
-                        HStack(spacing: 5) {
-                            Image(systemName: tab.iconName)
-                                .font(.system(size: 11.5, weight: .semibold))
-                            Text(tab.rawValue)
-                                .font(.system(size: 12, weight: isSel ? .bold : .medium, design: .rounded))
-                        }
-                        .foregroundColor(isSel ? .black : .white.opacity(0.75))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 34)
-                        .background(Capsule().fill(isSel ? AlignTheme.studioAccent : Color.white.opacity(0.06)))
-                    }
-                    .buttonStyle(.plain)
+    private var calmBottomActionBar: some View {
+        HStack(spacing: 0) {
+            bottomBarItem(icon: "rectangle.portrait.on.rectangle.portrait", title: "Khung") {
+                HapticFeedbackService.shared.triggerSelectionChange()
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                    activeDrawer = .frames
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 8)
 
-            // Active Tab Content (Compact Fixed Studio Height ~218pt)
-            Group {
-                switch activeTab {
-                case .frames:
-                    framesTabPanel
-                case .stickers:
-                    stickersTabPanel
-                case .aiStudio:
-                    aiStudioTabPanel
-                case .printMeta:
-                    printMetaTabPanel
+            bottomBarItem(icon: "face.smiling", title: "Sticker") {
+                HapticFeedbackService.shared.triggerSelectionChange()
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                    resetStripZoom()
+                    activeDrawer = .stickers
                 }
             }
-            .frame(height: 215)
+
+            bottomBarItem(icon: "play.rectangle", title: "Video", disabled: viewModel.photoboothFilledCount == 0) {
+                HapticFeedbackService.shared.triggerLight()
+                showTimelapseSheet = true
+            }
+
+            bottomBarItem(icon: "ellipsis", title: "Thêm") {
+                HapticFeedbackService.shared.triggerSelectionChange()
+                showMoreOptionsSheet = true
+            }
         }
+        .padding(.top, 10)
+        .padding(.bottom, 10)
         .background(
-            Color(red: 0.085, green: 0.088, blue: 0.102)
+            Color(red: 0.055, green: 0.056, blue: 0.064)
                 .overlay(alignment: .top) {
-                    Rectangle().fill(Color.white.opacity(0.10)).frame(height: 0.6)
+                    Rectangle().fill(Color.white.opacity(0.08)).frame(height: 0.5)
                 }
                 .ignoresSafeArea(edges: .bottom)
         )
     }
 
-    // MARK: - Tab 1: Layout + 16 Editorial Frames + Harmony Auto Color
+    private func bottomBarItem(icon: String, title: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .regular))
+                Text(title)
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+            }
+            .foregroundColor(disabled ? .white.opacity(0.28) : .white.opacity(0.90))
+            .frame(maxWidth: .infinity)
+            .frame(height: 46)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+    }
 
-    private var framesTabPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Layout strip row
+    // MARK: - 4. Focused On-Demand Drawers (Khung & Bố cục / Sticker)
+
+    @ViewBuilder
+    private func focusedDrawerContainer(_ drawer: PhotoboothFocusedDrawer) -> some View {
+        VStack(spacing: 0) {
+            switch drawer {
+            case .frames:
+                framesFocusedDrawer
+            case .stickers:
+                stickersFocusedDrawer
+            }
+        }
+        .background(
+            Color(red: 0.075, green: 0.077, blue: 0.088)
+                .overlay(alignment: .top) {
+                    Rectangle().fill(Color.white.opacity(0.10)).frame(height: 0.5)
+                }
+                .ignoresSafeArea(edges: .bottom)
+        )
+    }
+
+    // Drawer A: Layouts (4×1, 2×4, 2×4 Đôi...) + 25 Real Frames with Physical Textures
+    private var framesFocusedDrawer: some View {
+        VStack(spacing: 12) {
+            // Drawer Header
+            HStack {
+                Text("Khung & Bố cục")
+                    .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+
+                Spacer()
+
+                Button(action: applyAutoOutfitColor) {
+                    Text("Khớp màu ảnh")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundColor(.white.opacity(0.75))
+                        .padding(.horizontal, 10)
+                        .frame(height: 28)
+                        .background(Capsule().fill(Color.white.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+
+                Button(action: {
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
+                        activeDrawer = nil
+                    }
+                }) {
+                    Text("Xong")
+                        .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 13)
+                        .frame(height: 28)
+                        .background(Capsule().fill(Color.white))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+
+            // Layout Row
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(PhotoboothLayout.allCases) { lay in
@@ -402,37 +541,19 @@ public struct PhotoboothEditorSheetView: View {
                             viewModel.selectPhotoboothLayout(lay)
                         }) {
                             Text(lay.shortBadge)
-                                .font(.system(size: 11.5, weight: .bold, design: .rounded))
-                                .foregroundColor(isSel ? .black : .white.opacity(0.84))
+                                .font(.system(size: 12, weight: isSel ? .bold : .medium, design: .rounded))
+                                .foregroundColor(isSel ? .black : .white.opacity(0.78))
                                 .padding(.horizontal, 12)
                                 .frame(height: 30)
-                                .background(Capsule().fill(isSel ? Color.white : Color.white.opacity(0.09)))
+                                .background(Capsule().fill(isSel ? Color.white : Color.white.opacity(0.08)))
                         }
                         .buttonStyle(.plain)
                     }
-
-                    Button(action: applyAutoOutfitColor) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "eyedropper.halffull")
-                                .font(.system(size: 11, weight: .bold))
-                            Text("Khớp màu trang phục")
-                                .font(.system(size: 11, weight: .bold, design: .rounded))
-                        }
-                        .foregroundColor(AlignTheme.studioAccent)
-                        .padding(.horizontal, 11)
-                        .frame(height: 30)
-                        .background(
-                            Capsule()
-                                .fill(AlignTheme.studioAccentSoft)
-                                .overlay(Capsule().stroke(AlignTheme.studioAccentBorder, lineWidth: 0.7))
-                        )
-                    }
-                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 16)
             }
 
-            // 16 Editorial Frame Swatches
+            // 25 Real Frames Swatch Strip (Sharp 90° Cards Showing Actual Fabric/Paper Texture)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(PhotoboothFrameStyle.allCases) { frame in
@@ -446,198 +567,229 @@ public struct PhotoboothEditorSheetView: View {
                                 if let firstSaved = assetManager.customAIFrameFilenames.first {
                                     viewModel.photoboothStripConfig.customAITextureFilename = firstSaved
                                 } else {
-                                    withAnimation { activeTab = .aiStudio }
+                                    activeDrawer = nil
+                                    showMoreOptionsSheet = true
                                 }
                             }
                         }) {
                             VStack(spacing: 5) {
                                 ZStack {
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(
-                                            LinearGradient(
-                                                colors: frame.swatchColors,
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
+                                    if let texName = frame.bundledTextureFilename,
+                                       let texImg = assetManager.bundledFrameTextureImage(filename: texName) {
+                                        Image(uiImage: texImg)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
+                                            .frame(width: 52, height: 70)
+                                            .clipped()
+                                    } else {
+                                        Rectangle()
+                                            .fill(
+                                                LinearGradient(
+                                                    colors: frame.swatchColors,
+                                                    startPoint: .topLeading,
+                                                    endPoint: .bottomTrailing
+                                                )
                                             )
-                                        )
-                                        .frame(width: 56, height: 76)
+                                            .frame(width: 52, height: 70)
+                                    }
 
                                     if frame == .kodak35mmSprocket {
                                         VStack(spacing: 8) {
                                             ForEach(0..<4, id: \.self) { _ in
                                                 HStack {
-                                                    RoundedRectangle(cornerRadius: 1).fill(Color.white.opacity(0.65)).frame(width: 4, height: 6)
+                                                    Rectangle().fill(Color.white.opacity(0.65)).frame(width: 4, height: 5.5)
                                                     Spacer()
-                                                    RoundedRectangle(cornerRadius: 1).fill(Color.white.opacity(0.65)).frame(width: 4, height: 6)
+                                                    Rectangle().fill(Color.white.opacity(0.65)).frame(width: 4, height: 5.5)
                                                 }
                                             }
                                         }
                                         .padding(.horizontal, 4)
                                     } else if frame == .customAITexture {
-                                        Image(systemName: "wand.and.stars")
-                                            .font(.system(size: 18, weight: .bold))
+                                        Image(systemName: "sparkles")
+                                            .font(.system(size: 16, weight: .semibold))
                                             .foregroundColor(.white)
+                                    } else {
+                                        VStack(spacing: 3.5) {
+                                            Rectangle().fill(Color.black.opacity(0.24)).frame(width: 34, height: 16)
+                                            Rectangle().fill(Color.black.opacity(0.24)).frame(width: 34, height: 16)
+                                        }
+                                        .offset(y: -4)
                                     }
                                 }
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .stroke(isSel ? AlignTheme.studioAccent : Color.white.opacity(0.18), lineWidth: isSel ? 2.2 : 0.7)
+                                    Rectangle()
+                                        .stroke(isSel ? Color.white : Color.white.opacity(0.20), lineWidth: isSel ? 2.0 : 0.6)
                                 )
 
                                 Text(frame.displayName)
                                     .font(.system(size: 10, weight: isSel ? .bold : .medium, design: .rounded))
-                                    .foregroundColor(isSel ? AlignTheme.studioAccent : .white.opacity(0.75))
+                                    .foregroundColor(isSel ? .white : .white.opacity(0.65))
                                     .lineLimit(1)
+                                    .frame(width: 60)
                             }
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 16)
             }
+            .padding(.bottom, 12)
         }
-        .padding(.top, 4)
     }
 
-    // MARK: - Tab 2: Stickers (24 Bundled + 48 Live Online Packs + Vision Smart Placement + Custom AI/Cutouts)
-
-    private var stickersTabPanel: some View {
+    // Drawer B: Clean Uncluttered Sticker Browser (Zero Stacked Pill Soup!)
+    private var stickersFocusedDrawer: some View {
         let detectedFaceTotal = slotSemanticMaps.reduce(0) { $0 + $1.faces.count }
 
-        return VStack(spacing: 6.5) {
-            // Dải AI Vision Tự Dán Thông Minh Đa Vùng (Đỉnh đầu · Mắt · Kẹp tóc · Gò má · Vai · Góc trống không che mặt)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    Button(action: {
-                        isSmartAnchorEnabled.toggle()
-                        HapticFeedbackService.shared.triggerSelectionChange()
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: isSmartAnchorEnabled ? "face.smiling.inverse" : "hand.draw")
-                                .font(.system(size: 10.5, weight: .bold))
-                            Text(isSmartAnchorEnabled
-                                ? (detectedFaceTotal > 0 ? "AI Neo (\(detectedFaceTotal) mặt)" : "AI Neo góc trống")
-                                : "Đặt tự do")
-                                .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                        }
-                        .foregroundColor(isSmartAnchorEnabled ? .black : .white.opacity(0.78))
-                        .padding(.horizontal, 9)
-                        .frame(height: 25)
-                        .background(Capsule().fill(isSmartAnchorEnabled ? AlignTheme.studioAccent : Color.white.opacity(0.10)))
-                    }
-                    .buttonStyle(.plain)
+        return VStack(spacing: 10) {
+            // Top Row: Title + Compact Native Menu "Tự dán" + "Xong"
+            HStack(spacing: 8) {
+                Text("Sticker")
+                    .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
 
-                    ForEach(PhotoboothAutoDecorateStyle.allCases) { autoStyle in
-                        Button(action: {
-                            applySmartAutoDecorate(style: autoStyle)
-                        }) {
-                            HStack(spacing: 3.5) {
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 9.5, weight: .bold))
-                                Text(autoStyle.rawValue)
-                                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                Menu {
+                    Section("Tự động trang trí theo khuôn mặt") {
+                        ForEach(PhotoboothAutoDecorateStyle.allCases) { autoStyle in
+                            Button(autoStyle.rawValue) {
+                                applySmartAutoDecorate(style: autoStyle)
                             }
-                            .foregroundColor(AlignTheme.studioAccent)
-                            .padding(.horizontal, 9)
-                            .frame(height: 25)
-                            .background(
-                                Capsule()
-                                    .fill(AlignTheme.studioAccentSoft)
-                                    .overlay(Capsule().stroke(AlignTheme.studioAccentBorder, lineWidth: 0.65))
+                        }
+                    }
+
+                    Section {
+                        Button(action: {
+                            isSmartAnchorEnabled.toggle()
+                            HapticFeedbackService.shared.triggerSelectionChange()
+                        }) {
+                            Label(
+                                isSmartAnchorEnabled
+                                    ? (detectedFaceTotal > 0 ? "AI Neo mặt: Đang bật (\(detectedFaceTotal) mặt)" : "AI Neo góc trống: Đang bật")
+                                    : "AI Neo mặt: Đang tắt (đặt tự do)",
+                                systemImage: isSmartAnchorEnabled ? "checkmark.circle.fill" : "circle"
                             )
                         }
-                        .buttonStyle(.plain)
-                        .disabled(isAnalyzingFaces)
                     }
 
                     if !viewModel.photoboothPlacedStickers.isEmpty {
-                        Button(action: {
-                            viewModel.photoboothPlacedStickers.removeAll()
-                            selectedStickerID = nil
-                            HapticFeedbackService.shared.triggerLight()
-                        }) {
-                            Text("Xóa hết")
-                                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                                .foregroundColor(.white.opacity(0.75))
-                                .padding(.horizontal, 9)
-                                .frame(height: 25)
-                                .background(Capsule().fill(Color.white.opacity(0.08)))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 14)
-            }
-
-            // Category pills
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(PhotoboothAssetCategory.allCases) { cat in
-                        let isSel = stickerCategory == cat
-                        Button(action: {
-                            stickerCategory = cat
-                        }) {
-                            Text(cat.rawValue)
-                                .font(.system(size: 11, weight: isSel ? .bold : .medium, design: .rounded))
-                                .foregroundColor(isSel ? .black : .white.opacity(0.80))
-                                .padding(.horizontal, 11)
-                                .frame(height: 28)
-                                .background(Capsule().fill(isSel ? Color.white : Color.white.opacity(0.08)))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 14)
-            }
-
-            if stickerCategory == .onlinePacks {
-                onlinePacksBrowser
-            } else {
-                let items: [PhotoboothStickerAsset] = {
-                    switch stickerCategory {
-                    case .coquette:
-                        return assetManager.bundledStickers.filter { $0.category == .coquette }
-                    case .y2k:
-                        return assetManager.bundledStickers.filter { $0.category == .y2k }
-                    case .myStickers:
-                        return assetManager.customStickers
-                    case .onlinePacks:
-                        return []
-                    }
-                }()
-
-                if items.isEmpty {
-                    VStack(spacing: 8) {
-                        Text("Chưa có sticker AI hoặc sticker tự tách nền.")
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                            .foregroundColor(.white.opacity(0.62))
-                        Button(action: {
-                            withAnimation { activeTab = .aiStudio }
-                        }) {
-                            Text("Mở AI Studio để tạo ngay")
-                                .font(.system(size: 11.5, weight: .bold, design: .rounded))
-                                .foregroundColor(.black)
-                                .padding(.horizontal, 14)
-                                .frame(height: 30)
-                                .background(Capsule().fill(AlignTheme.studioAccent))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .frame(maxHeight: .infinity)
-                } else {
-                    ScrollView(.vertical, showsIndicators: true) {
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
-                            ForEach(items) { asset in
-                                stickerGridTile(asset)
+                        Section {
+                            Button("Xóa tất cả sticker", role: .destructive) {
+                                viewModel.photoboothPlacedStickers.removeAll()
+                                selectedStickerID = nil
+                                HapticFeedbackService.shared.triggerLight()
                             }
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.bottom, 12)
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 10.5, weight: .semibold))
+                        Text("Tự dán")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(.white.opacity(0.88))
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+                    .background(Capsule().fill(Color.white.opacity(0.10)))
+                }
+                .disabled(isAnalyzingFaces)
+
+                Spacer()
+
+                Button(action: {
+                    selectedStickerID = nil
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
+                        activeDrawer = nil
+                    }
+                }) {
+                    Text("Xong")
+                        .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 13)
+                        .frame(height: 28)
+                        .background(Capsule().fill(Color.white))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+
+            // Calm Underlined Text Tabs (No Heavy Pills!)
+            HStack(spacing: 18) {
+                ForEach(PhotoboothAssetCategory.allCases) { cat in
+                    let isSel = stickerCategory == cat
+                    Button(action: {
+                        HapticFeedbackService.shared.triggerSelectionChange()
+                        stickerCategory = cat
+                    }) {
+                        VStack(spacing: 5) {
+                            Text(cat.rawValue)
+                                .font(.system(size: 12, weight: isSel ? .semibold : .regular, design: .rounded))
+                                .foregroundColor(isSel ? .white : .white.opacity(0.52))
+                            Rectangle()
+                                .fill(isSel ? Color.white : Color.clear)
+                                .frame(height: 1.5)
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+
+            // Spacious 4-Col Sticker Grid
+            Group {
+                if stickerCategory == .onlinePacks {
+                    onlinePacksBrowser
+                } else {
+                    let items: [PhotoboothStickerAsset] = {
+                        switch stickerCategory {
+                        case .coquette:
+                            return assetManager.bundledStickers.filter { $0.category == .coquette }
+                        case .y2k:
+                            return assetManager.bundledStickers.filter { $0.category == .y2k }
+                        case .myStickers:
+                            return assetManager.customStickers
+                        case .onlinePacks:
+                            return []
+                        }
+                    }()
+
+                    if items.isEmpty {
+                        VStack(spacing: 8) {
+                            Text("Chưa có sticker AI hoặc tự tách nền.")
+                                .font(.system(size: 12.5, weight: .regular, design: .rounded))
+                                .foregroundColor(.white.opacity(0.58))
+                            Button(action: {
+                                activeDrawer = nil
+                                showMoreOptionsSheet = true
+                            }) {
+                                Text("Tạo trong mục Thêm")
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.black)
+                                    .padding(.horizontal, 14)
+                                    .frame(height: 30)
+                                    .background(Capsule().fill(Color.white))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        ScrollView(.vertical, showsIndicators: true) {
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
+                                ForEach(items) { asset in
+                                    stickerGridTile(asset)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 12)
+                        }
                     }
                 }
             }
+            .frame(height: 185)
         }
-        .padding(.top, 4)
     }
 
     private var onlinePacksBrowser: some View {
@@ -650,15 +802,11 @@ public struct PhotoboothEditorSheetView: View {
                             selectedOnlinePack = pack
                         }) {
                             Text(pack.rawValue)
-                                .font(.system(size: 10.5, weight: isSel ? .bold : .medium, design: .rounded))
-                                .foregroundColor(isSel ? AlignTheme.studioAccent : .white.opacity(0.75))
-                                .padding(.horizontal, 9)
+                                .font(.system(size: 11, weight: isSel ? .semibold : .regular, design: .rounded))
+                                .foregroundColor(isSel ? .black : .white.opacity(0.74))
+                                .padding(.horizontal, 10)
                                 .frame(height: 24)
-                                .background(
-                                    Capsule()
-                                        .fill(isSel ? AlignTheme.studioAccentSoft : Color.white.opacity(0.06))
-                                        .overlay(Capsule().stroke(isSel ? AlignTheme.studioAccentBorder : Color.clear, lineWidth: 0.7))
-                                )
+                                .background(Capsule().fill(isSel ? Color.white : Color.white.opacity(0.08)))
                         }
                         .buttonStyle(.plain)
                     }
@@ -666,21 +814,16 @@ public struct PhotoboothEditorSheetView: View {
                     Button(action: {
                         Task { _ = await assetManager.downloadOnlinePack(selectedOnlinePack) }
                     }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: assetManager.isDownloadingPack == selectedOnlinePack ? "arrow.triangle.2.circlepath" : "arrow.down.circle.fill")
-                                .font(.system(size: 11))
-                            Text(assetManager.isDownloadingPack == selectedOnlinePack ? "Đang tải..." : "Tải cả gói")
-                                .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                        }
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 10)
-                        .frame(height: 24)
-                        .background(Capsule().fill(AlignTheme.studioAccent))
+                        Image(systemName: assetManager.isDownloadingPack == selectedOnlinePack ? "arrow.triangle.2.circlepath" : "arrow.down.circle")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white.opacity(0.85))
+                            .frame(width: 28, height: 24)
                     }
                     .buttonStyle(.plain)
                     .disabled(assetManager.isDownloadingPack != nil)
+                    .accessibilityLabel("Tải cả gói sticker online")
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 16)
             }
 
             let packItems = assetManager.onlineStickers.filter { $0.onlinePack == selectedOnlinePack }
@@ -690,8 +833,8 @@ public struct PhotoboothEditorSheetView: View {
                         stickerGridTile(asset)
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 10)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
             }
         }
     }
@@ -710,9 +853,9 @@ public struct PhotoboothEditorSheetView: View {
                 }
             }
         }) {
-            ZStack(alignment: .bottomTrailing) {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white.opacity(0.07))
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.white.opacity(0.06))
                     .frame(height: 62)
 
                 if let img {
@@ -728,205 +871,297 @@ public struct PhotoboothEditorSheetView: View {
                             image.resizable().aspectRatio(contentMode: .fit).padding(8)
                         default:
                             Image(systemName: "arrow.down.circle")
-                                .font(.system(size: 16))
-                                .foregroundColor(.white.opacity(0.55))
+                                .font(.system(size: 15))
+                                .foregroundColor(.white.opacity(0.45))
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: 62)
                 }
             }
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(0.10), lineWidth: 0.6)
-            )
         }
         .buttonStyle(.plain)
     }
 
-    // MARK: - Tab 3: In-App AI Studio (Tạo Sticker AI + Tạo Khung AI + Đổi Chân Dung Booth AI)
+    // MARK: - 5. Clean Native-Style "Thêm" Sheet (Share · New Shot · Print Info · AI Studio)
 
-    private var aiStudioTabPanel: some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            VStack(alignment: .leading, spacing: 12) {
-                if let msg = aiFeedbackMessage ?? assetManager.lastStatusMessage {
-                    Text(msg)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundColor(AlignTheme.studioAccent)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(AlignTheme.studioAccentSoft))
-                }
-
-                // 1. Tạo Sticker AI nền trong suốt
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("TẠO STICKER AI NỀN TRONG SUỐT")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .tracking(0.6)
-                        .foregroundColor(.white.opacity(0.62))
-
-                    HStack(spacing: 8) {
-                        TextField("vd: chú mèo đeo kính râm, nơ bạc...", text: $aiStickerPrompt)
-                            .font(.system(size: 12.5, weight: .medium, design: .rounded))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 10)
-                            .frame(height: 36)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.09)))
-
-                        Button(action: runGenerateAISticker) {
-                            Text("Tạo")
-                                .font(.system(size: 12, weight: .bold, design: .rounded))
-                                .foregroundColor(.black)
-                                .padding(.horizontal, 14)
-                                .frame(height: 36)
-                                .background(RoundedRectangle(cornerRadius: 10).fill(AlignTheme.studioAccent))
+    private var moreOptionsSheet: some View {
+        NavigationStack {
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Quick Actions: Share & New Session
+                    HStack(spacing: 10) {
+                        Button(action: {
+                            showMoreOptionsSheet = false
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                prepareShareStrip()
+                            }
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "square.and.arrow.up")
+                                    .font(.system(size: 13.5, weight: .semibold))
+                                Text("Chia sẻ ảnh")
+                                    .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                            }
+                            .foregroundColor(.black)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 42)
+                            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color.white))
                         }
                         .buttonStyle(.plain)
-                        .disabled(aiStickerPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
 
-                // 2. Tạo Nền Khung AI sạch chữ, khớp trang phục
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("TẠO NỀN KHUNG IN AI (KHÔNG RÁC CHỮ)")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .tracking(0.6)
-                        .foregroundColor(.white.opacity(0.62))
-
-                    HStack(spacing: 8) {
-                        TextField("vd: lụa pastel tối giản, hoa cúc nhẹ...", text: $aiFramePrompt)
-                            .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                        Button(action: {
+                            showMoreOptionsSheet = false
+                            viewModel.resetPhotoboothSession()
+                            viewModel.isShowingPhotoboothEditor = false
+                            dismiss()
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .font(.system(size: 13.5, weight: .semibold))
+                                Text("Chụp lượt mới")
+                                    .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                            }
                             .foregroundColor(.white)
-                            .padding(.horizontal, 10)
-                            .frame(height: 36)
-                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.09)))
-
-                        Button(action: runGenerateAIFrame) {
-                            Text("Áp khung")
-                                .font(.system(size: 12, weight: .bold, design: .rounded))
-                                .foregroundColor(.black)
-                                .padding(.horizontal, 12)
-                                .frame(height: 36)
-                                .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 42)
+                            .background(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .fill(Color.white.opacity(0.10))
+                            )
                         }
                         .buttonStyle(.plain)
-                        .disabled(aiFramePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                }
 
-                // 3. Biến ảnh chụp Photobooth thành chân dung Studio AI (Gemini Image-to-Image)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("CHUYỂN CHÂN DUNG BOOTH BẰNG AI")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .tracking(0.6)
-                        .foregroundColor(.white.opacity(0.62))
+                    if let msg = aiFeedbackMessage ?? assetManager.lastStatusMessage {
+                        Text(msg)
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundColor(.white.opacity(0.86))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 9)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
+                    }
 
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(PhotoboothAIStylePreset.allCases) { st in
-                                let isSel = selectedAIPortraitStyle == st
-                                Button(action: { selectedAIPortraitStyle = st }) {
-                                    Text(st.displayName)
-                                        .font(.system(size: 11, weight: isSel ? .bold : .medium, design: .rounded))
-                                        .foregroundColor(isSel ? .black : .white.opacity(0.84))
-                                        .padding(.horizontal, 10)
-                                        .frame(height: 28)
-                                        .background(Capsule().fill(isSel ? Color.white : Color.white.opacity(0.08)))
+                    // Section 1: Thông tin bản in
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("BẢN IN & CHỮ KÝ")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .tracking(0.6)
+                            .foregroundColor(.white.opacity(0.52))
+
+                        TextField("ALIGN STUDIO", text: $viewModel.photoboothStripConfig.customCaption)
+                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .frame(height: 40)
+                            .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
+
+                        Toggle(isOn: $viewModel.photoboothStripConfig.showDateStamp) {
+                            Text("In dấu ngày ở chân dải ảnh")
+                                .font(.system(size: 13.5, weight: .regular, design: .rounded))
+                                .foregroundColor(.white)
+                        }
+                        .tint(Color(red: 0.24, green: 0.72, blue: 0.42))
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Chất liệu giấy")
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.65))
+                            HStack(spacing: 6) {
+                                ForEach(PhotoboothPaperFinish.allCases) { finish in
+                                    let isSel = viewModel.photoboothStripConfig.paperFinish == finish
+                                    Button(action: {
+                                        viewModel.photoboothStripConfig.paperFinish = finish
+                                    }) {
+                                        Text(finish.displayName)
+                                            .font(.system(size: 12.5, weight: isSel ? .semibold : .regular, design: .rounded))
+                                            .foregroundColor(isSel ? .black : .white.opacity(0.82))
+                                            .frame(maxWidth: .infinity)
+                                            .frame(height: 34)
+                                            .background(RoundedRectangle(cornerRadius: 8).fill(isSel ? Color.white : Color.white.opacity(0.08)))
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
                     }
 
-                    Button(action: runStylizeBoothSlots) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "wand.and.stars")
-                                .font(.system(size: 12, weight: .bold))
-                            Text("Biến đổi các ảnh đang chụp thành \(selectedAIPortraitStyle.displayName)")
-                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                    Rectangle()
+                        .fill(Color.white.opacity(0.10))
+                        .frame(height: 0.5)
+
+                    // Section 2: Studio AI (Tạo Sticker / Tạo Khung / Đổi Chân Dung)
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("STUDIO AI")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .tracking(0.6)
+                            .foregroundColor(.white.opacity(0.52))
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Tạo Sticker nền trong suốt")
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.72))
+                            HStack(spacing: 8) {
+                                TextField("vd: mèo đeo kính râm, nơ bạc...", text: $aiStickerPrompt)
+                                    .font(.system(size: 13, weight: .regular, design: .rounded))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 12)
+                                    .frame(height: 38)
+                                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
+
+                                Button(action: runGenerateAISticker) {
+                                    Text("Tạo")
+                                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                        .foregroundColor(.black)
+                                        .padding(.horizontal, 16)
+                                        .frame(height: 38)
+                                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(aiStickerPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
                         }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 34)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(Color.white.opacity(0.12))
-                                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.18), lineWidth: 0.7))
-                        )
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Tạo nền khung in AI")
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.72))
+                            HStack(spacing: 8) {
+                                TextField("vd: vải lanh kem, hoa nhí tối giản...", text: $aiFramePrompt)
+                                    .font(.system(size: 13, weight: .regular, design: .rounded))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 12)
+                                    .frame(height: 38)
+                                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
+
+                                Button(action: runGenerateAIFrame) {
+                                    Text("Áp khung")
+                                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                        .foregroundColor(.black)
+                                        .padding(.horizontal, 14)
+                                        .frame(height: 38)
+                                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(aiFramePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Chuyển chân dung Booth bằng AI")
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.72))
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(PhotoboothAIStylePreset.allCases) { st in
+                                        let isSel = selectedAIPortraitStyle == st
+                                        Button(action: { selectedAIPortraitStyle = st }) {
+                                            Text(st.displayName)
+                                                .font(.system(size: 11.5, weight: isSel ? .semibold : .regular, design: .rounded))
+                                                .foregroundColor(isSel ? .black : .white.opacity(0.80))
+                                                .padding(.horizontal, 11)
+                                                .frame(height: 30)
+                                                .background(Capsule().fill(isSel ? Color.white : Color.white.opacity(0.08)))
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            Button(action: {
+                                showMoreOptionsSheet = false
+                                runStylizeBoothSlots()
+                            }) {
+                                Text("Áp dụng phong cách \(selectedAIPortraitStyle.displayName)")
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 38)
+                                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.11)))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(viewModel.photoboothFilledCount == 0)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .disabled(viewModel.photoboothFilledCount == 0)
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+            }
+            .background(Color(red: 0.075, green: 0.077, blue: 0.086).ignoresSafeArea())
+            .navigationTitle("Tùy chọn bản in")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Xong") {
+                        showMoreOptionsSheet = false
+                    }
+                    .foregroundColor(.white)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .preferredColorScheme(.dark)
         }
     }
 
-    // MARK: - Tab 4: Print & Typography Options
+    // MARK: - Zoom & Pan Geometry Helpers
 
-    private var printMetaTabPanel: some View {
-        ScrollView(.vertical, showsIndicators: true) {
-            VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("CHỮ KÝ CHÂN TRANG IN")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .tracking(0.6)
-                        .foregroundColor(.white.opacity(0.62))
+    private func resetStripZoom() {
+        stripZoomScale = 1.0
+        stripLastZoomScale = 1.0
+        stripPanOffset = .zero
+        stripLastPanOffset = .zero
+    }
 
-                    TextField("ALIGN STUDIO", text: $viewModel.photoboothStripConfig.customCaption)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .frame(height: 36)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.09)))
-                }
+    private func clampStripPan(_ offset: CGSize, stripSize: CGSize, viewportSize: CGSize, scale: CGFloat) -> CGSize {
+        let scaledW = stripSize.width * scale
+        let scaledH = stripSize.height * scale
+        let maxX = max(0, (scaledW - viewportSize.width) * 0.5 + 24)
+        let maxY = max(0, (scaledH - viewportSize.height) * 0.5 + 24)
+        return CGSize(
+            width: max(-maxX, min(maxX, offset.width)),
+            height: max(-maxY, min(maxY, offset.height))
+        )
+    }
 
-                Toggle(isOn: $viewModel.photoboothStripConfig.showDateStamp) {
-                    Text("In dấu ngày ở chân dải ảnh")
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundColor(.white)
-                }
-                .tint(AlignTheme.studioAccent)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("CHẤT LIỆU GIẤY IN")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .tracking(0.6)
-                        .foregroundColor(.white.opacity(0.62))
-
-                    HStack(spacing: 8) {
-                        ForEach(PhotoboothPaperFinish.allCases) { finish in
-                            let isSel = viewModel.photoboothStripConfig.paperFinish == finish
-                            Button(action: {
-                                viewModel.photoboothStripConfig.paperFinish = finish
-                            }) {
-                                Text(finish.displayName)
-                                    .font(.system(size: 12, weight: isSel ? .bold : .medium, design: .rounded))
-                                    .foregroundColor(isSel ? .black : .white.opacity(0.84))
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: 32)
-                                    .background(Capsule().fill(isSel ? Color.white : Color.white.opacity(0.08)))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
+    private func toggleSimpleCenterZoom() {
+        withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+            if stripZoomScale > 1.05 {
+                resetStripZoom()
+            } else {
+                stripZoomScale = 2.4
+                stripLastZoomScale = 2.4
+                stripPanOffset = .zero
+                stripLastPanOffset = .zero
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+        }
+    }
+
+    private func toggleZoomFocusedOn(pointInStrip: CGPoint, stripSize: CGSize, viewportSize: CGSize) {
+        withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+            if stripZoomScale > 1.05 {
+                resetStripZoom()
+            } else {
+                let targetScale: CGFloat = 2.6
+                let dx = (stripSize.width * 0.5 - pointInStrip.x) * targetScale
+                let dy = (stripSize.height * 0.5 - pointInStrip.y) * targetScale
+                stripZoomScale = targetScale
+                stripLastZoomScale = targetScale
+                let clamped = clampStripPan(CGSize(width: dx, height: dy), stripSize: stripSize, viewportSize: viewportSize, scale: targetScale)
+                stripPanOffset = clamped
+                stripLastPanOffset = clamped
+            }
         }
     }
 
     // MARK: - Interactive Logic Helpers
 
     private func rebuildBaseStripPreviewCache() {
+        // Kết xuất bản xem trước 960px để phóng to soi chi tiết tới 4.5x vẫn sắc nét và mượt 120Hz
         let stripCG = PhotoboothStripRenderer.renderStrip(
             slots: viewModel.photoboothSlots,
             config: viewModel.photoboothStripConfig,
             stickers: [],
             assetManager: assetManager,
-            targetWidth: 720
+            targetWidth: 960
         )
         if let stripCG {
             cachedBaseStripImage = UIImage(cgImage: stripCG)
@@ -1054,7 +1289,7 @@ public struct PhotoboothEditorSheetView: View {
             if let created = result.asset {
                 placeSticker(created)
                 aiStickerPrompt = ""
-                aiFeedbackMessage = "Đã tạo sticker bằng \(result.backendUsed) và đặt lên khung!"
+                aiFeedbackMessage = "Đã tạo sticker bằng \(result.backendUsed) và đặt lên khung."
             } else {
                 aiFeedbackMessage = assetManager.lastStatusMessage
             }
@@ -1072,7 +1307,7 @@ public struct PhotoboothEditorSheetView: View {
                 viewModel.photoboothStripConfig.customAITextureFilename = fname
                 viewModel.photoboothStripConfig.frameStyle = .customAITexture
                 aiFramePrompt = ""
-                aiFeedbackMessage = "Đã áp dụng khung nền từ \(result.backendUsed)!"
+                aiFeedbackMessage = "Đã áp dụng khung nền từ \(result.backendUsed)."
             } else {
                 aiFeedbackMessage = assetManager.lastStatusMessage
             }
@@ -1102,7 +1337,7 @@ public struct PhotoboothEditorSheetView: View {
             isStylizingSlots = false
             if updatedCount > 0 {
                 baseStripRevision &+= 1
-                aiFeedbackMessage = "Đã chuyển đổi \(updatedCount) khung sang phong cách \(targetStyle.displayName)!"
+                aiFeedbackMessage = "Đã chuyển đổi \(updatedCount) khung sang \(targetStyle.displayName)."
             } else {
                 aiFeedbackMessage = firstError ?? "Không thể chuyển đổi phong cách AI lúc này."
             }
@@ -1114,7 +1349,9 @@ public struct PhotoboothEditorSheetView: View {
         viewModel.savePhotoboothStripToLibrary { success in
             isSavingStrip = false
             if success {
-                aiFeedbackMessage = "Đã lưu bản in 300 DPI vào Thư viện Ảnh!"
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    justSavedStrip = true
+                }
             } else {
                 aiFeedbackMessage = "Chưa có quyền lưu ảnh hoặc bộ nhớ bận."
             }
@@ -1145,6 +1382,7 @@ private struct InteractiveStickerView: View {
     let stripSize: CGSize
     @ObservedObject var assetManager: PhotoboothAssetManager
     let isSelected: Bool
+    let interactionEnabled: Bool
     let onSelect: () -> Void
     let onDelete: () -> Void
     let onDuplicate: () -> Void
@@ -1172,8 +1410,8 @@ private struct InteractiveStickerView: View {
         .padding(8)
         .overlay {
             if isSelected {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(AlignTheme.studioAccent, style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(Color.white.opacity(0.88), style: StrokeStyle(lineWidth: 1.1, dash: [4, 3]))
                     .overlay(alignment: .topTrailing) {
                         Button(action: onDelete) {
                             Image(systemName: "xmark.circle.fill")
@@ -1187,7 +1425,7 @@ private struct InteractiveStickerView: View {
                         Button(action: onDuplicate) {
                             Image(systemName: "plus.square.on.square.fill")
                                 .font(.system(size: 15, weight: .bold))
-                                .foregroundColor(AlignTheme.studioAccent)
+                                .foregroundColor(.white)
                                 .background(Circle().fill(Color.black))
                         }
                         .offset(x: -7, y: -7)
@@ -1196,6 +1434,7 @@ private struct InteractiveStickerView: View {
         }
         .rotationEffect(.degrees(sticker.rotationDegrees))
         .position(x: sticker.normalizedX * stripSize.width, y: sticker.normalizedY * stripSize.height)
+        .allowsHitTesting(interactionEnabled)
         .highPriorityGesture(
             DragGesture(minimumDistance: 1)
                 .onChanged { val in
@@ -1249,14 +1488,14 @@ private struct PhotoboothShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-// MARK: - Photobooth 9:16 Behind-the-Scenes Timelapse Video Preview & Social Export Sheet
+// MARK: - Calm Photobooth 9:16 Video Preview & Export Sheet (Mặc định tốc độ 2x chậm rãi mượt mà, 720p@24fps dựng nhanh)
 private struct PhotoboothTimelapsePreviewSheet: View {
     @ObservedObject var viewModel: CameraViewModel
     @ObservedObject var assetManager: PhotoboothAssetManager
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedStyle: PhotoboothTimelapseStyle = .movingStrip
-    @State private var selectedSpeed: PhotoboothTimelapseSpeed = .x3
+    @State private var selectedSpeed: PhotoboothTimelapseSpeed = .x2
     @State private var isRendering: Bool = true
     @State private var renderProgress: Double = 0.0
     @State private var exportedVideoURL: URL? = nil
@@ -1269,32 +1508,32 @@ private struct PhotoboothTimelapsePreviewSheet: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.04, green: 0.042, blue: 0.052).ignoresSafeArea()
+                Color(red: 0.04, green: 0.04, blue: 0.05).ignoresSafeArea()
 
-                VStack(spacing: 12) {
-                    // Header Bar
+                VStack(spacing: 14) {
+                    // Calm 3-Element Header
                     HStack {
                         Button(action: {
                             player?.pause()
                             dismiss()
                         }) {
                             Image(systemName: "xmark")
-                                .font(.system(size: 14, weight: .bold))
+                                .font(.system(size: 13.5, weight: .semibold))
                                 .foregroundColor(.white)
                                 .frame(width: 34, height: 34)
-                                .background(Circle().fill(Color.white.opacity(0.10)))
+                                .background(Circle().fill(Color.white.opacity(0.09)))
                         }
                         .buttonStyle(.plain)
 
                         Spacer()
 
                         VStack(spacing: 2) {
-                            Text("Video Tua Nhanh Photobooth")
-                                .font(.system(size: 14, weight: .bold, design: .rounded))
+                            Text("Video Photobooth")
+                                .font(.system(size: 14, weight: .semibold, design: .rounded))
                                 .foregroundColor(.white)
-                            Text("9:16 Full HD · Sẵn sàng đăng TikTok / Reels")
-                                .font(.system(size: 10.5, weight: .medium, design: .rounded))
-                                .foregroundColor(.white.opacity(0.58))
+                            Text("9:16 HD · 24 fps")
+                                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.50))
                         }
 
                         Spacer()
@@ -1306,39 +1545,36 @@ private struct PhotoboothTimelapsePreviewSheet: View {
 
                     // 9:16 Video Player Viewport
                     ZStack {
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(Color.black.opacity(0.65))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                    .stroke(Color.white.opacity(0.12), lineWidth: 0.7)
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color.white.opacity(0.10), lineWidth: 0.5)
                             )
 
                         if let player, !isRendering {
                             VideoPlayer(player: player)
-                                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                                 .onAppear { player.play() }
                         } else if isRendering {
-                            VStack(spacing: 12) {
+                            VStack(spacing: 10) {
                                 ProgressView(value: renderProgress, total: 1.0)
                                     .progressViewStyle(.linear)
-                                    .tint(AlignTheme.studioAccent)
-                                    .frame(width: 180)
-                                Text("Đang dựng video tua nhanh \(Int(round(renderProgress * 100)))%...")
-                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                    .tint(.white)
+                                    .frame(width: 170)
+                                Text("Đang dựng video \(Int(round(renderProgress * 100)))%...")
+                                    .font(.system(size: 13, weight: .medium, design: .rounded))
                                     .foregroundColor(.white)
-                                Text("Ghép khung in thật + sticker + quá trình tạo dáng")
-                                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                                    .foregroundColor(.white.opacity(0.58))
                             }
                             .padding(24)
                         } else if let errorMessage {
                             VStack(spacing: 8) {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .font(.system(size: 28))
-                                    .foregroundColor(AlignTheme.studioAccent)
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.system(size: 24))
+                                    .foregroundColor(.white.opacity(0.75))
                                 Text(errorMessage)
-                                    .font(.system(size: 12.5, weight: .medium, design: .rounded))
-                                    .foregroundColor(.white.opacity(0.85))
+                                    .font(.system(size: 12.5, weight: .regular, design: .rounded))
+                                    .foregroundColor(.white.opacity(0.82))
                                     .multilineTextAlignment(.center)
                                     .padding(.horizontal, 24)
                             }
@@ -1346,10 +1582,10 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                     }
                     .aspectRatio(9.0 / 16.0, contentMode: .fit)
                     .frame(maxHeight: .infinity)
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, 22)
 
-                    // Style & Speed Controls
-                    VStack(spacing: 10) {
+                    // Minimal Monochrome Controls
+                    VStack(spacing: 12) {
                         HStack(spacing: 6) {
                             ForEach(PhotoboothTimelapseStyle.allCases) { st in
                                 let isSel = selectedStyle == st
@@ -1359,11 +1595,11 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                                     regenerateVideo()
                                 }) {
                                     Text(st.rawValue)
-                                        .font(.system(size: 11.5, weight: isSel ? .bold : .medium, design: .rounded))
-                                        .foregroundColor(isSel ? .black : .white.opacity(0.82))
+                                        .font(.system(size: 12, weight: isSel ? .semibold : .regular, design: .rounded))
+                                        .foregroundColor(isSel ? .black : .white.opacity(0.78))
                                         .frame(maxWidth: .infinity)
-                                        .frame(height: 32)
-                                        .background(Capsule().fill(isSel ? Color.white : Color.white.opacity(0.09)))
+                                        .frame(height: 34)
+                                        .background(RoundedRectangle(cornerRadius: 9).fill(isSel ? Color.white : Color.white.opacity(0.08)))
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(isRendering)
@@ -1371,9 +1607,9 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                         }
 
                         HStack(spacing: 8) {
-                            Text("Tốc độ tua")
-                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                                .foregroundColor(.white.opacity(0.65))
+                            Text("Tốc độ")
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.58))
 
                             Spacer()
 
@@ -1385,18 +1621,17 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                                     regenerateVideo()
                                 }) {
                                     Text(spd.label)
-                                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
-                                        .foregroundColor(isSel ? .black : .white.opacity(0.84))
+                                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                        .foregroundColor(isSel ? .black : .white.opacity(0.80))
                                         .padding(.horizontal, 14)
-                                        .frame(height: 28)
-                                        .background(Capsule().fill(isSel ? AlignTheme.studioAccent : Color.white.opacity(0.09)))
+                                        .frame(height: 30)
+                                        .background(Capsule().fill(isSel ? Color.white : Color.white.opacity(0.08)))
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(isRendering)
                             }
                         }
 
-                        // Save & Share Actions
                         HStack(spacing: 10) {
                             Button(action: saveVideoToPhotos) {
                                 HStack(spacing: 6) {
@@ -1406,15 +1641,18 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                                             .scaleEffect(0.8)
                                     } else {
                                         Image(systemName: hasSavedVideo ? "checkmark" : "square.and.arrow.down")
-                                            .font(.system(size: 13, weight: .bold))
+                                            .font(.system(size: 13, weight: .semibold))
                                     }
                                     Text(hasSavedVideo ? "Đã lưu Video" : "Lưu Video")
-                                        .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                                        .font(.system(size: 13.5, weight: .semibold, design: .rounded))
                                 }
                                 .foregroundColor(hasSavedVideo ? .white : .black)
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 44)
-                                .background(Capsule().fill(hasSavedVideo ? Color.green.opacity(0.78) : AlignTheme.studioAccent))
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(hasSavedVideo ? Color(red: 0.20, green: 0.62, blue: 0.34) : Color.white)
+                                )
                             }
                             .buttonStyle(.plain)
                             .disabled(isRendering || exportedVideoURL == nil || isSavingVideo)
@@ -1422,17 +1660,16 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                             Button(action: { showShareSheet = true }) {
                                 HStack(spacing: 5) {
                                     Image(systemName: "square.and.arrow.up")
-                                        .font(.system(size: 13.5, weight: .bold))
-                                    Text("Đăng MXH")
-                                        .font(.system(size: 13.5, weight: .bold, design: .rounded))
+                                        .font(.system(size: 13.5, weight: .semibold))
+                                    Text("Chia sẻ")
+                                        .font(.system(size: 13.5, weight: .semibold, design: .rounded))
                                 }
                                 .foregroundColor(.white)
-                                .padding(.horizontal, 18)
+                                .padding(.horizontal, 20)
                                 .frame(height: 44)
                                 .background(
-                                    Capsule()
-                                        .fill(Color.white.opacity(0.13))
-                                        .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 0.7))
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(Color.white.opacity(0.11))
                                 )
                             }
                             .buttonStyle(.plain)

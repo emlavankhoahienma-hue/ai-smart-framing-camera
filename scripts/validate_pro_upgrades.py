@@ -912,16 +912,23 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             self.assertIn(f"/* {fname} */", pbx)
             self.assertIn(f"/* {fname} in Sources */", pbx)
 
-        # 2. Verify all 24 bundled transparent PNG stickers exist + CI copies PhotoboothAssets/
+        # 2. Verify all 36 bundled transparent PNG stickers + 8 studio paper/fabric JPEG textures exist + CI copies both
         pb_dir = ROOT / "Resources" / "PhotoboothAssets"
         pngs = list(pb_dir.glob("pb_*.png"))
-        self.assertEqual(len(pngs), 24, f"Expected 24 bundled stickers, found {len(pngs)}")
+        self.assertEqual(len(pngs), 36, f"Expected 36 bundled stickers, found {len(pngs)}")
         for p in pngs:
             head = p.read_bytes()[:8]
             self.assertEqual(head, b"\x89PNG\r\n\x1a\n", f"Invalid PNG header in {p.name}")
 
+        jpgs = list(pb_dir.glob("pb_tex_*.jpg"))
+        self.assertEqual(len(jpgs), 8, f"Expected 8 bundled frame textures, found {len(jpgs)}")
+        for j in jpgs:
+            self.assertEqual(j.read_bytes()[:3], b"\xff\xd8\xff", f"Invalid JPEG header in {j.name}")
+
         yml = (ROOT.parent / ".github" / "workflows" / "ios-build.yml").read_text(encoding="utf-8")
         self.assertIn("PhotoboothAssets", yml)
+        self.assertIn("PB_PNG_COUNT", yml)
+        self.assertIn("PB_JPG_COUNT", yml)
 
         # 3. Verify Mechanical Shutter Engine (auto default) & hidden Settings card
         shutter = source("Services/MechanicalShutterEngine.swift")
@@ -978,14 +985,22 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             "AVAssetWriter",
             "AVAssetWriterInputPixelBufferAdaptor",
             "exportTimelapseVideo(",
+            "let outW: CGFloat = 720",
+            "let fps: Int32 = 24",
+            "prescaleCGImageIfNeeded",
+            "photoIndex(forRenderedRectIndex:",
         ]:
             self.assertIn(tok, timelapse)
 
-        # 6. Verify Photobooth Layouts, 16 Editorial Frames, Live Frame Picker & Editor Timelapse UI
+        # 6. Verify Photobooth Layouts (8 incl. 2x4 & twin 2x4), Sharp 90° Slots, 6s Default Timer, 25 Frames
         pb_models = source("Models/PhotoboothModels.swift")
         for layout_case in [
-            "case strip4x1", "case grid2x2", "case strip3x1",
+            "case strip4x1", "case grid2x4", "case twin2x4", "case grid2x2", "case strip3x1",
             "case couple2x1", "case mini6Cut", "case polaroidSingle",
+            "case sec6 = 6", "case x1_5 = 1.5",
+            "slotCornerRadiusRatio: CGFloat = 0.0",
+            "case oldmoonWhite", "case boardingPass", "case denimScrapbook",
+            "case starryVelvet", "case coquettePinstripe", "pb_tex_denim.jpg",
             "enum PhotoboothStickerAnchorZone",
             "enum PhotoboothTimelapseStyle",
         ]:
@@ -993,14 +1008,16 @@ class ProCameraUpgradesContracts(unittest.TestCase):
 
         renderer = source("Services/PhotoboothStripRenderer.swift")
         for frame_tok in [
+            ".oldmoonWhite", ".boardingPass", ".denimScrapbook", ".starryVelvet", ".coquettePinstripe",
             ".kodak35mmSprocket", ".dailyNewspaper", ".vintageCinemaTicket",
             ".thermalReceipt", ".cafeGingham", ".y2kBrushedChrome",
             ".customAITexture", "drawEditorialFrameBackground",
             "renderFrameBackgroundAndFooter", "renderStickersOverlay",
+            "bundledFrameTextureImage",
         ]:
             self.assertIn(frame_tok, renderer)
 
-        # 7. Verify UI cleanliness (no floating BOOTH pill, no Styles icon in PRO mode, 5-tap ẢNH trigger)
+        # 7. Verify Calm Minimal UI, 6s Default Timer, Sharp 90° Live Matte & Zoomable Strip Viewer
         vm = source("ViewModels/CameraViewModel.swift")
         controls = source("Views/CameraControlsView.swift")
         main_view = source("Views/CameraMainView.swift")
@@ -1011,6 +1028,7 @@ class ProCameraUpgradesContracts(unittest.TestCase):
 
         self.assertIn("case photobooth", gate)
         for token in [
+            "photoboothTimer: PhotoboothTimerOption = .sec6",
             "enterPhotoboothMode", "exitPhotoboothMode",
             "startPhotoboothCaptureOrSequence", "savePhotoboothStripToLibrary",
             "savePhotoboothTimelapseVideoToLibrary", "selectPhotoboothFrameStyle",
@@ -1021,7 +1039,12 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         self.assertIn("photoTabTapCount >= 5", controls)
         self.assertIn("boothCropMatteLayer", overlay_view)
         self.assertIn("liveFrameSelectorStrip", overlay_view)
+        self.assertIn("outer.addRect(winRect)", overlay_view)
         self.assertIn("PhotoboothTimelapsePreviewSheet", editor_view)
+        self.assertIn("selectedSpeed: PhotoboothTimelapseSpeed = .x2", editor_view)
+        self.assertIn("stripZoomScale", editor_view)
+        self.assertIn("calmBottomActionBar", editor_view)
+        self.assertIn("focusedDrawerContainer", editor_view)
         self.assertIn("applySmartAutoDecorate", editor_view)
         self.assertIn("cachedBaseStripImage", editor_view)
 

@@ -46,9 +46,10 @@ public enum PhotoboothSmartPlacementEngine {
         }
 
         var inputs: [SlotInput] = []
-        for idx in 0..<min(slots.count, slotRects.count) {
-            if let slot = slots[idx] {
-                inputs.append(SlotInput(index: idx, image: slot.displayImage, isMirrored: slot.isMirrored, rect: slotRects[idx]))
+        for rectIdx in 0..<slotRects.count {
+            let photoIdx = config.layout.photoIndex(forRenderedRectIndex: rectIdx)
+            if photoIdx < slots.count, let slot = slots[photoIdx] {
+                inputs.append(SlotInput(index: rectIdx, image: slot.displayImage, isMirrored: slot.isMirrored, rect: slotRects[rectIdx]))
             }
         }
 
@@ -195,21 +196,22 @@ public enum PhotoboothSmartPlacementEngine {
         let sequenceIDs: [String]
         switch style {
         case .smartAdaptive:
-            // Phối hài hòa từng vị trí khác nhau trên từng ô: Tai thỏ (đỉnh đầu) -> Nơ hồng (kẹp tóc) -> Dấu son/Tim (gò má) -> Sao/Lấp lánh & Cà phê (góc trống)
-            sequenceIDs = ["pb_bunny_ears", "pb_ribbon_pink", "pb_heart_gem", "pb_sparkle_trio", "pb_daisy_flower", "pb_pastel_cloud"]
+            // Phối hài hòa từng vị trí khác nhau trên từng ô: Tai thỏ / Kẹp mèo -> Nơ hồng -> Tim/Dấu son -> Lấp lánh & Hoa cúc
+            sequenceIDs = ["pb_bunny_ears", "pb_kitty_clip", "pb_ribbon_pink", "pb_heart_doodle", "pb_star_scribble", "pb_daisy_flower", "pb_butterfly_silver", "pb_pastel_cloud"]
         case .coquette:
-            sequenceIDs = ["pb_bunny_ears", "pb_ribbon_pink", "pb_cherry_twin", "pb_daisy_flower", "pb_strawberry_cake", "pb_angel_wings"]
+            sequenceIDs = ["pb_crown_silver", "pb_kitty_clip", "pb_ribbon_pink", "pb_cherry_twin", "pb_tulip_bouquet", "pb_strawberry_cake", "pb_angel_wings", "pb_teddy_head"]
         case .y2kRetro:
-            sequenceIDs = ["pb_retro_sunglasses", "pb_chrome_star", "pb_kiss_mark", "pb_disco_ball", "pb_sparkle_trio", "pb_film_roll"]
+            sequenceIDs = ["pb_retro_sunglasses", "pb_headphone_y2k", "pb_butterfly_silver", "pb_chrome_star", "pb_kiss_mark", "pb_disco_ball", "pb_camera_mini", "pb_film_roll"]
         case .minimalCafe:
-            sequenceIDs = ["pb_ribbon_black", "pb_iced_latte", "pb_daisy_flower", "pb_vintage_stamp", "pb_lucky_clover"]
+            sequenceIDs = ["pb_ribbon_black", "pb_iced_latte", "pb_tulip_bouquet", "pb_tape_washi", "pb_vintage_stamp", "pb_lucky_clover", "pb_camera_mini"]
         }
 
         let chosenAssets = sequenceIDs.compactMap { byID[$0] }
         guard !chosenAssets.isEmpty else { return [] }
 
-        // Số lượng sticker vừa vặn theo số ô ảnh (tối giản tinh tế kiểu Hàn, không rối)
-        let targetCount = min(chosenAssets.count, max(3, min(6, config.layout.slotCount + 2)))
+        // Số lượng sticker vừa vặn theo số ô ảnh (tối giản tinh tế kiểu tiệm Hàn, không rối)
+        let renderedCount = max(config.layout.slotCount, maps.count)
+        let targetCount = min(chosenAssets.count, max(3, min(8, renderedCount)))
         var placed: [PlacedPhotoboothSticker] = []
 
         // Phân bổ rải đều qua từng khung ảnh để mỗi khung có điểm nhấn riêng, không lặp đè vào một mặt

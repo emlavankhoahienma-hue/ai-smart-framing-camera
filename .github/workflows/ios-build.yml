@@ -296,9 +296,12 @@ jobs:
           if [ -d "AISmartFramingCamera/Resources/PhotoboothAssets" ]; then
             mkdir -p Payload/AISmartFramingCamera.app/PhotoboothAssets
             cp AISmartFramingCamera/Resources/PhotoboothAssets/*.png Payload/AISmartFramingCamera.app/PhotoboothAssets/
-            PB_COUNT=$(ls -1 Payload/AISmartFramingCamera.app/PhotoboothAssets/*.png | wc -l)
-            test "$PB_COUNT" -ge 24
-            echo " Đã tích hợp $PB_COUNT Photobooth Studio Stickers vào App Bundle!"
+            cp AISmartFramingCamera/Resources/PhotoboothAssets/*.jpg Payload/AISmartFramingCamera.app/PhotoboothAssets/
+            PB_PNG_COUNT=$(ls -1 Payload/AISmartFramingCamera.app/PhotoboothAssets/*.png | wc -l | tr -d ' ')
+            PB_JPG_COUNT=$(ls -1 Payload/AISmartFramingCamera.app/PhotoboothAssets/*.jpg | wc -l | tr -d ' ')
+            test "$PB_PNG_COUNT" -ge 36
+            test "$PB_JPG_COUNT" -ge 8
+            echo " Đã tích hợp $PB_PNG_COUNT Photobooth Studio Stickers & $PB_JPG_COUNT Frame Textures vào App Bundle!"
           fi
           test -d Payload/AISmartFramingCamera.app/SigLIPBaseImage.mlmodelc
           test -s Payload/AISmartFramingCamera.app/SigLIPPrompts.json

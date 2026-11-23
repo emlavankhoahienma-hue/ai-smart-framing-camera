@@ -748,7 +748,7 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     @Published public var isPhotoboothLiveFramePickerOpen: Bool = false
-    @Published public var photoboothTimer: PhotoboothTimerOption = .sec3
+    @Published public var photoboothTimer: PhotoboothTimerOption = .sec6
     @Published public var photoboothSlots: [PhotoboothSlotPhoto?] = Array(repeating: nil, count: 4)
     @Published public var photoboothActiveSlotIndex: Int = 0 {
         didSet { updateFrameProcessingConfiguration() }
