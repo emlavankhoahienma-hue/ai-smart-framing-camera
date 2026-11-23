@@ -1,5 +1,7 @@
 import Foundation
 import SwiftUI
+import UIKit
+import QuartzCore
 import simd
 
 /// Trục đang được kéo trên Photographic Styles Control Pad để làm nổi đúng thông số trên Top HUD.
@@ -68,6 +70,8 @@ public struct PhotographicStyleSplitTransition: Equatable, Sendable {
     /// Phong cách đích đang vuốt tới & tỷ lệ hòa trộn [0.0 ... 1.0] để chuyển màu nền Pad mượt theo tay.
     public var incomingPreset: PhotographicStylePreset
     public var morphProgress: Float
+    /// `true` khi xoay ngang (Landscape): ranh chia GPU cắt theo trục Y của khung ngắm dọc (thành chia trái-phải theo mắt người).
+    public var isLandscapeAxis: Bool
 
     public static let inactive = PhotographicStyleSplitTransition(
         isActive: false,
@@ -76,7 +80,8 @@ public struct PhotographicStyleSplitTransition: Equatable, Sendable {
         splitPosition: 1.0,
         dominantStyle: .standard,
         incomingPreset: .standard,
-        morphProgress: 0.0
+        morphProgress: 0.0,
+        isLandscapeAxis: false
     )
 
     public init(
@@ -86,7 +91,8 @@ public struct PhotographicStyleSplitTransition: Equatable, Sendable {
         splitPosition: Float,
         dominantStyle: PhotographicStyleState,
         incomingPreset: PhotographicStylePreset,
-        morphProgress: Float
+        morphProgress: Float,
+        isLandscapeAxis: Bool = false
     ) {
         self.isActive = isActive
         self.leftStyle = leftStyle
@@ -95,6 +101,7 @@ public struct PhotographicStyleSplitTransition: Equatable, Sendable {
         self.dominantStyle = dominantStyle
         self.incomingPreset = incomingPreset
         self.morphProgress = max(0.0, min(1.0, morphProgress))
+        self.isLandscapeAxis = isLandscapeAxis
     }
 }
 
@@ -816,6 +823,237 @@ public enum PhotographicStyleRecipeStore {
     public static func saveUserRecipes(_ recipes: [PhotographicStyleCustomRecipe]) {
         if let data = try? JSONEncoder().encode(recipes) {
             UserDefaults.standard.set(data, forKey: storageKey)
+        }
+    }
+}
+
+// MARK: - Decoupled Live HUD State (120Hz Zero-MainView-Rediff Updates While Dragging Control Pad)
+/// Trạng thái tách riêng để chỉ cập nhật 3 con số HUD & icon 5x5 khi kéo bảng màu 120Hz,
+/// không gây re-diff toàn cây SwiftUI của CameraMainView (loại bỏ hoàn toàn giật khung khi kéo ngón tay).
+@MainActor
+public final class PhotographicStyleLiveHUDState: ObservableObject {
+    @Published public var preset: PhotographicStylePreset = .standard
+    @Published public var tone: Float = 0.0
+    @Published public var color: Float = 0.0
+    @Published public var palette: Float = 1.0
+    @Published public var isModifiedFromDefault: Bool = false
+    @Published public var isInteracting: Bool = false
+
+    public init() {}
+
+    public func sync(from state: PhotographicStyleState) {
+        if preset != state.preset { preset = state.preset }
+        if abs(tone - state.tone) > 0.0005 { tone = state.tone }
+        if abs(color - state.color) > 0.0005 { color = state.color }
+        if abs(palette - state.palette) > 0.0005 { palette = state.palette }
+        let modified = state.isModifiedFromPresetDefault
+        if isModifiedFromDefault != modified { isModifiedFromDefault = modified }
+    }
+
+    public var currentStyleSnapshot: PhotographicStyleState {
+        PhotographicStyleState(preset: preset, tone: tone, color: color, palette: palette)
+    }
+
+    public var toneHUDNumber: String { currentStyleSnapshot.toneHUDNumber }
+    public var colorHUDNumber: String { currentStyleSnapshot.colorHUDNumber }
+    public var paletteHUDNumber: String { currentStyleSnapshot.paletteHUDNumber }
+}
+
+// MARK: - Physical Device Orientation Monitor for Photographic Styles (Portrait / Landscape-Left / Landscape-Right)
+/// Hướng cầm máy thực tế của Bảng màu (hoạt động kể cả khi khóa xoay dọc iOS giống Camera gốc iPhone 16/17).
+public enum PhotographicStyleInterfaceOrientation: Equatable, Sendable {
+    case portrait        // Cầm dọc: UI 0°
+    case landscapeLeft   // Đỉnh máy (Dynamic Island) quay sang TRÁI -> UI xoay +90° theo chiều kim đồng hồ
+    case landscapeRight  // Đỉnh máy (Dynamic Island) quay sang PHẢI -> UI xoay -90° ngược chiều kim đồng hồ
+
+    public var rotationDegrees: Double {
+        switch self {
+        case .portrait: return 0.0
+        case .landscapeLeft: return 90.0
+        case .landscapeRight: return -90.0
+        }
+    }
+
+    public var isLandscape: Bool { self != .portrait }
+}
+
+/// Bộ lọc trọng lực nền thread-safe (Sendable hoàn toàn cho Swift 6 strict concurrency).
+private final class PhotographicStyleMotionOrientationCore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var smoothedGravity = SIMD3<Double>(0.0, -1.0, 0.0)
+    private var hasSeededGravity: Bool = false
+    private var lastEvaluatedOrientation: PhotographicStyleInterfaceOrientation = .portrait
+    private var lastEvalTime: CFTimeInterval = 0
+    private var isActive: Bool = false
+
+    func reset(seed: PhotographicStyleInterfaceOrientation, active: Bool) {
+        lock.lock()
+        hasSeededGravity = false
+        lastEvalTime = 0
+        lastEvaluatedOrientation = seed
+        isActive = active
+        lock.unlock()
+    }
+
+    func updateFallbackOrientationIfNotMotionSeeded(_ orient: PhotographicStyleInterfaceOrientation) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard isActive, !hasSeededGravity else { return false }
+        lastEvaluatedOrientation = orient
+        return true
+    }
+
+    func process(sample: TrackingMotionSample) -> PhotographicStyleInterfaceOrientation? {
+        let q = sample.deviceToWorld
+        let qv = q.vector
+        guard qv.x.isFinite, qv.y.isFinite, qv.z.isFinite, qv.w.isFinite, simd_length(qv) > 1e-9 else { return nil }
+
+        let rawGravity = q.inverse.act(SIMD3<Double>(0.0, 0.0, -1.0))
+        guard rawGravity.x.isFinite, rawGravity.y.isFinite, rawGravity.z.isFinite else { return nil }
+
+        let now = CACurrentMediaTime()
+        lock.lock()
+        defer { lock.unlock() }
+        guard isActive else { return nil }
+
+        if !hasSeededGravity {
+            smoothedGravity = rawGravity
+            hasSeededGravity = true
+        } else {
+            let alpha = 0.25
+            smoothedGravity = smoothedGravity * (1.0 - alpha) + rawGravity * alpha
+        }
+
+        guard now - lastEvalTime >= (1.0 / 15.0) else { return nil }
+        lastEvalTime = now
+        let evaluated = PhotographicStyleOrientationMonitor.evaluateOrientation(
+            gravity: smoothedGravity,
+            current: lastEvaluatedOrientation
+        )
+        if evaluated != lastEvaluatedOrientation {
+            lastEvaluatedOrientation = evaluated
+            return evaluated
+        }
+        return nil
+    }
+}
+
+/// Theo dõi hướng xoay ngang trái/phải mượt có ngưỡng trễ (hysteresis) dùng chung `DeviceMotionService.shared`,
+/// chỉ bật khi Bảng màu đang mở và tự dừng khi đóng để tiết kiệm 100% pin.
+@MainActor
+public final class PhotographicStyleOrientationMonitor: ObservableObject {
+    @Published public private(set) var orientation: PhotographicStyleInterfaceOrientation = .portrait
+
+    private let core = PhotographicStyleMotionOrientationCore()
+    private var motionSubscriptionID: UUID?
+    private var deviceOrientationObserver: NSObjectProtocol?
+
+    public init() {}
+
+    /// Hàm thuần tính hướng cầm từ vector trọng lực thiết bị có hysteresis chống nháy ở vùng chéo ±45° & giữ nguyên khi đặt phẳng.
+    public nonisolated static func evaluateOrientation(
+        gravity: SIMD3<Double>,
+        current: PhotographicStyleInterfaceOrientation
+    ) -> PhotographicStyleInterfaceOrientation {
+        let len = simd_length(gravity)
+        guard len.isFinite, len > 1e-6 else { return current }
+        let g = gravity / len
+
+        // Khi máy chúc thẳng xuống bàn / hướng thẳng lên trời (|gz| > 0.80): giữ nguyên hướng hiện tại, không lật loạn
+        if abs(g.z) > 0.80 {
+            return current
+        }
+
+        // rollDeg trong [-180, +180]: Portrait ≈ 0°, Landscape-Left (g.x ≈ -1) ≈ -90°, Landscape-Right (g.x ≈ +1) ≈ +90°
+        let rollDeg = atan2(g.x, -g.y) * 180.0 / .pi
+
+        switch current {
+        case .portrait:
+            if rollDeg <= -55.0 && rollDeg >= -135.0 {
+                return .landscapeLeft
+            }
+            if rollDeg >= 55.0 && rollDeg <= 135.0 {
+                return .landscapeRight
+            }
+            return .portrait
+
+        case .landscapeLeft:
+            if rollDeg <= -35.0 && rollDeg >= -145.0 {
+                return .landscapeLeft
+            }
+            if rollDeg >= 55.0 && rollDeg <= 135.0 {
+                return .landscapeRight
+            }
+            return .portrait
+
+        case .landscapeRight:
+            if rollDeg >= 35.0 && rollDeg <= 145.0 {
+                return .landscapeRight
+            }
+            if rollDeg <= -55.0 && rollDeg >= -135.0 {
+                return .landscapeLeft
+            }
+            return .portrait
+        }
+    }
+
+    public func start() {
+        guard motionSubscriptionID == nil else { return }
+
+        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+        let seed = Self.mapUIDeviceOrientation(UIDevice.current.orientation) ?? .portrait
+        orientation = seed
+        core.reset(seed: seed, active: true)
+
+        deviceOrientationObserver = NotificationCenter.default.addObserver(
+            forName: UIDevice.orientationDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.motionSubscriptionID != nil else { return }
+                guard let mapped = Self.mapUIDeviceOrientation(UIDevice.current.orientation) else { return }
+                if self.core.updateFallbackOrientationIfNotMotionSeeded(mapped), self.orientation != mapped {
+                    self.orientation = mapped
+                }
+            }
+        }
+
+        let coreBox = core
+        let subID = DeviceMotionService.shared.subscribe { [weak self] sample in
+            guard let next = coreBox.process(sample: sample) else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.motionSubscriptionID != nil else { return }
+                if self.orientation != next {
+                    self.orientation = next
+                }
+            }
+        }
+        motionSubscriptionID = subID
+    }
+
+    public func stop() {
+        core.reset(seed: .portrait, active: false)
+        if let subID = motionSubscriptionID {
+            motionSubscriptionID = nil
+            DeviceMotionService.shared.unsubscribe(subID)
+        }
+        if let obs = deviceOrientationObserver {
+            NotificationCenter.default.removeObserver(obs)
+            deviceOrientationObserver = nil
+        }
+        UIDevice.current.endGeneratingDeviceOrientationNotifications()
+        if orientation != .portrait {
+            orientation = .portrait
+        }
+    }
+
+    private nonisolated static func mapUIDeviceOrientation(_ raw: UIDeviceOrientation) -> PhotographicStyleInterfaceOrientation? {
+        switch raw {
+        case .portrait: return .portrait
+        case .landscapeLeft: return .landscapeLeft
+        case .landscapeRight: return .landscapeRight
+        default: return nil
         }
     }
 }

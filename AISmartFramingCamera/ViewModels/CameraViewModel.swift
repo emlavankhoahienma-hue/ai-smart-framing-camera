@@ -441,9 +441,16 @@ public final class CameraViewModel: ObservableObject {
     public var effectiveVintageDateStampStyle: VintageDateStampStyle {
         (captureMode.isVideo || selectedPhotoFormat == .dng) ? .off : vintageDateStampStyle
     }
+    /// Trạng thái HUD tách rời & bộ theo dõi xoay ngang (không gây re-diff CameraMainView khi kéo 120Hz).
+    public let liveStyleHUD = PhotographicStyleLiveHUDState()
+    public let styleOrientationMonitor = PhotographicStyleOrientationMonitor()
+    private var pendingInteractivePhotographicStyle: PhotographicStyleState? = nil
+
     @Published public var photographicStyle: PhotographicStyleState = .standard {
         didSet {
+            pendingInteractivePhotographicStyle = nil
             photographicStyleMemory[photographicStyle.preset] = photographicStyle
+            liveStyleHUD.sync(from: photographicStyle)
             FilmFilterEngine.shared.activePhotographicStyle = effectivePhotographicStyle
             syncProColorPassthroughPreset()
             pushLiveColorStateFastToPreview()
@@ -462,7 +469,11 @@ public final class CameraViewModel: ObservableObject {
             if isShowingPhotographicStylePad {
                 if isShowingFilmDrawer { isShowingFilmDrawer = false }
                 if isFunctionDrawerOpen { isFunctionDrawerOpen = false }
+                liveStyleHUD.sync(from: photographicStyle)
+                styleOrientationMonitor.start()
             } else {
+                commitInteractivePhotographicStyle()
+                styleOrientationMonitor.stop()
                 if activePhotographicStyleAxis != .none {
                     activePhotographicStyleAxis = .none
                 }
@@ -489,6 +500,7 @@ public final class CameraViewModel: ObservableObject {
     public func updatePhotographicStyleSplit(_ split: PhotographicStyleSplitTransition) {
         photographicStyleSwipeAnimator.cancel()
         photographicStyleSplit = split
+        liveStyleHUD.sync(from: split.isActive ? split.dominantStyle : photographicStyle)
         previewContainerView?.updatePhotographicStyleSplit(split)
     }
 
@@ -496,6 +508,7 @@ public final class CameraViewModel: ObservableObject {
         photographicStyleSwipeAnimator.cancel()
         if photographicStyleSplit.isActive {
             photographicStyleSplit = .inactive
+            liveStyleHUD.sync(from: photographicStyle)
             previewContainerView?.updatePhotographicStyleSplit(.inactive)
         }
     }
@@ -520,6 +533,7 @@ public final class CameraViewModel: ObservableObject {
             onStep: { [weak self] stepSplit in
                 guard let self else { return }
                 self.photographicStyleSplit = stepSplit
+                self.liveStyleHUD.sync(from: stepSplit.dominantStyle)
                 self.previewContainerView?.updatePhotographicStyleSplit(stepSplit)
             },
             onComplete: { [weak self] in
@@ -557,6 +571,54 @@ public final class CameraViewModel: ObservableObject {
         var next = photographicStyle
         next.palette = palette.isFinite ? max(0.0, min(1.0, palette)) : 1.0
         photographicStyle = next
+    }
+
+    /// Đường dẫn siêu mượt 120Hz khi đang kéo tay trên Pad 2D / thanh Palette:
+    /// đẩy trực tiếp sang Metal GPU (<0.005ms) + chỉ cập nhật HUD/icon tách rời, không re-diff toàn bộ CameraMainView.
+    public func updatePhotographicStyleInteractive(tone: Float? = nil, color: Float? = nil, palette: Float? = nil) {
+        var next = pendingInteractivePhotographicStyle ?? photographicStyle
+        if let tone {
+            next.tone = tone.isFinite ? max(-1.0, min(1.0, tone)) : 0.0
+        }
+        if let color {
+            next.color = color.isFinite ? max(-1.0, min(1.0, color)) : 0.0
+        }
+        if let palette {
+            next.palette = palette.isFinite ? max(0.0, min(1.0, palette)) : 1.0
+        }
+        pendingInteractivePhotographicStyle = next
+        if !liveStyleHUD.isInteracting {
+            liveStyleHUD.isInteracting = true
+        }
+        liveStyleHUD.sync(from: next)
+
+        let effective = (captureMode.isVideo || selectedPhotoFormat == .dng || isHoldingCompareOriginalStyle)
+            ? PhotographicStyleState.standard
+            : next
+        FilmFilterEngine.shared.activePhotographicStyle = effective
+        previewContainerView?.pushLiveColorStateFast(
+            isFilmActive: isFilmSimulationActive,
+            preset: selectedFilmPreset,
+            intensity: Float(filmSimulationIntensity),
+            softwareWB: activeProSoftwareWB,
+            filmTuning: filmTuning,
+            photographicStyle: effective,
+            lightLeak: effectiveVintageLightLeak
+        )
+    }
+
+    /// Chốt trạng thái 1 lần duy nhất khi nhả ngón tay sau khi kéo mượt trên Bảng màu.
+    public func commitInteractivePhotographicStyle() {
+        if liveStyleHUD.isInteracting {
+            liveStyleHUD.isInteracting = false
+        }
+        guard let pending = pendingInteractivePhotographicStyle else { return }
+        pendingInteractivePhotographicStyle = nil
+        if photographicStyle != pending {
+            photographicStyle = pending
+        } else {
+            liveStyleHUD.sync(from: photographicStyle)
+        }
     }
 
     /// Chỉ đặt lại preset đang chọn về mặc định của chính nó (không xóa các preset khác trong phiên).

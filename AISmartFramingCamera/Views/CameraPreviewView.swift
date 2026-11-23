@@ -729,6 +729,20 @@ public class PreviewContainerView: UIView {
             photographicStyle: photographicStyle,
             lightLeak: lightLeak
         )
+        let hasColorPass = (isFilmActive && preset != .standard && preset != .proColorGrade)
+            || !softwareWB.isIdentity
+            || !filmTuning.isIdentity
+            || !photographicStyle.isIdentity
+            || !lightLeak.isIdentity
+        if hasColorPass {
+            if metalView?.isHidden == true {
+                metalView?.isHidden = false
+                metalRenderer?.resetPresentationDirtyState()
+            }
+            if metalView?.isPaused == true {
+                metalView?.isPaused = false
+            }
+        }
     }
 
     public func updatePhotographicStyleSplit(_ split: PhotographicStyleSplitTransition) {

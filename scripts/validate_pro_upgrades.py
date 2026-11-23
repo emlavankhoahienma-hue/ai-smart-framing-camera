@@ -7,6 +7,7 @@
 6. Multi-Mode Viewfinder Grid with animated button icon
 7. High-Fidelity Master Frame for Video (AVAssetReader/AVAssetWriter + Audio Passthrough)
 """
+import math
 import re
 import unittest
 from pathlib import Path
@@ -1053,6 +1054,145 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         self.assertIn("cachedDisplayUIImage", preview_view)
         self.assertIn("cachedMiniMapUIImage", preview_view)
         self.assertIn("prepareAndPresentShareSheet", preview_view)
+
+    def test_23_photographic_style_landscape_rotation_and_zero_lag_color_science(self):
+        # 1. Verify decoupled 120Hz HUD + Landscape Left/Right Orientation Monitor contracts
+        models = source("Models/PhotographicStyleModels.swift")
+        for token in [
+            "public var isLandscapeAxis: Bool",
+            "public final class PhotographicStyleLiveHUDState: ObservableObject",
+            "public enum PhotographicStyleInterfaceOrientation",
+            "case landscapeLeft",
+            "case landscapeRight",
+            "public final class PhotographicStyleOrientationMonitor: ObservableObject",
+            "private final class PhotographicStyleMotionOrientationCore: @unchecked Sendable",
+            "evaluateOrientation(",
+        ]:
+            self.assertIn(token, models)
+
+        # 2. Verify zero-lag interactive GPU fast-path in ViewModel & Preview
+        vm = source("ViewModels/CameraViewModel.swift")
+        for token in [
+            "public let liveStyleHUD = PhotographicStyleLiveHUDState()",
+            "public let styleOrientationMonitor = PhotographicStyleOrientationMonitor()",
+            "public func updatePhotographicStyleInteractive(",
+            "public func commitInteractivePhotographicStyle()",
+            "styleOrientationMonitor.start()",
+            "styleOrientationMonitor.stop()",
+        ]:
+            self.assertIn(token, vm)
+
+        preview = source("Views/CameraPreviewView.swift")
+        self.assertIn("if metalView?.isPaused == true", preview)
+
+        pad = source("Views/PhotographicStylesPadView.swift")
+        for token in [
+            "orientationMonitor.orientation",
+            "updatePhotographicStyleInteractive(",
+            "commitInteractivePhotographicStyle()",
+            "PhotographicStyleMetricsCapsuleView",
+            "isLandscapeAxis: activeSplit.isLandscapeAxis",
+            "if distSq > 14.0",
+            "let glideAnimation: Animation? = isDragging ? nil",
+        ]:
+            self.assertIn(token, pad)
+
+        # 3. Verify Metal Color Science upgrades (single-eval semantic masks, black-anchored tone curve, softGamutClampLinear, landscape split)
+        unified = source("Services/UnifiedMetalColorEngine.swift")
+        kernel = source("Services/PhotographicStyleMetalKernel.swift")
+        for src in (unified, kernel):
+            for tok in [
+                "softGamutClampLinear",
+                "float origHue = atan2(origLab.z, origLab.y);",
+                "float shBell = smoothstep(0.0015f, 0.045f, yOut)",
+                "float hiKeep = smoothstep(0.38f, 0.92f, yOut)",
+                "if (newChroma > 0.21f)",
+            ]:
+                self.assertIn(tok, src)
+            for m_ss in re.finditer(r"smoothstep\(\s*([+-]?\d+(?:\.\d+)?)f\s*,\s*([+-]?\d+(?:\.\d+)?)f", src):
+                self.assertLess(float(m_ss.group(1)), float(m_ss.group(2)), f"Reversed MSL smoothstep: {m_ss.group(0)}")
+        self.assertIn("float splitCoord = (u.splitParams.w > 0.5f) ? dstUV.y : dstUV.x;", unified)
+
+        # 4. Numerical verification of gravity -> orientation hysteresis math (exact port of Swift logic)
+        def eval_orient(gx, gy, gz, current):
+            norm = math.sqrt(gx * gx + gy * gy + gz * gz)
+            gx, gy, gz = gx / norm, gy / norm, gz / norm
+            if abs(gz) > 0.80:
+                return current
+            roll = math.degrees(math.atan2(gx, -gy))
+            if current == "portrait":
+                if -135.0 <= roll <= -55.0:
+                    return "landscapeLeft"
+                if 55.0 <= roll <= 135.0:
+                    return "landscapeRight"
+                return "portrait"
+            if current == "landscapeLeft":
+                if -145.0 <= roll <= -35.0:
+                    return "landscapeLeft"
+                if 55.0 <= roll <= 135.0:
+                    return "landscapeRight"
+                return "portrait"
+            if 35.0 <= roll <= 145.0:
+                return "landscapeRight"
+            if -135.0 <= roll <= -55.0:
+                return "landscapeLeft"
+            return "portrait"
+
+        self.assertEqual(eval_orient(0.0, -1.0, 0.0, "portrait"), "portrait")
+        self.assertEqual(eval_orient(-1.0, 0.0, 0.0, "portrait"), "landscapeLeft")
+        self.assertEqual(eval_orient(1.0, 0.0, 0.0, "portrait"), "landscapeRight")
+        # Hysteresis at -45 deg: stays portrait from portrait, stays landscapeLeft from landscapeLeft
+        self.assertEqual(eval_orient(-0.707, -0.707, 0.0, "portrait"), "portrait")
+        self.assertEqual(eval_orient(-0.707, -0.707, 0.0, "landscapeLeft"), "landscapeLeft")
+        # Flat overhead guard (|gz| > 0.80) keeps current orientation
+        self.assertEqual(eval_orient(-0.2, 0.0, -0.95, "landscapeLeft"), "landscapeLeft")
+        self.assertEqual(eval_orient(0.2, 0.0, 0.95, "landscapeRight"), "landscapeRight")
+
+        # 5. Numerical verification of black-anchored Tone Curve & softGamutClampLinear
+        def smoothstep(e0, e1, x):
+            t = max(0.0, min(1.0, (x - e0) / (e1 - e0)))
+            return t * t * (3.0 - 2.0 * t)
+
+        def eval_tone(y, tone):
+            if tone < -0.001:
+                neg = -tone
+                y_deep = (max(y, 1e-6) ** (1.0 + 0.56 * neg)) * math.exp(-0.10 * neg)
+                toe_keep = math.exp(-y * 12.0) * 0.34
+                y_shaped = y_deep * (1.0 - toe_keep) + (y * 0.68) * toe_keep
+                hi_keep = smoothstep(0.38, 0.92, y) * 0.52
+                return y_shaped * (1.0 - hi_keep) + (y * (1.0 - 0.08 * neg)) * hi_keep
+            elif tone > 0.001:
+                y_lifted = (max(y, 1e-6) ** (1.0 - 0.38 * tone)) * (1.0 + 0.16 * tone)
+                sh_bell = smoothstep(0.0015, 0.045, y) * (1.0 - smoothstep(0.06, 0.42, y))
+                return y_lifted + sh_bell * 0.036 * tone
+            return y
+
+        # True black anchored near 0 even at max positive tone (+1.0) -> NO milky gray fog!
+        self.assertLess(eval_tone(0.0, 1.0), 0.001)
+        # Shadow lifts cleanly at +1.0 and deepens cleanly at -0.8
+        self.assertGreater(eval_tone(0.04, 1.0), 0.16)
+        self.assertLess(eval_tone(0.04, -0.8), 0.022)
+        # Bright highlight stays luminous (> 0.72 linear) even at Dramatic tone -0.76
+        self.assertGreater(eval_tone(0.85, -0.76), 0.72)
+        # Monotonicity across Tone -1 -> 0 -> +1
+        for y in (0.04, 0.18, 0.50):
+            self.assertLess(eval_tone(y, -1.0), eval_tone(y, 0.0))
+            self.assertLess(eval_tone(y, 0.0), eval_tone(y, 1.0))
+
+        # softGamutClampLinear eliminates negative channel while preserving relative chroma ratio
+        def soft_gamut(rgb, y_fallback):
+            min_c = min(rgb)
+            if min_c < 0.0:
+                y_pos = 0.2126 * max(rgb[0], 0.0) + 0.7152 * max(rgb[1], 0.0) + 0.0722 * max(rgb[2], 0.0)
+                target_y = max(y_pos, y_fallback, 1e-4)
+                t = max(0.0, min(1.0, target_y / max(target_y - min_c, 1e-5)))
+                rgb = tuple(target_y * (1.0 - t) + c * t for c in rgb)
+            return tuple(max(c, 0.0) for c in rgb)
+
+        clamped_red = soft_gamut((0.95, -0.18, -0.10), 0.20)
+        self.assertGreaterEqual(min(clamped_red), 0.0)
+        self.assertGreater(clamped_red[0], clamped_red[2])
+        self.assertGreater(clamped_red[2], clamped_red[1])
 
 
 if __name__ == "__main__":

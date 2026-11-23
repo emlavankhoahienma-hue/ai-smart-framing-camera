@@ -98,39 +98,43 @@ private final class PhotographicStylePipelineCache: @unchecked Sendable {
     }
 
     // Mặt nạ sắc da mượt trong OkLab: tập trung quanh sắc da Fitzpatrick I-VI, về 0 trên tường trắng & trời xanh.
-    inline float computeSkinMaskOkLab(float3 lab) {
-        float chroma = length(lab.yz);
-        float hue = atan2(lab.z, lab.y);
+    inline float computeSkinMaskOkLab(float L, float chroma, float hue) {
         float hueMask = smoothstep(0.18f, 0.44f, hue) * (1.0f - smoothstep(0.95f, 1.24f, hue));
         float chromaMask = smoothstep(0.016f, 0.036f, chroma) * (1.0f - smoothstep(0.145f, 0.220f, chroma));
-        float lumaMask = smoothstep(0.18f, 0.32f, lab.x) * (1.0f - smoothstep(0.86f, 0.96f, lab.x));
+        float lumaMask = smoothstep(0.18f, 0.32f, L) * (1.0f - smoothstep(0.86f, 0.96f, L));
         return clamp(hueMask * chromaMask * lumaMask, 0.0f, 1.0f);
     }
 
-    inline float computeSkyMaskOkLab(float3 lab) {
-        float chroma = length(lab.yz);
-        float hue = atan2(lab.z, lab.y);
+    inline float computeSkyMaskOkLab(float L, float chroma, float hue) {
         float hueMask = smoothstep(-2.75f, -2.25f, hue) * (1.0f - smoothstep(-1.15f, -0.75f, hue));
         float chromaMask = smoothstep(0.020f, 0.055f, chroma);
-        float lumaMask = smoothstep(0.32f, 0.56f, lab.x);
+        float lumaMask = smoothstep(0.32f, 0.56f, L);
         return clamp(hueMask * chromaMask * lumaMask, 0.0f, 1.0f);
     }
 
-    inline float computeFoliageMaskOkLab(float3 lab) {
-        float chroma = length(lab.yz);
-        float hue = atan2(lab.z, lab.y);
+    inline float computeFoliageMaskOkLab(float L, float chroma, float hue) {
         float hueMask = smoothstep(1.48f, 1.95f, hue) * (1.0f - smoothstep(2.65f, 3.02f, hue));
         float chromaMask = smoothstep(0.022f, 0.060f, chroma);
-        float lumaMask = smoothstep(0.12f, 0.28f, lab.x);
+        float lumaMask = smoothstep(0.12f, 0.28f, L);
         return clamp(hueMask * chromaMask * lumaMask, 0.0f, 1.0f);
     }
 
-    inline float computeWarmRedMaskOkLab(float3 lab) {
-        float chroma = length(lab.yz);
-        float hue = atan2(lab.z, lab.y);
+    inline float computeWarmRedMaskOkLab(float chroma, float hue) {
         float hueMask = smoothstep(-0.22f, 0.18f, hue) * (1.0f - smoothstep(0.75f, 1.15f, hue));
         float chromaMask = smoothstep(0.045f, 0.105f, chroma);
         return clamp(hueMask * chromaMask, 0.0f, 1.0f);
+    }
+
+    // Nén mượt tiệm cận biên dải màu theo tia về độ sáng trung tính (giữ nguyên sắc độ & độ sáng, chống bệt neon)
+    inline float3 softGamutClampLinear(float3 rgb, float lumaFallback) {
+        float minC = min(rgb.r, min(rgb.g, rgb.b));
+        if (minC < 0.0f) {
+            float yPos = dot(max(rgb, float3(0.0f)), float3(0.2126f, 0.7152f, 0.0722f));
+            float targetY = max(max(yPos, lumaFallback), 1e-4f);
+            float t = clamp(targetY / max(targetY - minC, 1e-5f), 0.0f, 1.0f);
+            rgb = mix(float3(targetY), rgb, t);
+        }
+        return max(rgb, float3(0.0f));
     }
 
     // Filmic highlight shoulder liên tục C1 nén mượt vùng sáng > knee (chống cháy trắng trời/đèn).
@@ -188,13 +192,14 @@ private final class PhotographicStylePipelineCache: @unchecked Sendable {
         float undertoneStrength = u.gradeB.z;
         float splitStrength = u.gradeB.w;
 
-        // 2. Phân tích OkLab gốc để lấy Skin / Sky / Foliage / WarmRed Semantic Masks.
+        // 2. Phân tích OkLab gốc (tính duy nhất 1 lần chroma & hue cho cả 4 mặt nạ ngữ nghĩa).
         float3 origLab = linearSRGBToOkLab(origLinear);
         float origChroma = length(origLab.yz);
-        float skinMask = computeSkinMaskOkLab(origLab);
-        float skyMask = computeSkyMaskOkLab(origLab);
-        float foliageMask = computeFoliageMaskOkLab(origLab);
-        float warmRedMask = computeWarmRedMaskOkLab(origLab);
+        float origHue = atan2(origLab.z, origLab.y);
+        float skinMask = computeSkinMaskOkLab(origLab.x, origChroma, origHue);
+        float skyMask = computeSkyMaskOkLab(origLab.x, origChroma, origHue);
+        float foliageMask = computeFoliageMaskOkLab(origLab.x, origChroma, origHue);
+        float warmRedMask = computeWarmRedMaskOkLab(origChroma, origHue);
         float nonNeutralMask = smoothstep(0.010f, 0.032f, origChroma);
         float midtoneMask = smoothstep(0.04f, 0.28f, origLab.x) * (1.0f - smoothstep(0.78f, 0.96f, origLab.x));
         float skinProtect = clamp(u.skinShiftLab.w, 0.0f, 0.85f);
@@ -222,8 +227,8 @@ private final class PhotographicStylePipelineCache: @unchecked Sendable {
         float yOut = yIn;
 
         if (abs(baseShadowLift) > 0.001f) {
-            float shadowWeight = 1.0f - smoothstep(0.015f, 0.45f, yOut);
-            float shDelta = baseShadowLift * 0.115f * shadowWeight * (0.22f + yOut);
+            float shadowWeight = smoothstep(0.001f, 0.035f, yOut) * (1.0f - smoothstep(0.04f, 0.45f, yOut));
+            float shDelta = baseShadowLift * 0.115f * shadowWeight * (0.28f + yOut);
             yOut = max(yOut * 0.45f, yOut + shDelta);
         }
         if (abs(baseContrast) > 0.001f) {
@@ -235,16 +240,18 @@ private final class PhotographicStylePipelineCache: @unchecked Sendable {
 
         if (tone < -0.001f) {
             float neg = -tone;
-            float effNeg = neg * (1.0f - skinMask * skinProtect * 0.54f);
-            float gamma = 1.0f + 0.60f * effNeg;
-            float yDeep = pow(max(yOut, 1e-6f), gamma) * exp(-0.15f * effNeg);
-            float toeKeep = exp(-yOut * 11.5f) * 0.36f;
-            yOut = mix(yDeep, yOut * 0.66f, toeKeep);
+            float effNeg = neg * (1.0f - skinMask * skinProtect * 0.52f);
+            float gamma = 1.0f + 0.56f * effNeg;
+            float yDeep = pow(max(yOut, 1e-6f), gamma) * exp(-0.10f * effNeg);
+            float toeKeep = exp(-yOut * 12.0f) * 0.34f;
+            float yShaped = mix(yDeep, yOut * 0.68f, toeKeep);
+            float hiKeep = smoothstep(0.38f, 0.92f, yOut) * 0.52f;
+            yOut = mix(yShaped, yOut * (1.0f - 0.08f * effNeg), hiKeep);
         } else if (tone > 0.001f) {
-            float gamma = 1.0f - 0.44f * tone;
-            float yLifted = pow(max(yOut, 1e-6f), gamma) * (1.0f + 0.26f * tone);
-            float shLift = (1.0f - smoothstep(0.01f, 0.38f, yOut)) * 0.052f * tone;
-            yOut = yLifted + shLift;
+            float gamma = 1.0f - 0.38f * tone;
+            float yLifted = pow(max(yOut, 1e-6f), gamma) * (1.0f + 0.16f * tone);
+            float shBell = smoothstep(0.0015f, 0.045f, yOut) * (1.0f - smoothstep(0.06f, 0.42f, yOut));
+            yOut = yLifted + shBell * 0.036f * tone;
         }
 
         float skyProtect = clamp(u.highlightTint.w, 0.0f, 0.85f);
@@ -329,17 +336,24 @@ private final class PhotographicStylePipelineCache: @unchecked Sendable {
             }
 
             float satRoll = 1.0f - smoothstep(0.068f, 0.245f, cMag);
-            float skinProtection = 1.0f - 0.46f * skinMask;
+            float skinProtection = 1.0f - 0.48f * skinMask;
             float chromaScale = baseSaturation + baseVibrance * satRoll * skinProtection;
 
             if (colorCtrl > 0.001f) {
-                chromaScale *= (1.0f + colorCtrl * (0.76f * satRoll + 0.22f) * skinProtection);
+                chromaScale *= (1.0f + colorCtrl * (0.72f * satRoll + 0.24f) * skinProtection);
             } else if (colorCtrl < -0.001f) {
                 chromaScale *= mix(1.0f, 0.08f, -colorCtrl);
             }
 
-            lab.yz *= clamp(chromaScale, 0.0f, 2.15f);
-            graded = okLabToLinearSRGB(lab);
+            float2 scaledAB = lab.yz * clamp(chromaScale, 0.0f, 2.05f);
+            float newChroma = length(scaledAB);
+            if (newChroma > 0.21f) {
+                float overC = newChroma - 0.21f;
+                float softC = 0.21f + (overC * 0.11f) / (overC + 0.11f);
+                scaledAB *= (softC / max(newChroma, 1e-5f));
+            }
+            lab.yz = scaledAB;
+            graded = softGamutClampLinear(okLabToLinearSRGB(lab), yOut);
         }
 
         // 6. True Optical Linear Palette Blend (giữ 100% đơn sắc trên B&W) + Soft Gamut Safety + Re-Premultiply Alpha
