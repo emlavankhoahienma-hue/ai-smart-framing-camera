@@ -23,6 +23,31 @@
 - **Bám mục tiêu 6-DoF & Căn tâm tự chụp**: Chấm mục tiêu bám không gian thực theo con quay hồi chuyển 100Hz + luồng quang học 30Hz; khi đưa tâm trắng vào khớp tâm vàng, hệ thống rung phản hồi, tự thực thi mức zoom đề xuất, khóa nét và tự động chụp.
 - **AI Cloud tùy chọn + Local Fallback**: Hỗ trợ kết nối Gemini / OpenAI-compatible API và tự động lùi về 100% AI Local nếu offline hoặc lỗi mạng.
 
+### Bảng màu 2D kiểu iPhone 16 (Photographic Styles 2 & 3)
+- **Đầy đủ 16 kiểu màu chuẩn Apple (kèm mã EXIF `0x0054`)**:
+  - **Standard**: `Standard`
+  - **Undertones (6 kiểu)**: `Amber`, `Gold`, `Rose Gold`, `Bright`, `Neutral`, `Cool Rose`
+  - **Moods (9 kiểu)**: `Vibrant`, `Natural`, `Luminous`, `Dramatic`, `Quiet`, `Cozy`, `Ethereal`, `Muted B&W`, `Stark B&W`
+- **Bảng điều khiển 2D (`Tone / Color / Palette`) mượt 120Hz**:
+  - Tái hiện hiệu ứng lưới chấm nở thẳng hàng (*Rectilinear Dot-Swell*) kèm đuôi chuyển động đàn hồi (*Velocity Wake*) và cử chỉ vuốt chuyển kiểu màu **Split-Screen Wipe 60 FPS** ngay trên kính ngắm.
+  - Trang bị **bộ lọc khử rung 1€** thích ứng vận tốc + khóa vùng chết tĩnh + hysteresis 2 ngưỡng, giúp giữ tay đứng yên không bị nháy màu hay nhảy số HUD.
+  - Hỗ trợ **tự động xoay ngang trái/phải** (`Landscape Left / Right`), chạm vào số HUD để tinh chỉnh chính xác `±1 / ±10`, và nhấn giữ khung ngắm để so sánh ảnh gốc (`ORIGINAL`).
+- **Khoa học màu Metal OkLab 1 Pass & Kết cấu Styles 3**:
+  - Tự tách **4 vùng ngữ nghĩa thời gian thực** (`Skin`, `Sky`, `Foliage`, `Warm Red`) trong không gian tri giác **OkLab** trên GPU Metal — bảo vệ tông da, neo chặt điểm đen, giữ chi tiết vùng sáng và nén biên màu mềm (`softGamutClampLinear`).
+  - Hỗ trợ xem trước trực tiếp 60 FPS các kết cấu **Styles 3** (`Soft Skin`, `Glow`, `Film`, `Grain`) trên mọi đời iPhone chạy iOS 17+.
+
+### Photobooth Studio & Video Hậu Trường 30 FPS
+- **Kích hoạt gọn gàng**: Chạm **5 lần** vào nút **ẢNH** trên thanh chế độ để mở Photobooth (giữ giao diện camera chính tối giản).
+- **8 bố cục chuẩn in 300 DPI & 50 khung in thật**:
+  - Hỗ trợ `4×1`, `2×4`, `2×4 Đôi` (cắt đôi), `2×2`, `3×1`, `2×1`, `3×2`, `1×1` với ô ảnh vuông sắc cạnh `90°`, đếm ngược mặc định `6s` (`Tay / 3s / 6s / 8s / 10s`), và chọn khung trực tiếp trên kính ngắm.
+  - Tích hợp **50 mẫu khung** (kèm 8 chất liệu giấy/vải studio thật đóng gói sẵn), **36 sticker PNG trong suốt**, gói sticker online và tự tách chủ thể làm sticker bằng Apple Vision.
+- **AI Neo mặt thông minh & Studio AI**:
+  - Nhận diện mốc khuôn mặt (`VNDetectFaceLandmarksRequest`) để tự dán sticker hợp lý quanh đầu, mắt, má, vai hoặc góc trống mà không che mặt.
+  - Tích hợp công cụ tạo Sticker AI, nền khung AI và chuyển chân dung Booth bằng Gemini Photo với bộ System Prompt tự chuẩn hóa.
+- **Trình xem phóng to & Video hậu trường 9:16 HD 30 FPS**:
+  - Xem bản in phóng to mượt `1.0x – 4.5x`, kéo 4 hướng, chạm đúp phóng to từng ô.
+  - Tự ghi hình hậu trường ~18 FPS trong lúc tạo dáng (tạm dừng Vision/Histogram nền để tránh giật) và dựng **Video 9:16 HD 30 FPS** với 2 phong cách (*Khung động Life4Cuts*, *Hậu trường + Lật ảnh*) cùng 3 tốc độ **`1.25x` · `1.5x` · `2x`** có bộ đệm cache tức thì.
+
 ### Công cụ Camera & Quay phim Pro
 - **Chụp ảnh chất lượng gốc**: Hỗ trợ cảm biến **48MP / 12MP ISP gốc**, **RAW DNG** nguyên bản, **Ultra Sharp** ghép đa khung Metal, và **Dual Camera (MultiCam PIP)** chụp/quay 2 mặt đồng thời.
 - **Windowed Zoom & Lưới đa chế độ**: Khung ngắm rangefinder cố định ống kính chính; nút lưới chuyển đổi xoay vòng (`Tắt → 1/3 → Tỷ lệ vàng → Đường chéo → 4×4 → Tâm ngắm`).
@@ -82,13 +107,13 @@ flowchart TD
 
 ### Bản đồ mã nguồn & Quy ước cho AI / Developer
 - **Mã nguồn chính** (trong thư mục dự án iOS):
-  - `Models/`: `FramingModels.swift` (kiểu dữ liệu, `HistogramTelemetry`, `AppPhotoStorageService` hỗ trợ EXIF orientation), `CameraFeatureGate.swift` (khóa điều kiện tính năng theo chế độ).
+  - `Models/`: `FramingModels.swift` (kiểu dữ liệu, `HistogramTelemetry`, `AppPhotoStorageService` hỗ trợ EXIF orientation), `CameraFeatureGate.swift` (khóa điều kiện tính năng theo chế độ), `PhotographicStyleModels.swift` (16 kiểu màu Apple & mã `0x0054`, Orientation Monitor), `PhotoboothModels.swift` (8 bố cục, 50 khung, tốc độ `1.25x / 1.5x / 2x`, AI Prompt Engine), `VintageCameraModels.swift`.
   - `Services/`:
     - AI Compose & CoreML: `CameraFramingDirector.swift`, `OpenWorldSubjectDetector.swift`, `NeuralSubjectIntelligenceEngine.swift`, `YOLODetectionEngine.swift`, `CompositionPlanning.swift`, `CompositionAestheticSearch.swift`, `CompositionImageEvidence.swift`, `GAICCompositionModel.swift`, `PhotographicCompositionModel.swift`, `CharmPhotographicModel.swift`, `CompositionCalculator.swift`, `GeminiService.swift`.
     - Tracking & Optics: `SpatialTrackingEngine.swift`, `StreetSpatialTrackingEngine.swift`, `TargetPatchFlow.swift`, `TrackingGeometry.swift`, `VisionFramingEngine.swift`, `NativeTrackingCore.cpp`, `NativeOpticsCore.cpp`.
-    - Camera, HUD & Media: `CameraService.swift`, `RealtimeHistogramEngine.swift`, `FocusPeakingMetalProcessor.swift`, `UltraSharpMetalEngine.swift`, `FilmFilterEngine.swift`, `DualCameraAssetRecorder.swift`, `HighFidelityVideoExporter.swift`, `MasterWatermarkRenderer.swift`.
+    - Color Science, Photobooth & Media: `CameraService.swift`, `UnifiedMetalColorEngine.swift`, `PhotographicStyleMetalKernel.swift`, `FilmFilterEngine.swift`, `PhotoboothStripRenderer.swift`, `PhotoboothTimelapseEngine.swift`, `PhotoboothAssetManager.swift`, `PhotoboothSmartPlacementEngine.swift`, `MechanicalShutterEngine.swift`, `RealtimeHistogramEngine.swift`, `FocusPeakingMetalProcessor.swift`, `UltraSharpMetalEngine.swift`, `DualCameraAssetRecorder.swift`, `HighFidelityVideoExporter.swift`, `MasterWatermarkRenderer.swift`.
   - `ViewModels/`: `CameraViewModel.swift`.
-  - `Views/`: `CameraMainView.swift`, `ARFramingOverlayView.swift`, `LiveColorHistogramHUDView.swift`, `CameraControlsView.swift`, `CapturedPhotoPreviewView.swift`, `PhotoGallerySheetView.swift`, `VideoPreviewSheetView.swift`, `SettingsSheetView.swift`.
+  - `Views/`: `CameraMainView.swift`, `ARFramingOverlayView.swift`, `PhotographicStylesPadView.swift`, `PhotoboothCameraOverlayView.swift`, `PhotoboothEditorSheetView.swift`, `VintageCameraDrawerView.swift`, `LiveColorHistogramHUDView.swift`, `CameraControlsView.swift`, `CapturedPhotoPreviewView.swift`, `PhotoGallerySheetView.swift`, `VideoPreviewSheetView.swift`, `SettingsSheetView.swift`.
 - **Ranh giới bảo vệ bắt buộc (KHÔNG sửa trực tiếp vùng khóa)**:
   - `tests/TrackingBoundary.json` (19 vùng khóa lõi tracking & camera) và `tests/PhotographicDetectionBoundary.json` (3 vùng khóa lõi nhận diện).
 - **Lệnh kiểm thử chuẩn trước khi commit**:
