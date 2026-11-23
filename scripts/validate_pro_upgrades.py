@@ -1329,6 +1329,45 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         ]:
             self.assertIn(tok, editor)
 
+    def test_25_apple_photographic_styles_english_names_0x0054_casts_and_liquid_pad_wave(self):
+        models = source("Models/PhotographicStyleModels.swift")
+        # 1. Verify official English UI names for all 16 Apple Photographic Styles + 0x0054 MakerNote casts
+        for english_name in [
+            '"Standard"', '"Amber"', '"Gold"', '"Rose Gold"', '"Bright"', '"Neutral"', '"Cool Rose"',
+            '"Vibrant"', '"Natural"', '"Luminous"', '"Dramatic"', '"Quiet"', '"Cozy"', '"Ethereal"',
+            '"Muted B&W"', '"Stark B&W"',
+            '"UNDERTONES"', '"MOODS"',
+            '"Soft Skin"', '"Glow"', '"Film"', '"SOFT SCENE INTENSITY"', '"FILMIC INTENSITY"',
+        ]:
+            self.assertIn(english_name, models)
+
+        for cast_id in [
+            '"TanWarm"', '"GoldWarm"', '"BlushWarm"', '"BrightPop"', '"Neutral"', '"Cool"',
+            '"Colorful"', '"NoFilter"', '"DreamyHues"', '"UrbanCool"', '"WarmAuthentic"',
+            '"Earthy"', '"CloudCover"', '"LongGray"', '"StarkBW"',
+            "public var appleMakerNoteCast: String",
+            "public var appleMakerNoteIndex: Int",
+            "public var appleSemanticStyleMetadata: [String: Any]",
+        ]:
+            self.assertIn(cast_id, models)
+
+        # Ensure invented non-Apple third-party recipes are removed from PhotographicStyleModels
+        for removed_invented in ['"builtin_portra400"', '"builtin_classic_chrome"', '"builtin_velvia"', '"builtin_trix400"', '"builtin_antihdr"']:
+            self.assertNotIn(removed_invented, models)
+
+        # 2. Verify Apple liquid-matrix dot-swell wave, trailing wake, 5-dot carousel & partially-filled Palette slider
+        pad = source("Views/PhotographicStylesPadView.swift")
+        for tok in [
+            "var wakeTone: Float",
+            "var wakeColor: Float",
+            "segmentDistanceSquared(",
+            "visibleCarouselPresets(for:",
+            "let activeFillWidth =",
+            'Text("Grain")',
+        ]:
+            self.assertIn(tok, pad)
+        self.assertNotIn('"bookmark.fill"', pad)
+
 
 if __name__ == "__main__":
     unittest.main()

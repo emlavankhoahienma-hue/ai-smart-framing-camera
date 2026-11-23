@@ -154,7 +154,7 @@ private enum PhotographicStyleNudgeMetric: Equatable {
     }
 }
 
-/// Viên thuốc hiển thị thông số TONE · COLOR · PALETTE · Reset dùng chung cho cả Portrait Top Bar và Landscape Viewfinder HUD.
+/// Viên thuốc hiển thị thông số TONE · COLOR · PALETTE chuẩn Camera gốc iOS (khớp video mẫu: không nhồi nút Reset thừa vào thanh đỉnh).
 private struct PhotographicStyleMetricsCapsuleView: View {
     @ObservedObject var viewModel: CameraViewModel
     @ObservedObject var liveHUD: PhotographicStyleLiveHUDState
@@ -166,7 +166,7 @@ private struct PhotographicStyleMetricsCapsuleView: View {
         let isPadDragging = axis == .pad2D
         let isPaletteDragging = axis == .palette
 
-        HStack(spacing: compact ? 8 : 12) {
+        HStack(spacing: compact ? 10 : 14) {
             hudMetricButton(
                 metric: .tone,
                 label: "TONE",
@@ -190,34 +190,15 @@ private struct PhotographicStyleMetricsCapsuleView: View {
                 highlighted: isPaletteDragging || activeNudgeMetric == .palette,
                 dimmed: isPadDragging
             )
-
-            Button(action: {
-                activeNudgeMetric = nil
-                viewModel.resetActivePhotographicStylePreset()
-            }) {
-                Image(systemName: "arrow.counterclockwise")
-                    .font(.system(size: compact ? 10 : 11, weight: .semibold))
-                    .foregroundColor(
-                        liveHUD.isModifiedFromDefault
-                            ? AlignTheme.studioInkPrimary
-                            : AlignTheme.studioInkPrimary.opacity(0.28)
-                    )
-                    .frame(width: 20, height: 20)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(PlainButtonStyle())
-            .disabled(!liveHUD.isModifiedFromDefault)
-            .accessibilityLabel("Reset active photographic style")
         }
-        .padding(.leading, compact ? 11 : 14)
-        .padding(.trailing, compact ? 7 : 9)
+        .padding(.horizontal, compact ? 12 : 15)
         .frame(height: 30)
         .background(
             Capsule()
-                .fill(Color.black.opacity(0.70))
+                .fill(Color(white: 0.10).opacity(0.84))
                 .overlay(
                     Capsule()
-                        .stroke(Color.white.opacity(0.24), lineWidth: 0.75)
+                        .stroke(Color.white.opacity(0.16), lineWidth: 0.65)
                 )
         )
     }
@@ -515,11 +496,11 @@ public struct PhotographicStylesViewfinderOverlay: View {
     private var activeStyleSubtitleTag: String? {
         let s = displayedStyle
         if s.textureMode != .standard && s.grainEnabled {
-            return "\(s.textureMode.displayName) + Hạt"
+            return "\(s.textureMode.displayName) + Grain"
         } else if s.textureMode != .standard {
             return s.textureMode.displayName
         } else if s.grainEnabled {
-            return "Hạt phim"
+            return "Grain"
         }
         return nil
     }
@@ -870,41 +851,83 @@ public struct PhotographicStylesViewfinderOverlay: View {
             .animation(.easeOut(duration: 0.14), value: isComparingOriginal)
     }
 
+    /// Tính cửa sổ 5 chỉ báo trang chuẩn Camera gốc iOS (khớp video mẫu: `[• ● • • ▢]` khi ở Undertones, `[• • ▢ • •]` ở Standard, `[▢ • ● • •]` ở Moods).
+    private func visibleCarouselPresets(for activePreset: PhotographicStylePreset) -> [(preset: PhotographicStylePreset, isEdgeContinuation: Bool)] {
+        let all = allPresets
+        guard let activeIdx = all.firstIndex(of: activePreset),
+              let stdIdx = all.firstIndex(of: .standard) else {
+            return all.prefix(5).map { ($0, false) }
+        }
+
+        if activeIdx == stdIdx {
+            let start = max(0, stdIdx - 2)
+            let end = min(all.count - 1, stdIdx + 2)
+            return (start...end).map { idx in
+                let isEdge = (idx == start && start > 0) || (idx == end && end < all.count - 1)
+                return (all[idx], isEdge)
+            }
+        } else if activeIdx < stdIdx {
+            // Đang ở nhóm Undertones (bên trái Standard): luôn giữ ô vuông ▢ Standard ở rìa phải + 4 chấm Undertone quanh vị trí hiện tại
+            let maxUndertoneIdx = stdIdx - 1
+            let start = max(0, min(activeIdx - 1, maxUndertoneIdx - 3))
+            let end = min(maxUndertoneIdx, start + 3)
+            var result: [(PhotographicStylePreset, Bool)] = []
+            for idx in start...end {
+                let isLeftEdge = (idx == start && start > 0)
+                result.append((all[idx], isLeftEdge))
+            }
+            result.append((.standard, false))
+            return result
+        } else {
+            // Đang ở nhóm Moods (bên phải Standard): luôn giữ ô vuông ▢ Standard ở rìa trái + 4 chấm Mood quanh vị trí hiện tại
+            let minMoodIdx = stdIdx + 1
+            let maxMoodIdx = all.count - 1
+            let start = max(minMoodIdx, min(activeIdx - 1, maxMoodIdx - 3))
+            let end = min(maxMoodIdx, start + 3)
+            var result: [(PhotographicStylePreset, Bool)] = [(.standard, false)]
+            for idx in start...end {
+                let isRightEdge = (idx == end && end < maxMoodIdx)
+                result.append((all[idx], isRightEdge))
+            }
+            return result
+        }
+    }
+
     private func styleNameAndDotsStack(shownPreset: PhotographicStylePreset) -> some View {
-        VStack(spacing: 6) {
+        let carouselItems = visibleCarouselPresets(for: shownPreset)
+
+        return VStack(spacing: 8) {
             HStack(spacing: 5) {
-                Text(shownPreset.displayName)
-                    .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-                    .foregroundColor(AlignTheme.studioInkPrimary)
+                Text(shownPreset.englishCode)
+                    .font(.system(size: 12.0, weight: .bold, design: .rounded))
+                    .tracking(0.4)
+                    .foregroundColor(.white)
 
                 if let tag = activeStyleSubtitleTag {
                     Text("·")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(Color.white.opacity(0.45))
+                        .font(.system(size: 10.5, weight: .bold))
+                        .foregroundColor(Color.white.opacity(0.48))
                     Text(tag.uppercased())
-                        .font(.system(size: 9.0, weight: .bold, design: .rounded))
+                        .font(.system(size: 9.5, weight: .bold, design: .rounded))
                         .foregroundColor(AlignTheme.studioAccent)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4.5)
             .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color.black.opacity(0.54))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
-                    )
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.black.opacity(0.56))
             )
             .id("\(shownPreset.id)_\(activeStyleSubtitleTag ?? "")")
             .transition(.opacity)
             .animation(.easeOut(duration: 0.14), value: shownPreset.id)
 
-            // Dãy 16 chấm trang chuẩn Camera iOS (6 Undertones trái · Standard ô vuông giữa · 9 Moods phải)
-            HStack(spacing: 4.5) {
-                ForEach(allPresets) { preset in
+            // Dãy 5 chỉ báo trang dạng cửa sổ trượt chuẩn Camera iOS (khớp video mẫu ROSE GOLD: `• ● • • ▢`)
+            HStack(spacing: 8) {
+                ForEach(carouselItems, id: \.preset.id) { item in
+                    let preset = item.preset
                     let isSelected = preset == shownPreset
-                    let hasEdits = viewModel.hasSessionEditsForPhotographicStyle(preset)
+                    let isEdge = item.isEdgeContinuation
 
                     Button(action: {
                         HapticFeedbackService.shared.triggerSelectionChange()
@@ -914,31 +937,30 @@ public struct PhotographicStylesViewfinderOverlay: View {
                     }) {
                         Group {
                             if preset == .standard {
-                                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                                RoundedRectangle(cornerRadius: 1.4, style: .continuous)
                                     .stroke(
-                                        isSelected ? Color.white : Color.white.opacity(0.50),
-                                        lineWidth: isSelected ? 1.5 : 1.0
+                                        isSelected ? Color.white : Color.white.opacity(0.58),
+                                        lineWidth: isSelected ? 1.7 : 1.35
                                     )
-                                    .frame(width: isSelected ? 6.5 : 5.2, height: isSelected ? 6.5 : 5.2)
+                                    .frame(width: isSelected ? 6.8 : 5.8, height: isSelected ? 6.8 : 5.8)
                             } else {
+                                let dotSize: CGFloat = isSelected ? 7.2 : (isEdge ? 4.0 : 5.6)
                                 Circle()
                                     .fill(
                                         isSelected
                                             ? Color.white
-                                            : (hasEdits ? AlignTheme.studioAccent.opacity(0.88) : Color.white.opacity(0.38))
+                                            : Color.white.opacity(isEdge ? 0.42 : 0.56)
                                     )
-                                    .frame(width: isSelected ? 5.8 : 4.0, height: isSelected ? 5.8 : 4.0)
+                                    .frame(width: dotSize, height: dotSize)
                             }
                         }
-                        .frame(width: 9.5, height: 11)
+                        .frame(width: 11, height: 11)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(Color.black.opacity(0.32)))
+            .animation(.spring(response: 0.28, dampingFraction: 0.84), value: shownPreset)
         }
     }
 }
@@ -1009,60 +1031,39 @@ public struct PhotographicStylesBottomControlDeck: View {
             // 1. Các nút góc cố định đặt ở lớp nền (không bao giờ chắn cảm ứng của Pad/Slider) và xoay biểu tượng thuận mắt
             HStack(alignment: .center, spacing: 0) {
                 VStack(alignment: .leading, spacing: compact ? 8 : 10) {
-                    HStack(spacing: 6) {
-                        Button(action: {
-                            HapticFeedbackService.shared.triggerLight()
-                            withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
-                                isShowingTextureTab.toggle()
-                            }
-                        }) {
-                            Image(systemName: isShowingTextureTab ? "square.grid.3x3.fill" : "sparkles")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(
-                                    (isShowingTextureTab || hasTextureOrGrain)
-                                        ? Color.black
-                                        : AlignTheme.studioInkPrimary.opacity(0.86)
-                                )
-                                .rotationEffect(.degrees(angle))
-                                .frame(width: 28, height: 28)
-                                .background(
-                                    Circle()
-                                        .fill(
-                                            (isShowingTextureTab || hasTextureOrGrain)
-                                                ? AlignTheme.studioAccent
-                                                : Color.white.opacity(0.13)
-                                        )
-                                        .overlay(
-                                            Circle().stroke(
-                                                Color.white.opacity((isShowingTextureTab || hasTextureOrGrain) ? 0.0 : 0.14),
-                                                lineWidth: 0.6
-                                            )
-                                        )
-                                )
-                                .contentShape(Circle())
+                    Button(action: {
+                        HapticFeedbackService.shared.triggerLight()
+                        withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
+                            isShowingTextureTab.toggle()
                         }
-                        .buttonStyle(PlainButtonStyle())
-                        .accessibilityLabel(isShowingTextureTab ? "Quay về bảng màu 2D" : "Mở Kết cấu & Hạt phim")
-
-                        Button(action: {
-                            HapticFeedbackService.shared.triggerLight()
-                            isShowingRecipesSheet = true
-                        }) {
-                            Image(systemName: "bookmark.fill")
-                                .font(.system(size: 11.5, weight: .semibold))
-                                .foregroundColor(AlignTheme.studioInkPrimary.opacity(0.86))
-                                .rotationEffect(.degrees(angle))
-                                .frame(width: 28, height: 28)
-                                .background(
-                                    Circle()
-                                        .fill(Color.white.opacity(0.13))
-                                        .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 0.6))
-                                )
-                                .contentShape(Circle())
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .accessibilityLabel("Thư viện công thức bảng màu")
+                    }) {
+                        Image(systemName: isShowingTextureTab ? "square.grid.3x3.fill" : "sparkles")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(
+                                (isShowingTextureTab || hasTextureOrGrain)
+                                    ? Color.black
+                                    : AlignTheme.studioInkPrimary.opacity(0.86)
+                            )
+                            .rotationEffect(.degrees(angle))
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle()
+                                    .fill(
+                                        (isShowingTextureTab || hasTextureOrGrain)
+                                            ? AlignTheme.studioAccent
+                                            : Color.white.opacity(0.11)
+                                    )
+                                    .overlay(
+                                        Circle().stroke(
+                                            Color.white.opacity((isShowingTextureTab || hasTextureOrGrain) ? 0.0 : 0.14),
+                                            lineWidth: 0.6
+                                        )
+                                    )
+                            )
+                            .contentShape(Circle())
                     }
+                    .buttonStyle(PlainButtonStyle())
+                    .accessibilityLabel(isShowingTextureTab ? "Back to 2D Palette Pad" : "Open Texture & Grain")
 
                     Spacer(minLength: 0)
 
@@ -1072,20 +1073,20 @@ public struct PhotographicStylesBottomControlDeck: View {
                             viewModel.isShowingPhotographicStylePad = false
                         }
                     }) {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 13.5, weight: .semibold))
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13.0, weight: .semibold))
                             .foregroundColor(AlignTheme.studioInkPrimary)
                             .rotationEffect(.degrees(angle))
                             .frame(width: 34, height: 34)
                             .background(
                                 Circle()
-                                    .fill(Color.white.opacity(0.13))
+                                    .fill(Color.white.opacity(0.12))
                                     .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 0.6))
                             )
                             .contentShape(Circle())
                     }
                     .buttonStyle(PlainButtonStyle())
-                    .accessibilityLabel("Ẩn bảng chỉnh màu và quay về chụp bình thường")
+                    .accessibilityLabel("Close Photographic Styles Pad")
                 }
                 .padding(.vertical, compact ? 10 : 12)
 
@@ -1264,7 +1265,7 @@ private struct PhotographicStyleTextureDeckView: View {
                     .fill(Color.white.opacity(0.22))
                     .frame(width: 1, height: 18)
 
-                // Independent Grain toggle (như nút tròn Hạt của Styles 3)
+                // Independent Grain toggle (nút tròn Grain độc lập chuẩn Styles 3)
                 Button(action: {
                     withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
                         viewModel.togglePhotographicGrain()
@@ -1273,8 +1274,8 @@ private struct PhotographicStyleTextureDeckView: View {
                     VStack(spacing: 0) {
                         Image(systemName: "circle.dotted")
                             .font(.system(size: 12, weight: .bold))
-                        Text("Hạt")
-                            .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                        Text("Grain")
+                            .font(.system(size: 7.0, weight: .bold, design: .rounded))
                     }
                     .foregroundColor(style.grainEnabled ? Color.black : Color.white.opacity(0.76))
                     .frame(width: 34, height: 34)
@@ -1285,7 +1286,7 @@ private struct PhotographicStyleTextureDeckView: View {
                     )
                 }
                 .buttonStyle(PlainButtonStyle())
-                .accessibilityLabel(style.grainEnabled ? "Tắt hạt phim" : "Bật hạt phim")
+                .accessibilityLabel(style.grainEnabled ? "Disable Film Grain" : "Enable Film Grain")
             }
 
             // Row 2: Precision 0-100 tick slider for active Texture OR Grain
@@ -1571,21 +1572,56 @@ private struct PhotographicStyleRecipesSheet: View {
     }
 }
 
-// MARK: - Animatable 11x11 Micro-Dot Grid Canvas (Optimized 120Hz Squared-Distance Cull + Crisp Dot-Cluster Swell)
+// MARK: - Animatable 11x11 Liquid-Matrix Dot Grid Canvas (Apple iOS 18/26/27 Rectilinear Swell Crown + Velocity Wake Trail)
 private struct PhotographicStyleDotGridCanvas: View, Animatable {
     var tone: Float
     var color: Float
+    var wakeTone: Float
+    var wakeColor: Float
     var dragGlow: Double
     let defaultTone: Float
     let defaultColor: Float
 
-    var animatableData: AnimatablePair<AnimatablePair<Double, Double>, Double> {
-        get { AnimatablePair(AnimatablePair(Double(tone), Double(color)), dragGlow) }
+    var animatableData: AnimatablePair<
+        AnimatablePair<Double, Double>,
+        AnimatablePair<AnimatablePair<Double, Double>, Double>
+    > {
+        get {
+            AnimatablePair(
+                AnimatablePair(Double(tone), Double(color)),
+                AnimatablePair(AnimatablePair(Double(wakeTone), Double(wakeColor)), dragGlow)
+            )
+        }
         set {
             tone = Float(newValue.first.first)
             color = Float(newValue.first.second)
-            dragGlow = newValue.second
+            wakeTone = Float(newValue.second.first.first)
+            wakeColor = Float(newValue.second.first.second)
+            dragGlow = newValue.second.second
         }
+    }
+
+    /// Khoảng cách bình phương từ điểm lưới `(px, py)` tới đoạn thẳng vệt chuyển động `[(ax, ay) -> (bx, by)]`.
+    @inline(__always)
+    private static func segmentDistanceSquared(
+        px: CGFloat, py: CGFloat,
+        ax: CGFloat, ay: CGFloat,
+        bx: CGFloat, by: CGFloat
+    ) -> CGFloat {
+        let abx = bx - ax
+        let aby = by - ay
+        let lenSq = abx * abx + aby * aby
+        if lenSq < 1e-5 {
+            let dx = px - bx
+            let dy = py - by
+            return dx * dx + dy * dy
+        }
+        let t = max(0.0, min(1.0, ((px - ax) * abx + (py - ay) * aby) / lenSq))
+        let cx = ax + t * abx
+        let cy = ay + t * aby
+        let dx = px - cx
+        let dy = py - cy
+        return dx * dx + dy * dy
     }
 
     var body: some View {
@@ -1596,71 +1632,82 @@ private struct PhotographicStyleDotGridCanvas: View, Animatable {
 
             let thumbCol = CGFloat((color + 1.0) * 5.0)
             let thumbRow = CGFloat((1.0 - tone) * 5.0)
+            let wakeCol = CGFloat((wakeColor + 1.0) * 5.0)
+            let wakeRow = CGFloat((1.0 - wakeTone) * 5.0)
             let thumbX = inset + thumbCol * step
             let thumbY = inset + thumbRow * step
             let glow = CGFloat(max(0.0, min(1.0, dragGlow)))
-            let invSigmaSq: CGFloat = 1.0 / (1.44 * 1.44 * 2.0)
-            let hideInner: CGFloat = 0.42 + 0.56 * glow
+
+            // Chuẩn quang học từ video mẫu iPhone 16/17 Pro:
+            // - Mỗi chấm lưới nằm cố định tuyệt đối trên giao điểm (col, row) (không đẩy lệch hàng/cột!)
+            // - Khi kéo con trỏ, cụm chấm trong bán kính ~2.4 ô xung quanh quả cầu trắng phồng to thành các đĩa tròn bán trong suốt
+            //   (đường kính lên tới ~0.92 * step ≈ 8.5pt) kết hợp vệt đuôi mượt dọc quỹ đạo lướt tay.
+            let invLeadSigmaSq: CGFloat = 1.0 / (1.38 * 1.38 * 2.0)
+            let invWakeSigmaSq: CGFloat = 1.0 / (1.15 * 1.15 * 2.0)
+            let ambientDotR: CGFloat = max(0.75, step * 0.102)
 
             for row in 0...10 {
-                let baseY = inset + CGFloat(row) * step
-                let dRow = CGFloat(row) - thumbRow
-                let onCrosshairRow = abs(dRow) <= 0.48
+                let rowF = CGFloat(row)
+                let baseY = inset + rowF * step
+                let dRow = rowF - thumbRow
+                let dRowAbs = abs(dRow)
                 let dRowSq = dRow * dRow
 
+                // Nội suy mượt (smoothstep) giữa 2 hàng kế cận để đường chữ thập lướt êm từ hàng này sang hàng khác không nhảy bậc
+                let rawRowW = max(0.0, 1.0 - dRowAbs / 0.72)
+                let rowCrossW = rawRowW * rawRowW * (3.0 - 2.0 * rawRowW)
+
                 for col in 0...10 {
-                    let baseX = inset + CGFloat(col) * step
-                    let dCol = CGFloat(col) - thumbCol
+                    let colF = CGFloat(col)
+                    let baseX = inset + colF * step
+                    let dCol = colF - thumbCol
+                    let dColAbs = abs(dCol)
                     let distSq = dCol * dCol + dRowSq
                     let isOrigin = (row == 5 && col == 5)
-                    let onCrosshairCol = abs(dCol) <= 0.48
 
-                    // Bỏ qua sqrt() & exp() cho các chấm ở xa con trỏ (giảm ~65% chi phí CPU vẽ 120Hz)
-                    if distSq > 14.0 && !isOrigin && !onCrosshairRow && !onCrosshairCol {
-                        let r: CGFloat = 0.76
+                    let rawColW = max(0.0, 1.0 - dColAbs / 0.72)
+                    let colCrossW = rawColW * rawColW * (3.0 - 2.0 * rawColW)
+                    let crossW = max(rowCrossW, colCrossW)
+
+                    let trailSq = glow > 0.01
+                        ? Self.segmentDistanceSquared(px: colF, py: rowF, ax: wakeCol, ay: wakeRow, bx: thumbCol, by: thumbRow)
+                        : distSq
+
+                    // Bỏ qua sqrt() & exp() cho các chấm ở xa cả con trỏ lẫn vệt đuôi và không nằm trên trục chữ thập
+                    if distSq > 14.0 && trailSq > 11.0 && !isOrigin && crossW <= 0.001 {
                         context.fill(
-                            Path(ellipseIn: CGRect(x: baseX - r, y: baseY - r, width: r * 2, height: r * 2)),
-                            with: .color(Color.white.opacity(0.28))
+                            Path(ellipseIn: CGRect(x: baseX - ambientDotR, y: baseY - ambientDotR, width: ambientDotR * 2, height: ambientDotR * 2)),
+                            with: .color(Color.white.opacity(0.25))
                         )
                         continue
                     }
 
                     let distGrid = sqrt(distSq)
-                    let underThumbFade = max(0.0, min(1.0, (distGrid - hideInner) / 0.36))
-                    if underThumbFade <= 0.02 { continue }
-
-                    let gaussian: CGFloat = distSq < 14.0 ? exp(-distSq * invSigmaSq) : 0.0
-                    var drawX = baseX
-                    var drawY = baseY
-                    if glow > 0.01 && gaussian > 0.01 && distGrid > 0.2 {
-                        let dxPx = baseX - thumbX
-                        let dyPx = baseY - thumbY
-                        let lenPx = max(1.0, hypot(dxPx, dyPx))
-                        let push: CGFloat = 0.85 * glow * gaussian * max(0.0, min(1.0, distGrid / 1.1))
-                        drawX += (dxPx / lenPx) * push
-                        drawY += (dyPx / lenPx) * push
-                    }
+                    let leadField: CGFloat = distSq < 14.0 ? exp(-distSq * invLeadSigmaSq) : 0.0
+                    let wakeField: CGFloat = (glow > 0.01 && trailSq < 11.0) ? (exp(-trailSq * invWakeSigmaSq) * 0.78) : 0.0
+                    let swell = max(leadField, wakeField) * glow
 
                     if isOrigin {
-                        let ringR: CGFloat = 2.05 + 0.40 * gaussian * glow
-                        let ringRect = CGRect(x: drawX - ringR, y: drawY - ringR, width: ringR * 2, height: ringR * 2)
-                        let ringAlpha = (0.48 + 0.36 * gaussian) * underThumbFade
+                        let ringR: CGFloat = step * (0.22 + 0.07 * swell)
+                        let ringRect = CGRect(x: baseX - ringR, y: baseY - ringR, width: ringR * 2, height: ringR * 2)
+                        let ringAlpha = min(0.82, 0.38 + 0.30 * swell + 0.18 * crossW)
                         context.stroke(
                             Path(ellipseIn: ringRect),
                             with: .color(Color.white.opacity(ringAlpha)),
                             lineWidth: 0.90
                         )
                     } else {
-                        let isAxisDot = onCrosshairRow || onCrosshairCol
-                        let axisFade = isAxisDot ? max(0.30, 1.0 - distGrid * 0.075) : 1.0
-                        let baseRadius: CGFloat = isAxisDot ? 1.08 : 0.76
-                        let swellRadius: CGFloat = (0.42 + 1.92 * glow) * gaussian
-                        let radius = min(2.95, baseRadius + swellRadius)
+                        let baseRadius: CGFloat = ambientDotR + (step * 0.045) * crossW
+                        let swellCurve: CGFloat = swell > 0.0001 ? pow(swell, 0.88) : 0.0
+                        let swellRadius: CGFloat = (step * 0.45) * swellCurve
+                        let radius = baseRadius + swellRadius
 
-                        let baseAlpha: CGFloat = isAxisDot ? (0.72 * axisFade) : 0.28
-                        let alpha = min(0.98, baseAlpha + (0.34 + 0.56 * glow) * gaussian) * underThumbFade
+                        let axisFade = max(0.36, 1.0 - distGrid * 0.052)
+                        let baseAlpha: CGFloat = 0.25 + (0.63 * axisFade * (1.0 - 0.20 * glow)) * crossW
+                        let swellAlpha: CGFloat = (0.52 + 0.22 * crossW) * swellCurve
+                        let alpha = min(0.84, max(baseAlpha, swellAlpha))
 
-                        let dotRect = CGRect(x: drawX - radius, y: drawY - radius, width: radius * 2, height: radius * 2)
+                        let dotRect = CGRect(x: baseX - radius, y: baseY - radius, width: radius * 2, height: radius * 2)
                         context.fill(
                             Path(ellipseIn: dotRect),
                             with: .color(Color.white.opacity(alpha))
@@ -1669,17 +1716,18 @@ private struct PhotographicStyleDotGridCanvas: View, Animatable {
                 }
             }
 
-            // Chấm neo mốc mặc định của từng phong cách
+            // Chấm đặc đánh dấu tọa độ mặc định của từng phong cách (vd: Rose Gold tại (-20, -20), luôn hiện rõ như video mẫu)
             if abs(defaultTone) > 0.015 || abs(defaultColor) > 0.015 {
                 let defX = inset + CGFloat((defaultColor + 1.0) * 0.5) * span
                 let defY = inset + CGFloat((1.0 - defaultTone) * 0.5) * span
                 let distToCursorPx = hypot(defX - thumbX, defY - thumbY)
-                if distToCursorPx > 8.5 {
-                    let defR: CGFloat = 2.15
+                let hideRadiusPx = step * (0.45 + 0.70 * glow)
+                if distToCursorPx > hideRadiusPx {
+                    let defR: CGFloat = max(2.15, step * 0.28)
                     let defRect = CGRect(x: defX - defR, y: defY - defR, width: defR * 2, height: defR * 2)
                     context.fill(
                         Path(ellipseIn: defRect),
-                        with: .color(Color(red: 1.0, green: 0.95, blue: 0.84).opacity(0.88))
+                        with: .color(Color.white.opacity(0.78))
                     )
                 }
             }
@@ -1687,7 +1735,7 @@ private struct PhotographicStyleDotGridCanvas: View, Animatable {
     }
 }
 
-// MARK: - Tight Crisp White Cursor Orb (Zero Overflow Fog — Strictly Clipped Inside Squircle Pad)
+// MARK: - Apple-Calibrated White Cursor Orb (Idle ~1.12x Step Dot -> Dragging ~2.68x Step Thumb Orb + Crisp Rim Halo)
 private struct PhotographicStyleLuminousCursor: View, Animatable {
     var tone: Float
     var color: Float
@@ -1705,6 +1753,7 @@ private struct PhotographicStyleLuminousCursor: View, Animatable {
 
     private var gridInset: CGFloat { padSize * 0.115 }
     private var usableSpan: CGFloat { max(1, padSize - gridInset * 2.0) }
+    private var gridStep: CGFloat { usableSpan / 10.0 }
 
     private var cursorPoint: CGPoint {
         let nx = CGFloat((color + 1.0) * 0.5)
@@ -1717,35 +1766,39 @@ private struct PhotographicStyleLuminousCursor: View, Animatable {
 
     var body: some View {
         let g = CGFloat(max(0.0, min(1.0, dragGlow)))
-        let coreDiameter: CGFloat = 8.6 + 9.6 * g
+        let idleDiameter = max(8.6, gridStep * 1.12)
+        let expandedAdd = max(12.2, gridStep * 1.58)
+        let coreDiameter: CGFloat = idleDiameter + expandedAdd * g
         let outerAuraDiameter: CGFloat = coreDiameter + 5.0 + 4.5 * g
 
         ZStack {
-            Circle()
-                .fill(
-                    RadialGradient(
-                        gradient: Gradient(stops: [
-                            .init(color: Color.white.opacity(0.42 + 0.16 * g), location: 0.0),
-                            .init(color: Color.white.opacity(0.14 + 0.10 * g), location: 0.62),
-                            .init(color: Color.clear, location: 1.0)
-                        ]),
-                        center: .center,
-                        startRadius: coreDiameter * 0.42,
-                        endRadius: outerAuraDiameter * 0.5
+            if g > 0.01 {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            gradient: Gradient(stops: [
+                                .init(color: Color.white.opacity(0.46 * g), location: 0.0),
+                                .init(color: Color.white.opacity(0.18 * g), location: 0.65),
+                                .init(color: Color.clear, location: 1.0)
+                            ]),
+                            center: .center,
+                            startRadius: coreDiameter * 0.44,
+                            endRadius: outerAuraDiameter * 0.5
+                        )
                     )
-                )
-                .frame(width: outerAuraDiameter, height: outerAuraDiameter)
+                    .frame(width: outerAuraDiameter, height: outerAuraDiameter)
+            }
 
             Circle()
                 .fill(Color.white)
                 .frame(width: coreDiameter, height: coreDiameter)
-                .shadow(color: Color.black.opacity(0.18), radius: 1.4, y: 0.5)
+                .shadow(color: Color.black.opacity(0.22), radius: 1.6, y: 0.5)
         }
         .position(cursorPoint)
     }
 }
 
-// MARK: - Interactive Compact 2D Control Pad (Zero-Latency 120Hz Direct Drag + 1€ De-Jitter Filter + Tap-to-Glide + Double-Tap Reset)
+// MARK: - Interactive Compact 2D Control Pad (Zero-Latency 120Hz Direct Drag + 1€ De-Jitter Filter + Velocity Liquid Wake + Double-Tap Reset)
 private struct PhotographicStyleDotGridPad: View {
     let preset: PhotographicStylePreset
     let tone: Float
@@ -1761,6 +1814,8 @@ private struct PhotographicStyleDotGridPad: View {
     @State private var hasMovedPastTapThreshold: Bool = false
     @State private var dragTone: Float = 0.0
     @State private var dragColor: Float = 0.0
+    @State private var wakeTone: Float = 0.0
+    @State private var wakeColor: Float = 0.0
     @State private var dragStartTone: Float = 0.0
     @State private var dragStartColor: Float = 0.0
     @State private var snappedToZeroX: Bool = true
@@ -1792,6 +1847,8 @@ private struct PhotographicStyleDotGridPad: View {
         let dragGlow: Double = isDragging ? 1.0 : 0.0
         let shownTone: Float = isDragging ? dragTone : tone
         let shownColor: Float = isDragging ? dragColor : color
+        let shownWakeTone: Float = isDragging ? wakeTone : tone
+        let shownWakeColor: Float = isDragging ? wakeColor : color
         let glideAnimation: Animation? = isDragging ? nil : .spring(response: 0.26, dampingFraction: 0.80)
 
         ZStack {
@@ -1799,9 +1856,9 @@ private struct PhotographicStyleDotGridPad: View {
                 .fill(
                     LinearGradient(
                         colors: [
-                            Color(red: 0.78, green: 0.79, blue: 0.82),
-                            Color(red: 0.42, green: 0.43, blue: 0.46),
-                            Color(red: 0.10, green: 0.10, blue: 0.12)
+                            Color(red: 0.56, green: 0.55, blue: 0.57),
+                            Color(red: 0.30, green: 0.29, blue: 0.31),
+                            Color(red: 0.08, green: 0.08, blue: 0.09)
                         ],
                         startPoint: .top,
                         endPoint: .bottom
@@ -1813,7 +1870,7 @@ private struct PhotographicStyleDotGridPad: View {
                             LinearGradient(
                                 colors: [
                                     Color.clear,
-                                    preset.padTopRightColor.opacity(0.72)
+                                    preset.padTopRightColor.opacity(0.66)
                                 ],
                                 startPoint: .leading,
                                 endPoint: .topTrailing
@@ -1826,7 +1883,7 @@ private struct PhotographicStyleDotGridPad: View {
                             LinearGradient(
                                 colors: [
                                     Color.clear,
-                                    preset.padBottomRightColor.opacity(0.78)
+                                    preset.padBottomRightColor.opacity(0.76)
                                 ],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
@@ -1835,20 +1892,24 @@ private struct PhotographicStyleDotGridPad: View {
                 )
                 .animation(.easeInOut(duration: 0.24), value: preset)
 
-            // Lưới 11x11 chấm: bám tay trực tiếp 0ms khi đang kéo, chỉ spring mượt khi chạm nhảy điểm/đổi preset
+            // Lưới 11x11 chấm: tâm chính bám tay 0ms, vệt đuôi (wakeTone/wakeColor) lướt đàn hồi tạo hiệu ứng sóng chấm Apple
             PhotographicStyleDotGridCanvas(
                 tone: shownTone,
                 color: shownColor,
+                wakeTone: shownWakeTone,
+                wakeColor: shownWakeColor,
                 dragGlow: dragGlow,
                 defaultTone: preset.defaultTone,
                 defaultColor: preset.defaultColor
             )
             .animation(glideAnimation, value: shownTone)
             .animation(glideAnimation, value: shownColor)
-            .animation(.spring(response: 0.20, dampingFraction: 0.78), value: dragGlow)
+            .animation(.interactiveSpring(response: 0.17, dampingFraction: 0.82), value: shownWakeTone)
+            .animation(.interactiveSpring(response: 0.17, dampingFraction: 0.82), value: shownWakeColor)
+            .animation(.spring(response: 0.22, dampingFraction: 0.76), value: dragGlow)
             .allowsHitTesting(false)
 
-            // Con trỏ trắng sắc nét gọn gàng bám sát đầu ngón tay 120Hz không bị trễ đàn hồi
+            // Quả cầu con trỏ trắng mịn phóng to 2.68x ô lưới khi chạm giữ và thu gọn sắc nét khi nhả tay
             PhotographicStyleLuminousCursor(
                 tone: shownTone,
                 color: shownColor,
@@ -1857,14 +1918,14 @@ private struct PhotographicStyleDotGridPad: View {
             )
             .animation(glideAnimation, value: shownTone)
             .animation(glideAnimation, value: shownColor)
-            .animation(.spring(response: 0.20, dampingFraction: 0.78), value: dragGlow)
+            .animation(.spring(response: 0.22, dampingFraction: 0.76), value: dragGlow)
             .allowsHitTesting(false)
         }
         .frame(width: padSize, height: padSize)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .stroke(Color.white.opacity(0.22), lineWidth: 0.7)
+                .stroke(Color.white.opacity(0.18), lineWidth: 0.65)
                 .allowsHitTesting(false)
         )
         .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
@@ -1879,6 +1940,8 @@ private struct PhotographicStyleDotGridPad: View {
                         dragStartColor = color
                         dragTone = tone
                         dragColor = color
+                        wakeTone = tone
+                        wakeColor = color
                         lastEmittedTone = tone
                         lastEmittedColor = color
                         snappedToZeroX = abs(color) < 0.005
@@ -1892,7 +1955,7 @@ private struct PhotographicStyleDotGridPad: View {
                     }
 
                     let travel = hypot(value.translation.width, value.translation.height)
-                    if !hasMovedPastTapThreshold && travel >= 3.5 {
+                    if !hasMovedPastTapThreshold && travel >= 3.0 {
                         hasMovedPastTapThreshold = true
                     }
                     guard hasMovedPastTapThreshold else { return }
@@ -1932,6 +1995,8 @@ private struct PhotographicStyleDotGridPad: View {
                     lastEmittedColor = finalColor
                     dragTone = finalTone
                     dragColor = finalColor
+                    wakeTone = finalTone
+                    wakeColor = finalColor
                     fireDetentHaptics(newColor: finalColor, newTone: finalTone)
                     onInteractiveUpdate(finalTone, finalColor)
                 }
@@ -2006,7 +2071,7 @@ private struct PhotographicStyleDotGridPad: View {
     }
 }
 
-// MARK: - Compact Pill Palette Slider (Zero-Latency 120Hz Direct Drag + 1€ De-Jitter Filter + Auto-Rotates With Pad)
+// MARK: - Compact Pill Palette Slider (Khớp video mẫu Apple: Rãnh tối + Dải màu lấp đầy từ trái tới núm kéo trắng)
 private struct PhotographicPalettePillSlider: View {
     let value: Float
     let preset: PhotographicStylePreset
@@ -2036,8 +2101,14 @@ private struct PhotographicPalettePillSlider: View {
         let travelSpan = max(1, width - thumbDiameter - 3.0)
         let clamped = CGFloat(max(0.0, min(1.0, shownValue)))
         let thumbX = (thumbDiameter * 0.5) + 1.5 + clamped * travelSpan
+        let activeFillWidth = min(width, max(height, thumbX + thumbDiameter * 0.5 + 1.5))
 
         ZStack(alignment: .leading) {
+            // Rãnh nền tối bên phải núm kéo (giống hệt thanh Palette 75% trong video mẫu)
+            Capsule()
+                .fill(Color(red: 0.11, green: 0.11, blue: 0.12).opacity(0.94))
+
+            // Dải màu đặc trưng của Style lấp đầy từ mép trái tới đúng vị trí núm trắng
             Capsule()
                 .fill(
                     LinearGradient(
@@ -2046,30 +2117,30 @@ private struct PhotographicPalettePillSlider: View {
                         endPoint: .trailing
                     )
                 )
-                .overlay(
-                    Capsule()
-                        .stroke(Color.white.opacity(0.24), lineWidth: 0.65)
-                )
+                .frame(width: activeFillWidth, height: height)
                 .animation(.easeInOut(duration: 0.22), value: preset)
+
+            Capsule()
+                .stroke(Color.white.opacity(0.20), lineWidth: 0.65)
 
             ZStack {
                 if isDragging {
                     Circle()
                         .fill(
                             RadialGradient(
-                                colors: [Color.white.opacity(0.48), Color.white.opacity(0.14), Color.clear],
+                                colors: [Color.white.opacity(0.46), Color.white.opacity(0.14), Color.clear],
                                 center: .center,
                                 startRadius: thumbDiameter * 0.35,
-                                endRadius: (thumbDiameter + 14) * 0.5
+                                endRadius: (thumbDiameter + 12) * 0.5
                             )
                         )
-                        .frame(width: thumbDiameter + 14, height: thumbDiameter + 14)
+                        .frame(width: thumbDiameter + 12, height: thumbDiameter + 12)
                 }
 
                 Circle()
                     .fill(Color.white)
                     .frame(width: thumbDiameter, height: thumbDiameter)
-                    .shadow(color: Color.black.opacity(0.28), radius: 2.0, y: 0.6)
+                    .shadow(color: Color.black.opacity(0.32), radius: 2.0, y: 0.6)
             }
             .scaleEffect(isDragging ? 1.12 : 1.0)
             .position(x: thumbX, y: height * 0.5)
@@ -2077,6 +2148,7 @@ private struct PhotographicPalettePillSlider: View {
             .animation(.spring(response: 0.18, dampingFraction: 0.78), value: isDragging)
         }
         .frame(width: width, height: height)
+        .clipShape(Capsule())
         .padding(.vertical, 5)
         .contentShape(Rectangle())
         .highPriorityGesture(

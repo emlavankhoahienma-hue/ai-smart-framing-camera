@@ -23,9 +23,9 @@ public enum PhotographicTextureMode: String, CaseIterable, Identifiable, Sendabl
 
     public var displayName: String {
         switch self {
-        case .standard: return "Chuẩn"
-        case .softSkin: return "Mịn da"
-        case .glow: return "Rạng rỡ"
+        case .standard: return "Standard"
+        case .softSkin: return "Soft Skin"
+        case .glow: return "Glow"
         case .film: return "Film"
         }
     }
@@ -52,8 +52,8 @@ public enum PhotographicTextureMode: String, CaseIterable, Identifiable, Sendabl
         switch self {
         case .standard: return "TEXTURE"
         case .softSkin: return "SOFT SKIN"
-        case .glow: return "GLOW"
-        case .film: return "FILMIC"
+        case .glow: return "SOFT SCENE INTENSITY"
+        case .film: return "FILMIC INTENSITY"
         }
     }
 }
@@ -114,8 +114,8 @@ public enum PhotographicStyleGroup: String, Sendable {
     public var badgeTitle: String {
         switch self {
         case .standard: return "STANDARD"
-        case .undertone: return "UNDERTONE"
-        case .mood: return "MOOD"
+        case .undertone: return "UNDERTONES"
+        case .mood: return "MOODS"
         }
     }
 }
@@ -166,24 +166,25 @@ public enum PhotographicStylePreset: String, CaseIterable, Identifiable, Sendabl
 
     public var id: String { rawValue }
 
+    /// Tên tiếng Anh chính thức trên giao diện Camera của Apple (iOS 18 / 26 / 27).
     public var displayName: String {
         switch self {
-        case .coolMood:     return "Hồng lạnh"
-        case .neutral:      return "Trung tính"
-        case .bright:       return "Sáng"
-        case .softRose:     return "Vàng hồng"
-        case .gold:         return "Vàng kim"
-        case .warmAmber:    return "Hổ phách"
-        case .standard:     return "Tiêu chuẩn"
-        case .vibrant:      return "Rực rỡ"
-        case .naturalMood:  return "Tự nhiên"
-        case .luminous:     return "Phát sáng"
-        case .richContrast: return "Kịch tính"
-        case .quiet:        return "Yên tĩnh"
-        case .cozy:         return "Ấm cúng"
-        case .ethereal:     return "Thanh tao"
-        case .mutedBW:      return "Đen trắng dịu"
-        case .starkBW:      return "Đen trắng gắt"
+        case .coolMood:     return "Cool Rose"
+        case .neutral:      return "Neutral"
+        case .bright:       return "Bright"
+        case .softRose:     return "Rose Gold"
+        case .gold:         return "Gold"
+        case .warmAmber:    return "Amber"
+        case .standard:     return "Standard"
+        case .vibrant:      return "Vibrant"
+        case .naturalMood:  return "Natural"
+        case .luminous:     return "Luminous"
+        case .richContrast: return "Dramatic"
+        case .quiet:        return "Quiet"
+        case .cozy:         return "Cozy"
+        case .ethereal:     return "Ethereal"
+        case .mutedBW:      return "Muted B&W"
+        case .starkBW:      return "Stark B&W"
         }
     }
 
@@ -205,6 +206,50 @@ public enum PhotographicStylePreset: String, CaseIterable, Identifiable, Sendabl
         case .ethereal:     return "ETHEREAL"
         case .mutedBW:      return "MUTED B&W"
         case .starkBW:      return "STARK B&W"
+        }
+    }
+
+    /// Mã định danh nội bộ `cast` trong thẻ EXIF `{MakerApple}` 0x0054 & `PHAdjustmentData` (`SemanticStyle`).
+    public var appleMakerNoteCast: String {
+        switch self {
+        case .standard:     return "Standard"
+        case .warmAmber:    return "TanWarm"
+        case .gold:         return "GoldWarm"
+        case .softRose:     return "BlushWarm"
+        case .bright:       return "BrightPop"
+        case .neutral:      return "Neutral"
+        case .coolMood:     return "Cool"
+        case .vibrant:      return "Colorful"
+        case .naturalMood:  return "NoFilter"
+        case .luminous:     return "DreamyHues"
+        case .richContrast: return "UrbanCool"
+        case .quiet:        return "WarmAuthentic"
+        case .cozy:         return "Earthy"
+        case .ethereal:     return "CloudCover"
+        case .mutedBW:      return "LongGray"
+        case .starkBW:      return "StarkBW"
+        }
+    }
+
+    /// Chỉ số nguyên `_4` (1..16) trong thẻ EXIF `{MakerApple}` 0x0054.
+    public var appleMakerNoteIndex: Int {
+        switch self {
+        case .standard:     return 1
+        case .neutral:      return 2
+        case .softRose:     return 3
+        case .warmAmber:    return 4
+        case .coolMood:     return 5
+        case .naturalMood:  return 6
+        case .quiet:        return 7
+        case .vibrant:      return 8
+        case .cozy:         return 9
+        case .ethereal:     return 10
+        case .richContrast: return 11
+        case .luminous:     return 12
+        case .starkBW:      return 13
+        case .gold:         return 14
+        case .mutedBW:      return 15
+        case .bright:       return 16
         }
     }
 
@@ -725,29 +770,39 @@ public struct PhotographicStyleState: Equatable, Sendable, Codable {
         "\(palettePercent)%"
     }
 
-    /// Định dạng 2 chữ số sạch chuẩn iOS Camera Top HUD (`00`, `07`, `84`, `-14`, `100`).
+    /// Định dạng số nguyên sạch chuẩn iOS Camera Top HUD (`0`, `-18`, `42`, `-100`, `75`).
     public var toneHUDNumber: String {
-        Self.formatTwoDigitSigned(tonePercent)
+        "\(tonePercent)"
     }
 
     public var colorHUDNumber: String {
-        Self.formatTwoDigitSigned(colorPercent)
+        "\(colorPercent)"
     }
 
     public var paletteHUDNumber: String {
         "\(palettePercent)"
     }
 
-    private static func formatTwoDigitSigned(_ value: Int) -> String {
-        if value < 0 {
-            let absVal = abs(value)
-            return absVal < 10 ? "-0\(absVal)" : "-\(absVal)"
-        }
-        return value < 10 ? "0\(value)" : "\(value)"
+    /// Cấu trúc siêu dữ liệu chuẩn `SemanticStyle` / MakerNote `0x0054` của Apple.
+    public var appleSemanticStyleMetadata: [String: Any] {
+        [
+            "cast": preset.appleMakerNoteCast,
+            "_1": tone,
+            "_2": color,
+            "_3": palette,
+            "_4": preset.appleMakerNoteIndex,
+            "tone": tone,
+            "color": color,
+            "intensity": palette,
+            "textureMode": textureMode.rawValue,
+            "textureIntensity": textureIntensity,
+            "grainEnabled": grainEnabled,
+            "renderPipelineVersion": "3.0"
+        ]
     }
 }
 
-// MARK: - Custom Saved Photographic Style Recipes (Giải quyết hạn chế chỉ lưu 1 công thức của Camera gốc)
+// MARK: - Official Apple Photographic Styles Reference Store
 public struct PhotographicStyleCustomRecipe: Identifiable, Codable, Equatable, Sendable {
     public var id: String
     public var name: String
@@ -769,44 +824,17 @@ public struct PhotographicStyleCustomRecipe: Identifiable, Codable, Equatable, S
         self.isBuiltIn = isBuiltIn
     }
 
-    /// 5 công thức chuẩn nhiếp ảnh thực tế kiểm chứng từ cộng đồng iPhone 16–18 Pro.
-    public static let builtInBenchmarks: [PhotographicStyleCustomRecipe] = [
-        PhotographicStyleCustomRecipe(
-            id: "builtin_portra400",
-            name: "Portra 400",
-            subtitle: "Vàng kim · Tone +10 · Color -10 · Mịn da",
-            state: PhotographicStyleState(preset: .gold, tone: 0.10, color: -0.10, palette: 0.50, textureMode: .softSkin, textureIntensity: 0.18, grainEnabled: false),
-            isBuiltIn: true
-        ),
-        PhotographicStyleCustomRecipe(
-            id: "builtin_classic_chrome",
-            name: "Classic Chrome",
-            subtitle: "Yên tĩnh · Tone -35 · Color -15 · Hạt phim",
-            state: PhotographicStyleState(preset: .quiet, tone: -0.35, color: -0.15, palette: 0.70, textureMode: .standard, textureIntensity: 0.0, grainEnabled: true, grainAmount: 0.34, grainSize: 1.20),
-            isBuiltIn: true
-        ),
-        PhotographicStyleCustomRecipe(
-            id: "builtin_velvia",
-            name: "Fuji Velvia",
-            subtitle: "Rực rỡ · Tone -20 · Color +40 · Palette 80",
-            state: PhotographicStyleState(preset: .vibrant, tone: -0.20, color: 0.40, palette: 0.80, textureMode: .standard, textureIntensity: 0.0, grainEnabled: false),
-            isBuiltIn: true
-        ),
-        PhotographicStyleCustomRecipe(
-            id: "builtin_trix400",
-            name: "Kodak Tri-X 400",
-            subtitle: "Đen trắng gắt · Tone -30 · Film 50 · Hạt",
-            state: PhotographicStyleState(preset: .starkBW, tone: -0.30, color: 0.0, palette: 1.00, textureMode: .film, textureIntensity: 0.50, grainEnabled: true, grainAmount: 0.46, grainSize: 1.35),
-            isBuiltIn: true
-        ),
-        PhotographicStyleCustomRecipe(
-            id: "builtin_antihdr",
-            name: "Anti-HDR Daily",
-            subtitle: "Hổ phách · Tone -50 · Color +15 · Palette 75",
-            state: PhotographicStyleState(preset: .warmAmber, tone: -0.50, color: 0.15, palette: 0.75, textureMode: .standard, textureIntensity: 0.0, grainEnabled: false),
+    /// Chỉ giữ 16 phong cách chính thức của Apple (theo đúng bảng EXIF MakerNote 0x0054, không kèm danh sách màu tự chế).
+    public static let builtInBenchmarks: [PhotographicStyleCustomRecipe] = PhotographicStylePreset.allCases.map { preset in
+        let defState = PhotographicStyleState.defaultState(for: preset)
+        return PhotographicStyleCustomRecipe(
+            id: "apple_\(preset.rawValue)",
+            name: preset.displayName,
+            subtitle: "\(preset.appleMakerNoteCast) · Tone \(defState.toneHUDNumber) · Color \(defState.colorHUDNumber) · Palette \(defState.paletteHUDNumber)",
+            state: defState,
             isBuiltIn: true
         )
-    ]
+    }
 }
 
 public enum PhotographicStyleRecipeStore {
