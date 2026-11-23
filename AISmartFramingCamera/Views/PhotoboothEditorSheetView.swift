@@ -1607,17 +1607,19 @@ private struct PhotoboothShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-// MARK: - Calm Photobooth 9:16 Video Preview & Export Sheet (Mặc định tốc độ 2x chậm rãi mượt mà, 720p@24fps dựng nhanh)
+// MARK: - Calm Photobooth 9:16 Video Preview & Export Sheet (30 FPS mượt mà · Tùy chọn 1.25x · 1.5x · 2x có bộ đệm tức thì)
 private struct PhotoboothTimelapsePreviewSheet: View {
     @ObservedObject var viewModel: CameraViewModel
     @ObservedObject var assetManager: PhotoboothAssetManager
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedStyle: PhotoboothTimelapseStyle = .movingStrip
-    @State private var selectedSpeed: PhotoboothTimelapseSpeed = .x2
+    @State private var selectedSpeed: PhotoboothTimelapseSpeed = .x1_5
     @State private var isRendering: Bool = true
     @State private var renderProgress: Double = 0.0
     @State private var exportedVideoURL: URL? = nil
+    @State private var cachedVideoURLs: [String: URL] = [:]
+    @State private var renderTask: Task<Void, Never>? = nil
     @State private var player: AVPlayer? = nil
     @State private var errorMessage: String? = nil
     @State private var isSavingVideo: Bool = false
@@ -1633,6 +1635,7 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                     // Calm 3-Element Header
                     HStack {
                         Button(action: {
+                            renderTask?.cancel()
                             player?.pause()
                             dismiss()
                         }) {
@@ -1650,7 +1653,7 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                             Text("Video Photobooth")
                                 .font(.system(size: 14, weight: .semibold, design: .rounded))
                                 .foregroundColor(.white)
-                            Text("9:16 HD · 24 fps")
+                            Text("9:16 HD · 30 fps · \(selectedSpeed.label)")
                                 .font(.system(size: 11, weight: .regular, design: .monospaced))
                                 .foregroundColor(.white.opacity(0.50))
                         }
@@ -1674,7 +1677,6 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                         if let player, !isRendering {
                             VideoPlayer(player: player)
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                .onAppear { player.play() }
                         } else if isRendering {
                             VStack(spacing: 10) {
                                 ProgressView(value: renderProgress, total: 1.0)
@@ -1710,6 +1712,7 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                                 let isSel = selectedStyle == st
                                 Button(action: {
                                     guard selectedStyle != st else { return }
+                                    HapticFeedbackService.shared.triggerSelectionChange()
                                     selectedStyle = st
                                     regenerateVideo()
                                 }) {
@@ -1721,7 +1724,6 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                                         .background(RoundedRectangle(cornerRadius: 9).fill(isSel ? Color.white : Color.white.opacity(0.08)))
                                 }
                                 .buttonStyle(.plain)
-                                .disabled(isRendering)
                             }
                         }
 
@@ -1736,6 +1738,7 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                                 let isSel = selectedSpeed == spd
                                 Button(action: {
                                     guard selectedSpeed != spd else { return }
+                                    HapticFeedbackService.shared.triggerSelectionChange()
                                     selectedSpeed = spd
                                     regenerateVideo()
                                 }) {
@@ -1747,7 +1750,6 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                                         .background(Capsule().fill(isSel ? Color.white : Color.white.opacity(0.08)))
                                 }
                                 .buttonStyle(.plain)
-                                .disabled(isRendering)
                             }
                         }
 
@@ -1805,13 +1807,14 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                 regenerateVideo()
             }
             .onDisappear {
+                renderTask?.cancel()
                 player?.pause()
                 player = nil
             }
             .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
                 guard let finishedItem = notification.object as? AVPlayerItem,
                       finishedItem == player?.currentItem else { return }
-                player?.seek(to: .zero)
+                player?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
                 player?.play()
             }
             .sheet(isPresented: $showShareSheet) {
@@ -1822,13 +1825,33 @@ private struct PhotoboothTimelapsePreviewSheet: View {
         }
     }
 
+    private func activateCachedPlayer(with url: URL) {
+        self.exportedVideoURL = url
+        let item = AVPlayerItem(url: url)
+        let avPlayer = AVPlayer(playerItem: item)
+        avPlayer.automaticallyWaitsToMinimizeStalling = false
+        avPlayer.actionAtItemEnd = .none
+        self.player = avPlayer
+        self.isRendering = false
+        avPlayer.playImmediately(atRate: 1.0)
+    }
+
     private func regenerateVideo() {
+        renderTask?.cancel()
         player?.pause()
         player = nil
-        isRendering = true
         hasSavedVideo = false
-        renderProgress = 0.02
         errorMessage = nil
+
+        let cacheKey = "\(selectedStyle.rawValue)_\(selectedSpeed.rawValue)"
+        if let cachedURL = cachedVideoURLs[cacheKey],
+           FileManager.default.fileExists(atPath: cachedURL.path) {
+            activateCachedPlayer(with: cachedURL)
+            return
+        }
+
+        isRendering = true
+        renderProgress = 0.04
 
         let slots = viewModel.photoboothSlots
         let config = viewModel.photoboothStripConfig
@@ -1837,7 +1860,7 @@ private struct PhotoboothTimelapsePreviewSheet: View {
         let style = selectedStyle
         let speed = selectedSpeed
 
-        Task {
+        renderTask = Task {
             do {
                 let url = try await PhotoboothTimelapseExporter.exportTimelapseVideo(
                     slots: slots,
@@ -1850,14 +1873,13 @@ private struct PhotoboothTimelapsePreviewSheet: View {
                 ) { pct in
                     self.renderProgress = pct
                 }
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    self.exportedVideoURL = url
-                    let avPlayer = AVPlayer(url: url)
-                    self.player = avPlayer
-                    self.isRendering = false
-                    avPlayer.play()
+                    self.cachedVideoURLs[cacheKey] = url
+                    self.activateCachedPlayer(with: url)
                 }
             } catch {
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
                     self.errorMessage = error.localizedDescription
                     self.isRendering = false

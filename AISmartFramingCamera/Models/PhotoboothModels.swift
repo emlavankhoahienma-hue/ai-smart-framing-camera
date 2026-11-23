@@ -823,19 +823,19 @@ public enum PhotoboothTimelapseStyle: String, CaseIterable, Identifiable, Sendab
     public var id: String { rawValue }
 }
 
-/// Tốc độ tua cho video hậu trường Photobooth (chậm rãi mượt mắt hơn — mặc định 2x).
+/// Tốc độ tua cho video hậu trường Photobooth (1.25x · 1.5x · 2x).
 public enum PhotoboothTimelapseSpeed: Double, CaseIterable, Identifiable, Sendable {
+    case x1_25 = 1.25
     case x1_5 = 1.5
     case x2 = 2.0
-    case x3 = 3.0
 
     public var id: Double { rawValue }
 
     public var label: String {
         switch self {
+        case .x1_25: return "1.25x"
         case .x1_5: return "1.5x"
         case .x2: return "2x"
-        case .x3: return "3x"
         }
     }
 }

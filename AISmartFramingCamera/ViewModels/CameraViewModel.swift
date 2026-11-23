@@ -170,7 +170,8 @@ private final class CameraFrameProcessor: @unchecked Sendable {
             latestPixelBuffer = pixelBuffer
             stateLock.unlock()
 
-            // Ghi khung hình tua nhanh hậu trường siêu nhẹ (~7 FPS) khi đang tạo dáng trong chế độ Photobooth
+            // Ghi khung hình tua nhanh hậu trường mượt (~18 FPS) khi đang tạo dáng trong chế độ Photobooth;
+            // đồng thời bỏ qua Vision/YOLO và Histogram nền để dành 100% băng thông cho liveview & ghi clip mượt
             if snapshot.isPhotoboothTimelapseRecording && !snapshot.isVideo {
                 PhotoboothTimelapseRecorder.shared.samplePixelBufferIfDue(
                     pixelBuffer,
@@ -179,6 +180,7 @@ private final class CameraFrameProcessor: @unchecked Sendable {
                     filmIntensity: snapshot.activeFilmIntensity,
                     isFilmActive: snapshot.isFilmSimulationActive
                 )
+                return
             }
         }
 
@@ -837,7 +839,13 @@ public final class CameraViewModel: ObservableObject {
     @Published public var photoboothFlashBlink: Bool = false
     @Published public var photoboothStripConfig: PhotoboothStripConfig = PhotoboothStripConfig()
     @Published public var photoboothPlacedStickers: [PlacedPhotoboothSticker] = []
-    private var isAwaitingPhotoboothShot: Bool = false
+    private var isAwaitingPhotoboothShot: Bool = false {
+        didSet {
+            if isAwaitingPhotoboothShot != oldValue {
+                updateFrameProcessingConfiguration()
+            }
+        }
+    }
     private var photoboothSequenceTask: Task<Void, Never>? = nil
 
     public var photoboothFilledCount: Int {
@@ -930,6 +938,7 @@ public final class CameraViewModel: ObservableObject {
                 guard let nextSlot = self.photoboothSlots.firstIndex(where: { $0 == nil }) else {
                     break
                 }
+                PhotoboothTimelapseRecorder.shared.clearSlot(nextSlot)
                 self.photoboothActiveSlotIndex = nextSlot
                 let secs = max(1, self.photoboothTimer.rawValue)
                 for rem in stride(from: secs, through: 1, by: -1) {
@@ -2912,7 +2921,7 @@ public final class CameraViewModel: ObservableObject {
                 showHistogramInViewfinder: showHistogramInViewfinder,
                 isVideo: captureMode.isVideo,
                 isDualCameraActive: isDualCameraActive,
-                isPhotoboothTimelapseRecording: isPhotoboothModeActive && !isShowingPhotoboothEditor && !isCameraHibernating && !captureMode.isVideo && (photoboothFilledCount < photoboothStripConfig.layout.slotCount),
+                isPhotoboothTimelapseRecording: isPhotoboothModeActive && !isShowingPhotoboothEditor && !isCameraHibernating && !captureMode.isVideo && !isAwaitingPhotoboothShot && (photoboothFilledCount < photoboothStripConfig.layout.slotCount),
                 photoboothActiveSlotIndex: photoboothActiveSlotIndex,
                 activeFilmPreset: selectedFilmPreset,
                 activeFilmIntensity: Float(filmSimulationIntensity),
@@ -3769,6 +3778,42 @@ public final class CameraViewModel: ObservableObject {
                     faceRects: nearbyDetection?.faceRectangles ?? [])
                 self.localTrackingSource = nil
                 self.callGeminiAnalysis(frame: frame)
+            }
+
+            // Fast 1.1s frame-delivery watchdog for Cloud AI: if VisionFramingEngine missed or throttled the callback,
+            // grab the latest camera pixelBuffer snapshot immediately so Cloud AI starts without waiting 5s.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak self] in
+                guard let self, self.aiSessionGeneration == requestGeneration,
+                      self.aiSessionState == .analyzing, !self.isOneShotCaptured,
+                      !self.isGeminiAnalyzing else { return }
+                let snap = self.frameProcessor.latestTrackingFrameSnapshot()
+                guard let buffer = snap?.0 ?? self.cameraService.currentMultiCamPixelBuffer() ?? self.latestCameraPixelBuffer() else { return }
+                let ci = CIImage(cvPixelBuffer: buffer)
+                guard let cg = self.windowedSharpnessCIContext.createCGImage(ci, from: ci.extent.integral) else { return }
+                let now = CACurrentMediaTime()
+                let fallbackFrame = snap?.1 ?? TrackingFrameContext(
+                    timestamp: now,
+                    calibration: TrackingCalibration.fallback(fovLongDegrees: CompositionTuning.defaultCameraFOVWide, zoom: Double(self.displayZoom), aspect: 9.0/16.0),
+                    imageSize: CGSize(width: CGFloat(CVPixelBufferGetWidth(buffer)),
+                                      height: CGFloat(CVPixelBufferGetHeight(buffer))),
+                    displayZoom: Double(self.displayZoom)
+                )
+                let fallbackPose = SpatialTrackingEngine.shared.pose(at: fallbackFrame.timestamp)
+                    ?? SpatialTrackingEngine.shared.latestPose()
+                    ?? simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
+                self.isOneShotCaptured = true
+                self.visionEngine.captureNextFrameForGemini = false
+                self.visionEngine.onFrameCapturedForAIWithSource = nil
+                let nearbyDetection = self.latestSubjectDetectionResult
+                self.cloudTrackingSource = AITrackingSource(
+                    buffer: buffer,
+                    frame: fallbackFrame,
+                    pose: fallbackPose,
+                    subjectRect: nearbyDetection?.dominantSubjectRect,
+                    faceRects: nearbyDetection?.faceRectangles ?? []
+                )
+                self.localTrackingSource = nil
+                self.callGeminiAnalysis(frame: cg)
             }
 
             // If no camera frame arrives, use the local analysis instead of

@@ -3,19 +3,25 @@ import AVFoundation
 import CoreImage
 import CoreGraphics
 import CoreVideo
+import ImageIO
 import UIKit
 
-/// Bộ ghi khung hình hậu trường siêu nhẹ (~8 FPS, nén JPEG nhỏ <= 360px, vòng đệm 48 khung/ô đủ trọn 6 giây tạo dáng)
-/// để tạo Video Tua Chậm/Nhanh kiểu Life4Cuts / Photoism mượt mà, không giật liveview và không chạm vào CameraService bị khóa.
+/// Bộ ghi khung hình hậu trường tốc độ cao (~18 FPS, độ nét 460px, bộ đệm 120 khung/ô + cache CGImage giải mã sẵn)
+/// để tạo Video Photobooth 30 FPS (1.25x · 1.5x · 2x) siêu mượt, không giật hình và không chạm vào CameraService bị khóa.
 public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
     public static let shared = PhotoboothTimelapseRecorder()
 
     private let lock = NSLock()
-    private let workQueue = DispatchQueue(label: "com.alignai.photobooth.timelapse.capture", qos: .utility)
-    private let ciContext = CIContext(options: [.useSoftwareRenderer: false, .highQualityDownsample: false, .cacheIntermediates: false])
+    private let workQueue = DispatchQueue(label: "com.alignai.photobooth.timelapse.capture", qos: .userInitiated)
+    private let ciContext = CIContext(options: [
+        .useSoftwareRenderer: false,
+        .highQualityDownsample: true,
+        .cacheIntermediates: false
+    ])
 
     private var framesBySlot: [Int: [PhotoboothTimelapseClipFrame]] = [:]
-    private var maxFramesPerSlot: Int = 48
+    private var decodedImagesBySlot: [Int: [CGImage]] = [:]
+    private var maxFramesPerSlot: Int = 120
     private var lastCaptureTime: CFTimeInterval = 0
     private var isSamplingBusy: Bool = false
 
@@ -24,6 +30,7 @@ public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
     public func resetAll() {
         lock.withLock {
             framesBySlot.removeAll()
+            decodedImagesBySlot.removeAll()
             lastCaptureTime = 0
         }
     }
@@ -31,6 +38,7 @@ public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
     public func clearSlot(_ slotIndex: Int) {
         lock.withLock {
             framesBySlot[slotIndex] = []
+            decodedImagesBySlot[slotIndex] = []
         }
     }
 
@@ -44,7 +52,11 @@ public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
         lock.withLock { framesBySlot }
     }
 
-    /// Lấy mẫu 1 khung từ `CVPixelBuffer` đang phát live (throttle >= 125ms ~8 FPS, áp đồng bộ màu live đang bật).
+    public func snapshotDecodedImagesBySlot() -> [Int: [CGImage]] {
+        lock.withLock { decodedImagesBySlot }
+    }
+
+    /// Lấy mẫu 1 khung từ `CVPixelBuffer` đang phát live (throttle >= 55ms ~18 FPS, lưu trực tiếp CGImage sắc nét + dữ liệu JPEG).
     public func samplePixelBufferIfDue(
         _ pixelBuffer: CVPixelBuffer,
         slotIndex: Int,
@@ -54,7 +66,7 @@ public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
     ) {
         let now = CACurrentMediaTime()
         let shouldProceed: Bool = lock.withLock {
-            if isSamplingBusy || (now - lastCaptureTime) < 0.125 {
+            if isSamplingBusy || (now - lastCaptureTime) < 0.055 {
                 return false
             }
             lastCaptureTime = now
@@ -79,8 +91,8 @@ public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
                 let extent = ci.extent
                 guard extent.width > 32, extent.height > 32 else { return }
 
-                // Thu nhỏ về tối đa 360px cạnh ngang để giữ RAM thấp (~20KB/khung) và dựng video 720p cực nhanh
-                let targetMaxW: CGFloat = 360.0
+                // Giữ độ nét 460px cạnh ngang cho từng ô ảnh để video xuất ra sắc nét, không vỡ hạt
+                let targetMaxW: CGFloat = 460.0
                 if extent.width > targetMaxW {
                     let s = targetMaxW / extent.width
                     ci = ci.transformed(by: CGAffineTransform(scaleX: s, y: s))
@@ -104,13 +116,12 @@ public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
                 }
 
                 guard let cg = self.ciContext.createCGImage(ci, from: ci.extent.integral) else { return }
-                let ui = UIImage(cgImage: cg)
-                guard let jpeg = ui.jpegData(compressionQuality: 0.65) else { return }
+                let jpegData = Self.encodeFastJPEG(cg, quality: 0.72) ?? Data()
 
                 let clipFrame = PhotoboothTimelapseClipFrame(
                     slotIndex: slotIndex,
                     timestamp: now,
-                    jpegData: jpeg
+                    jpegData: jpegData
                 )
 
                 self.lock.withLock {
@@ -120,14 +131,34 @@ public final class PhotoboothTimelapseRecorder: @unchecked Sendable {
                         arr.removeFirst(arr.count - self.maxFramesPerSlot)
                     }
                     self.framesBySlot[slotIndex] = arr
+
+                    var cgArr = self.decodedImagesBySlot[slotIndex] ?? []
+                    cgArr.append(cg)
+                    if cgArr.count > self.maxFramesPerSlot {
+                        cgArr.removeFirst(cgArr.count - self.maxFramesPerSlot)
+                    }
+                    self.decodedImagesBySlot[slotIndex] = cgArr
                 }
             }
         }
     }
+
+    private static func encodeFastJPEG(_ cgImage: CGImage, quality: CGFloat) -> Data? {
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, "public.jpeg" as CFString, 1, nil) else {
+            return UIImage(cgImage: cgImage).jpegData(compressionQuality: quality)
+        }
+        let opts: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
+        CGImageDestinationAddImage(dest, cgImage, opts as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else {
+            return UIImage(cgImage: cgImage).jpegData(compressionQuality: quality)
+        }
+        return data as Data
+    }
 }
 
-/// Bộ kết xuất Video Tua Hậu Trường Photobooth chuẩn dọc 9:16 HD sắc nét (720×1280 · 24 FPS · H.264 MP4)
-/// tối ưu tiền-giải-mã & bộ nhớ đệm khung tĩnh giúp dựng nhanh gấp ~3 lần, mượt mà, không giật nóng máy.
+/// Bộ kết xuất Video Tua Hậu Trường Photobooth chuẩn dọc 9:16 HD sắc nét (720×1280 · 30 FPS · H.264 MP4)
+/// sử dụng bộ đệm CGImage trực tiếp, tiền-kết-xuất nền tĩnh theo từng ô (slotBaseCanvasCG) và nội suy chuyển động mượt 30 FPS.
 public enum PhotoboothTimelapseExporter {
     public enum ExportError: LocalizedError {
         case noPhotosAvailable
@@ -162,6 +193,7 @@ public enum PhotoboothTimelapseExporter {
         let finalSlotCGs: [CGImage?]
         let slotMirrors: [Bool]
         let recordedFramesBySlot: [Int: [PhotoboothTimelapseClipFrame]]
+        let preDecodedImagesBySlot: [Int: [CGImage]]
         let style: PhotoboothTimelapseStyle
         let speed: PhotoboothTimelapseSpeed
     }
@@ -182,7 +214,7 @@ public enum PhotoboothTimelapseExporter {
             throw ExportError.noPhotosAvailable
         }
 
-        // 720×1280 @ 24 FPS: chuẩn HD dọc mượt mắt cho TikTok/Reels, nhanh gấp ~3 lần 1080p30 và nhẹ bộ nhớ
+        // 720×1280 @ 30 FPS: khớp đồng bộ tần số quét màn hình iPhone 60Hz/120Hz (không giật 3:2 pulldown), giữ nguyên độ nét cao
         let outW: CGFloat = 720
         let outH: CGFloat = 1280
         let stripAspect = config.layout.aspectRatio
@@ -221,6 +253,8 @@ public enum PhotoboothTimelapseExporter {
             }
         }
 
+        let preDecoded = PhotoboothTimelapseRecorder.shared.snapshotDecodedImagesBySlot()
+
         let snapshot = RenderJobSnapshot(
             layout: config.layout,
             slotRectsInStrip: slotRects,
@@ -234,6 +268,7 @@ public enum PhotoboothTimelapseExporter {
             finalSlotCGs: finalCGs,
             slotMirrors: mirrors,
             recordedFramesBySlot: recordedFramesBySlot,
+            preDecodedImagesBySlot: preDecoded,
             style: style,
             speed: speed
         )
@@ -249,7 +284,7 @@ public enum PhotoboothTimelapseExporter {
         return UIColor(red: 0.04 + r * 0.22, green: 0.04 + g * 0.22, blue: 0.05 + b * 0.22, alpha: 1.0)
     }
 
-    // MARK: - Hardware H.264 MP4 Rendering (Off-Main-Thread, Zero Main-Thread Lag)
+    // MARK: - Hardware H.264 MP4 Rendering (Off-Main-Thread, Zero Main-Thread Lag, 30 FPS Smooth Interpolation)
 
     private static func renderMP4OffMainThread(
         snapshot: RenderJobSnapshot,
@@ -264,19 +299,22 @@ public enum PhotoboothTimelapseExporter {
         let writer: AVAssetWriter
         do {
             writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+            writer.shouldOptimizeForNetworkUse = true
         } catch {
             throw ExportError.writerInitializationFailed(error.localizedDescription)
         }
 
-        let fps: Int32 = 24
+        let fps: Int32 = 30
         let videoSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: outW,
             AVVideoHeightKey: outH,
             AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: 5_200_000,
+                AVVideoAverageBitRateKey: 6_800_000,
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
-                AVVideoExpectedSourceFrameRateKey: fps
+                AVVideoExpectedSourceFrameRateKey: fps,
+                AVVideoMaxKeyFrameIntervalKey: 30,
+                AVVideoAllowFrameReorderingKey: false
             ]
         ]
 
@@ -313,10 +351,10 @@ public enum PhotoboothTimelapseExporter {
             let maxRectSide = snapshot.slotRectsInStrip.reduce(CGFloat(280)) { acc, r in
                 max(acc, max(r.width, r.height))
             }
-            return min(CGFloat(outH), max(320, maxRectSide * 1.35))
+            return min(CGFloat(outH), max(360, maxRectSide * 1.45))
         }()
 
-        // Tiền thu nhỏ ảnh chụp gốc 1 lần duy nhất thay vì thu nhỏ ảnh 12MP lặp lại hàng trăm lần trong vòng lặp frame
+        // Tiền thu nhỏ ảnh chụp gốc 1 lần duy nhất
         var preScaledFinalCGs: [CGImage?] = Array(repeating: nil, count: slotCount)
         for idx in 0..<slotCount {
             if let raw = snapshot.finalSlotCGs[idx] {
@@ -324,10 +362,12 @@ public enum PhotoboothTimelapseExporter {
             }
         }
 
-        // Giải mã sẵn các khung hậu trường 1 lần duy nhất
+        // Ưu tiên lấy trực tiếp mảng CGImage đã cache sẵn trong RAM (0ms giải mã); nếu thiếu mới fallback giải mã JPEG
         var decodedClips: [[CGImage]] = Array(repeating: [], count: slotCount)
         for idx in 0..<slotCount {
-            if let rawFrames = snapshot.recordedFramesBySlot[idx], !rawFrames.isEmpty {
+            if let cachedImgs = snapshot.preDecodedImagesBySlot[idx], !cachedImgs.isEmpty {
+                decodedClips[idx] = cachedImgs
+            } else if let rawFrames = snapshot.recordedFramesBySlot[idx], !rawFrames.isEmpty {
                 var imgs: [CGImage] = []
                 imgs.reserveCapacity(rawFrames.count)
                 for f in rawFrames {
@@ -344,19 +384,19 @@ public enum PhotoboothTimelapseExporter {
             }
         }
 
-        // Nhịp tua chậm rãi mượt mắt hơn (ở 24 FPS — mặc định 2x ~1.75s/ô; 8 ô rút gọn nhẹ để tổng độ dài cân đối)
+        // Nhịp tua mượt ở 30 FPS theo đúng 3 tùy chọn tốc độ (1.25x · 1.5x · 2x)
         let baseMotionFrames: Int = {
             switch snapshot.speed {
-            case .x1_5: return 54   // ~2.25s / ô — chậm rãi mơ màng
-            case .x2:   return 42   // ~1.75s / ô — cân bằng mượt mắt (mặc định)
-            case .x3:   return 28   // ~1.17s / ô — nhịp nhanh gọn Reels
+            case .x1_25: return 64   // ~2.13s / ô — nhịp 1.25x tự nhiên
+            case .x1_5:  return 52   // ~1.73s / ô — nhịp 1.5x cân bằng
+            case .x2:    return 40   // ~1.33s / ô — nhịp 2x năng động
             }
         }()
-        let framesPerSlotMotion: Int = slotCount >= 7 ? max(20, Int(round(Double(baseMotionFrames) * 0.72))) : baseMotionFrames
+        let framesPerSlotMotion: Int = slotCount >= 7 ? max(24, Int(round(Double(baseMotionFrames) * 0.74))) : baseMotionFrames
         let flashFrames = 3
         let postSnapHoldFrames = 6
-        let simultaneousLoopFrames = (snapshot.style == .movingStrip) ? 44 : 0  // ~1.83s tất cả các ô cùng động
-        let finalHeroHoldFrames = 48                                            // 2.0s giữ bản in hoàn chỉnh
+        let simultaneousLoopFrames = (snapshot.style == .movingStrip) ? 48 : 0  // 1.6s tất cả các ô cùng động ở 30 FPS
+        let finalHeroHoldFrames = 54                                            // 1.8s giữ bản in hoàn chỉnh ở 30 FPS
 
         let stripOriginX = (CGFloat(outW) - snapshot.stripCanvasSize.width) * 0.5
         let stripOriginY = (CGFloat(outH) - snapshot.stripCanvasSize.height) * 0.5
@@ -387,7 +427,7 @@ public enum PhotoboothTimelapseExporter {
 
         func appendFrame(_ drawBlock: (CGContext) -> Void) async throws {
             while !input.isReadyForMoreMediaData {
-                try await Task.sleep(nanoseconds: 4_000_000)
+                try await Task.sleep(nanoseconds: 2_500_000)
             }
             var pxBufOut: CVPixelBuffer?
             let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pxBufOut)
@@ -410,7 +450,7 @@ public enum PhotoboothTimelapseExporter {
                ) {
                 cg.translateBy(x: 0, y: CGFloat(outH))
                 cg.scaleBy(x: 1.0, y: -1.0)
-                cg.interpolationQuality = .medium
+                cg.interpolationQuality = .high
                 drawBlock(cg)
             }
 
@@ -418,20 +458,63 @@ public enum PhotoboothTimelapseExporter {
             adaptor.append(pxBuf, withPresentationTime: pts)
             frameCursor += 1
 
-            if frameCursor % 5 == 0 || Int(frameCursor) >= totalEstimatedFrames {
+            if frameCursor % 6 == 0 || Int(frameCursor) >= totalEstimatedFrames {
                 let pct = min(0.98, Double(frameCursor) / Double(max(1, totalEstimatedFrames)))
                 await progressHandler(pct)
             }
         }
 
-        // Helper vẽ dải ảnh với hỗ trợ đầy đủ 2×4, 2×4 Đôi (twin2x4 đồng bộ cả 2 cột) & ô vuông sắc cạnh 90°
+        // Helper vẽ 1 ô ảnh đơn lẻ với nội suy mượt giữa 2 frame liên tiếp khi clip ngắn hơn số frame xuất
+        func drawInterpolatedClipSlot(
+            cg: CGContext,
+            clip: [CGImage],
+            fallbackImage: CGImage?,
+            progress: Double,
+            dstRect: CGRect,
+            zoom: CGFloat,
+            mirrored: Bool
+        ) {
+            cg.saveGState()
+            if slotCorner > 0.5 {
+                let clipPath = CGPath(roundedRect: dstRect, cornerWidth: slotCorner, cornerHeight: slotCorner, transform: nil)
+                cg.addPath(clipPath)
+                cg.clip()
+            } else {
+                cg.clip(to: dstRect)
+            }
+
+            if clip.count > 1 {
+                let exactPos = max(0.0, min(Double(clip.count - 1), progress * Double(clip.count - 1)))
+                let idx0 = min(clip.count - 1, Int(floor(exactPos)))
+                let idx1 = min(clip.count - 1, idx0 + 1)
+                let frac = CGFloat(exactPos - Double(idx0))
+
+                drawAspectFillUpright(clip[idx0], in: dstRect, zoom: zoom, mirrored: mirrored, cg: cg)
+                // Khi clip có ít frame hơn số frame video (ví dụ hẹn giờ 3s mở ở 1.25x), hòa trộn mềm frame kế tiếp để triệt tiêu hiện tượng khựng bậc thang
+                if idx1 != idx0 && clip.count < framesPerSlotMotion && frac > 0.06 && frac < 0.94 {
+                    cg.setAlpha(frac)
+                    drawAspectFillUpright(clip[idx1], in: dstRect, zoom: zoom, mirrored: mirrored, cg: cg)
+                    cg.setAlpha(1.0)
+                }
+            } else if let single = clip.first ?? fallbackImage {
+                drawAspectFillUpright(single, in: dstRect, zoom: zoom, mirrored: mirrored, cg: cg)
+            } else {
+                let placeholder = snapshot.usesLightInk ? UIColor(white: 0.14, alpha: 1.0) : UIColor(white: 0.90, alpha: 1.0)
+                cg.setFillColor(placeholder.cgColor)
+                cg.fill(dstRect)
+            }
+            cg.restoreGState()
+        }
+
+        // Helper vẽ dải ảnh tổng hợp
         func drawStripComposite(
             cg: CGContext,
             slotImages: [CGImage?],
             zoomFactors: [CGFloat],
             flashSlotIndex: Int?,
             flashAlpha: CGFloat,
-            stripScale: CGFloat = 1.0
+            stripScale: CGFloat = 1.0,
+            includeStickers: Bool = true
         ) {
             let fullRect = CGRect(x: 0, y: 0, width: CGFloat(outW), height: CGFloat(outH))
             if let bg = staticBackdropCG, abs(stripScale - 1.0) < 0.001 && snapshot.style == .movingStrip {
@@ -487,15 +570,14 @@ public enum PhotoboothTimelapseExporter {
                 cg.restoreGState()
             }
 
-            // Phủ lớp Sticker trang trí (đã kết xuất sẵn 1 lần) lên trên cùng
-            if let stOverlay = snapshot.stickersOverlayCG {
+            if includeStickers, let stOverlay = snapshot.stickersOverlayCG {
                 drawCGImageUpright(stOverlay, in: stripFrameInOut, cg: cg)
             }
 
             cg.restoreGState()
         }
 
-        // Helper tạo sẵn 1 khung ảnh phẳng để blit tức thì cho các frame giữ nhịp tĩnh
+        // Helper tạo sẵn 1 khung ảnh phẳng để blit tức thì
         func bakeStaticCompositeFrame(_ drawBlock: (CGContext) -> Void) -> CGImage? {
             guard let cg = CGContext(
                 data: nil,
@@ -515,58 +597,84 @@ public enum PhotoboothTimelapseExporter {
 
         let fullCanvasRect = CGRect(x: 0, y: 0, width: CGFloat(outW), height: CGFloat(outH))
 
-        // MARK: - Render Phase 1: Từng ô ảnh chuyển động tạo dáng mượt mà & nháy đèn chụp
+        // MARK: - Render Phase 1: Từng ô ảnh chuyển động tạo dáng mượt 30 FPS (Pre-Baked Slot Base Canvas)
         for activeSlot in 0..<slotCount {
             let clip = decodedClips[activeSlot]
             let isStaticOnly = clip.count <= 1
+            let activeMirrored = activeSlot < snapshot.slotMirrors.count ? snapshot.slotMirrors[activeSlot] : false
+
+            // Tiền-kết-xuất toàn bộ nền + các ô tĩnh đã chụp (0..<activeSlot) 1 lần duy nhất cho cả pha chuyển động của activeSlot!
+            let slotBaseCanvasCG: CGImage? = (snapshot.style == .movingStrip) ? bakeStaticCompositeFrame { cg in
+                var staticSlotImgs: [CGImage?] = Array(repeating: nil, count: slotCount)
+                for prev in 0..<activeSlot {
+                    staticSlotImgs[prev] = preScaledFinalCGs[prev]
+                }
+                drawStripComposite(
+                    cg: cg,
+                    slotImages: staticSlotImgs,
+                    zoomFactors: Array(repeating: 1.0, count: slotCount),
+                    flashSlotIndex: nil,
+                    flashAlpha: 0,
+                    stripScale: 1.0,
+                    includeStickers: false
+                )
+            } : nil
+
+            // Danh sách các rect trên dải ảnh thuộc về activeSlot (1 rect cho lưới chuẩn, 2 rect cho twin2x4)
+            let activeDstRects: [CGRect] = snapshot.slotRectsInStrip.enumerated().compactMap { rectIdx, localSlot in
+                guard snapshot.layout.photoIndex(forRenderedRectIndex: rectIdx) == activeSlot else { return nil }
+                return localSlot.offsetBy(dx: stripFrameInOut.minX, dy: stripFrameInOut.minY)
+            }
 
             for f in 0..<framesPerSlotMotion {
                 let progress = Double(f) / Double(max(1, framesPerSlotMotion - 1))
-                let clipIdx = min(max(0, clip.count - 1), Int(progress * Double(max(0, clip.count - 1))))
                 let motionZoom: CGFloat = isStaticOnly ? (1.07 - CGFloat(progress) * 0.07) : 1.0
 
                 try await appendFrame { cg in
                     if snapshot.style == .movingStrip {
-                        var slotImgs: [CGImage?] = Array(repeating: nil, count: slotCount)
-                        var zooms: [CGFloat] = Array(repeating: 1.0, count: slotCount)
-                        for prev in 0..<activeSlot {
-                            slotImgs[prev] = preScaledFinalCGs[prev]
+                        if let baseCG = slotBaseCanvasCG {
+                            drawCGImageUpright(baseCG, in: fullCanvasRect, cg: cg)
+                            for dst in activeDstRects {
+                                drawInterpolatedClipSlot(
+                                    cg: cg,
+                                    clip: clip,
+                                    fallbackImage: preScaledFinalCGs[activeSlot],
+                                    progress: progress,
+                                    dstRect: dst,
+                                    zoom: motionZoom,
+                                    mirrored: activeMirrored
+                                )
+                            }
+                            if let stOverlay = snapshot.stickersOverlayCG {
+                                drawCGImageUpright(stOverlay, in: stripFrameInOut, cg: cg)
+                            }
+                        } else {
+                            let clipIdx = min(max(0, clip.count - 1), Int(round(progress * Double(max(0, clip.count - 1)))))
+                            var slotImgs: [CGImage?] = Array(repeating: nil, count: slotCount)
+                            var zooms: [CGFloat] = Array(repeating: 1.0, count: slotCount)
+                            for prev in 0..<activeSlot {
+                                slotImgs[prev] = preScaledFinalCGs[prev]
+                            }
+                            slotImgs[activeSlot] = clip.isEmpty ? preScaledFinalCGs[activeSlot] : clip[clipIdx]
+                            zooms[activeSlot] = motionZoom
+                            drawStripComposite(cg: cg, slotImages: slotImgs, zoomFactors: zooms, flashSlotIndex: nil, flashAlpha: 0)
                         }
-                        slotImgs[activeSlot] = clip.isEmpty ? preScaledFinalCGs[activeSlot] : clip[clipIdx]
-                        zooms[activeSlot] = motionZoom
-                        drawStripComposite(cg: cg, slotImages: slotImgs, zoomFactors: zooms, flashSlotIndex: nil, flashAlpha: 0)
                     } else {
-                        if let img = (clip.isEmpty ? preScaledFinalCGs[activeSlot] : clip[clipIdx]) {
-                            let mir = activeSlot < snapshot.slotMirrors.count ? snapshot.slotMirrors[activeSlot] : false
-                            drawAspectFillUpright(img, in: fullCanvasRect, zoom: motionZoom, mirrored: mir, cg: cg)
-                        }
+                        drawInterpolatedClipSlot(
+                            cg: cg,
+                            clip: clip,
+                            fallbackImage: preScaledFinalCGs[activeSlot],
+                            progress: progress,
+                            dstRect: fullCanvasRect,
+                            zoom: motionZoom,
+                            mirrored: activeMirrored
+                        )
                         drawReelsRecBadge(cg: cg, outW: CGFloat(outW), slotIndex: activeSlot + 1, totalSlots: slotCount)
                     }
                 }
             }
 
-            // Nháy đèn Flash chụp ảnh sắc nét
-            for fl in 0..<flashFrames {
-                let alpha = CGFloat(1.0 - Double(fl) / Double(flashFrames)) * 0.90
-                try await appendFrame { cg in
-                    if snapshot.style == .movingStrip {
-                        var slotImgs: [CGImage?] = Array(repeating: nil, count: slotCount)
-                        for prev in 0...activeSlot {
-                            slotImgs[prev] = preScaledFinalCGs[prev]
-                        }
-                        drawStripComposite(cg: cg, slotImages: slotImgs, zoomFactors: Array(repeating: 1.0, count: slotCount), flashSlotIndex: activeSlot, flashAlpha: alpha)
-                    } else {
-                        if let img = preScaledFinalCGs[activeSlot] {
-                            let mir = activeSlot < snapshot.slotMirrors.count ? snapshot.slotMirrors[activeSlot] : false
-                            drawAspectFillUpright(img, in: fullCanvasRect, zoom: 1.0, mirrored: mir, cg: cg)
-                        }
-                        cg.setFillColor(UIColor.white.withAlphaComponent(alpha).cgColor)
-                        cg.fill(fullCanvasRect)
-                    }
-                }
-            }
-
-            // Dừng nhịp rõ nét sau mỗi tấm vừa chụp (dựng 1 lần, blit nhanh cho toàn bộ frame hold)
+            // Dựng sẵn frame ngay sau khi chụp xong activeSlot để dùng cho cả hiệu ứng Flash và pha giữ nhịp
             let postHoldBaked = bakeStaticCompositeFrame { cg in
                 if snapshot.style == .movingStrip {
                     var slotImgs: [CGImage?] = Array(repeating: nil, count: slotCount)
@@ -576,12 +684,31 @@ public enum PhotoboothTimelapseExporter {
                     drawStripComposite(cg: cg, slotImages: slotImgs, zoomFactors: Array(repeating: 1.0, count: slotCount), flashSlotIndex: nil, flashAlpha: 0)
                 } else {
                     if let img = preScaledFinalCGs[activeSlot] {
-                        let mir = activeSlot < snapshot.slotMirrors.count ? snapshot.slotMirrors[activeSlot] : false
-                        drawAspectFillUpright(img, in: fullCanvasRect, zoom: 1.0, mirrored: mir, cg: cg)
+                        drawAspectFillUpright(img, in: fullCanvasRect, zoom: 1.0, mirrored: activeMirrored, cg: cg)
                     }
                     drawReelsRecBadge(cg: cg, outW: CGFloat(outW), slotIndex: activeSlot + 1, totalSlots: slotCount)
                 }
             }
+
+            // Nháy đèn Flash chụp ảnh sắc nét
+            for fl in 0..<flashFrames {
+                let alpha = CGFloat(1.0 - Double(fl) / Double(flashFrames)) * 0.90
+                try await appendFrame { cg in
+                    if let baked = postHoldBaked {
+                        drawCGImageUpright(baked, in: fullCanvasRect, cg: cg)
+                    }
+                    cg.setFillColor(UIColor.white.withAlphaComponent(alpha).cgColor)
+                    if snapshot.style == .movingStrip {
+                        for dst in activeDstRects {
+                            cg.fill(dst)
+                        }
+                    } else {
+                        cg.fill(fullCanvasRect)
+                    }
+                }
+            }
+
+            // Dừng nhịp rõ nét sau mỗi tấm vừa chụp (blit tức thì)
             for _ in 0..<postSnapHoldFrames {
                 try await appendFrame { cg in
                     if let baked = postHoldBaked {
@@ -591,23 +718,58 @@ public enum PhotoboothTimelapseExporter {
             }
         }
 
-        // MARK: - Render Phase 2: Tất cả các ô cùng chuyển động đồng bộ (Chữ ký Life4Cuts)
+        // MARK: - Render Phase 2: Tất cả các ô cùng chuyển động đồng bộ 30 FPS (Chữ ký Life4Cuts)
+        let allSlotsEmptyBackgroundCG: CGImage? = (simultaneousLoopFrames > 0) ? bakeStaticCompositeFrame { cg in
+            drawStripComposite(
+                cg: cg,
+                slotImages: Array(repeating: nil, count: slotCount),
+                zoomFactors: Array(repeating: 1.0, count: slotCount),
+                flashSlotIndex: nil,
+                flashAlpha: 0,
+                stripScale: 1.0,
+                includeStickers: false
+            )
+        } : nil
+
         for f in 0..<simultaneousLoopFrames {
             let t = Double(f) / Double(max(1, simultaneousLoopFrames - 1))
             try await appendFrame { cg in
-                var slotImgs: [CGImage?] = Array(repeating: nil, count: slotCount)
-                var zooms: [CGFloat] = Array(repeating: 1.0, count: slotCount)
-                for idx in 0..<slotCount {
-                    let clip = decodedClips[idx]
-                    if clip.count > 1 {
-                        let cIdx = min(clip.count - 1, Int(t * Double(clip.count - 1)))
-                        slotImgs[idx] = clip[cIdx]
-                    } else {
-                        slotImgs[idx] = preScaledFinalCGs[idx]
-                        zooms[idx] = 1.0 + CGFloat(sin(t * .pi)) * 0.035
+                if let bg = allSlotsEmptyBackgroundCG {
+                    drawCGImageUpright(bg, in: fullCanvasRect, cg: cg)
+                    for rectIdx in 0..<snapshot.slotRectsInStrip.count {
+                        let photoIdx = snapshot.layout.photoIndex(forRenderedRectIndex: rectIdx)
+                        let dst = snapshot.slotRectsInStrip[rectIdx].offsetBy(dx: stripFrameInOut.minX, dy: stripFrameInOut.minY)
+                        let clip = decodedClips[photoIdx]
+                        let mir = photoIdx < snapshot.slotMirrors.count ? snapshot.slotMirrors[photoIdx] : false
+                        let z: CGFloat = clip.count > 1 ? 1.0 : (1.0 + CGFloat(sin(t * .pi)) * 0.035)
+                        drawInterpolatedClipSlot(
+                            cg: cg,
+                            clip: clip,
+                            fallbackImage: preScaledFinalCGs[photoIdx],
+                            progress: t,
+                            dstRect: dst,
+                            zoom: z,
+                            mirrored: mir
+                        )
                     }
+                    if let stOverlay = snapshot.stickersOverlayCG {
+                        drawCGImageUpright(stOverlay, in: stripFrameInOut, cg: cg)
+                    }
+                } else {
+                    var slotImgs: [CGImage?] = Array(repeating: nil, count: slotCount)
+                    var zooms: [CGFloat] = Array(repeating: 1.0, count: slotCount)
+                    for idx in 0..<slotCount {
+                        let clip = decodedClips[idx]
+                        if clip.count > 1 {
+                            let cIdx = min(clip.count - 1, Int(round(t * Double(clip.count - 1))))
+                            slotImgs[idx] = clip[cIdx]
+                        } else {
+                            slotImgs[idx] = preScaledFinalCGs[idx]
+                            zooms[idx] = 1.0 + CGFloat(sin(t * .pi)) * 0.035
+                        }
+                    }
+                    drawStripComposite(cg: cg, slotImages: slotImgs, zoomFactors: zooms, flashSlotIndex: nil, flashAlpha: 0)
                 }
-                drawStripComposite(cg: cg, slotImages: slotImgs, zoomFactors: zooms, flashSlotIndex: nil, flashAlpha: 0)
             }
         }
 
@@ -623,7 +785,7 @@ public enum PhotoboothTimelapseExporter {
             )
         }
         for f in 0..<finalHeroHoldFrames {
-            let revealT = min(1.0, Double(f) / 11.0)
+            let revealT = min(1.0, Double(f) / 14.0)
             let eased = 1.0 - pow(1.0 - revealT, 3.0)
             let scale = (snapshot.style == .btsReelsReveal) ? CGFloat(0.91 + 0.09 * eased) : 1.0
             try await appendFrame { cg in

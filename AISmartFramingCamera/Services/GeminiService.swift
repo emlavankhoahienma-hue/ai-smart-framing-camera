@@ -128,6 +128,32 @@ public enum AICloudProvider: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    public var summarySubtitle: String {
+        switch self {
+        case .googleGemini: return "Google AI Studio · Miễn phí 1.500 lượt/ngày · Phản hồi ~1.3s"
+        case .groq:         return "Chip LPU chuyên dụng · Thị giác siêu tốc < 0.6s · Miễn phí"
+        case .openRouter:   return "Cổng đa mô hình Vision · Tự xoay vòng dự phòng khi bận"
+        case .pollinations: return "Cổng AI mở Pollinations · Tốc độ nhanh · Tiết kiệm"
+        case .openAI:       return "OpenAI trực tiếp · GPT-4o / GPT-4.1 / GPT-5 Vision"
+        case .anthropic:    return "Anthropic trực tiếp · Claude Sonnet Vision"
+        case .deepSeek:     return "DeepSeek API · VL2 / V3"
+        case .xAI:          return "xAI trực tiếp · Grok Vision"
+        case .custom:       return "Máy chủ tương thích chuẩn OpenAI (/v1/chat/completions)"
+        }
+    }
+
+    public static func detectProvider(fromKey rawKey: String) -> AICloudProvider? {
+        let clean = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return nil }
+        if clean.hasPrefix("AIzaSy") { return .googleGemini }
+        if clean.hasPrefix("gsk_") { return .groq }
+        if clean.hasPrefix("sk-or-v1-") { return .openRouter }
+        if clean.hasPrefix("sk-ant-") { return .anthropic }
+        if clean.hasPrefix("xai-") { return .xAI }
+        if clean.hasPrefix("sk-proj-") || clean.hasPrefix("sk-svcacct-") { return .openAI }
+        return nil
+    }
+
     public var defaultChatCompletionsURL: String {
         switch self {
         case .pollinations: return "https://gen.pollinations.ai/v1/chat/completions"
@@ -1191,17 +1217,9 @@ public final class GeminiService: ObservableObject {
                 }
                 onActiveKeyConfigured?(hasAPIKey)
             } else {
-                if selectedProvider != .pollinations {
-                    if clean.hasPrefix("sk-or-v1-") && selectedProvider != .openRouter && selectedProvider != .custom {
-                        selectedProvider = .openRouter
-                    } else if clean.hasPrefix("AIzaSy") && selectedProvider != .googleGemini && selectedProvider != .custom {
-                        selectedProvider = .googleGemini
-                    } else if clean.hasPrefix("sk-ant-") && selectedProvider != .anthropic && selectedProvider != .custom {
-                        selectedProvider = .anthropic
-                    } else if clean.hasPrefix("gsk_") && selectedProvider != .groq && selectedProvider != .custom {
-                        selectedProvider = .groq
-                    } else if clean.hasPrefix("xai-") && selectedProvider != .xAI && selectedProvider != .custom {
-                        selectedProvider = .xAI
+                if selectedProvider != .pollinations && selectedProvider != .custom {
+                    if let detected = AICloudProvider.detectProvider(fromKey: clean), detected != selectedProvider {
+                        selectedProvider = detected
                     }
                 }
                 KeychainHelper.standard.save(clean, forKey: keychainKeyForProvider(selectedProvider, profileID: activeProfileID))
@@ -1510,10 +1528,13 @@ public final class GeminiService: ObservableObject {
         }
     }
 
-    // Selected Model Setting
+    // Selected Model Setting (Per-Provider Memory with Automatic Validation)
     public var selectedModel: AIVisionModel {
         get {
-            guard let saved = UserDefaults.standard.string(forKey: "gemini_selected_model") else {
+            let providerKey = "gemini_selected_model_\(selectedProvider.rawValue)"
+            let saved = UserDefaults.standard.string(forKey: providerKey)
+                ?? UserDefaults.standard.string(forKey: "gemini_selected_model")
+            guard let saved else {
                 return AIVisionModel.defaultModel(for: selectedProvider)
             }
             if let model = AIVisionModel(rawValue: saved) {
@@ -1523,11 +1544,17 @@ public final class GeminiService: ObservableObject {
                 if selectedProvider == .googleGemini && (model.rawValue.contains("2.5") || model.rawValue.contains("2.0") || model.rawValue.contains("1.5")) {
                     return .gemini35FlashLiteDirect
                 }
+                let allowed = AIVisionModel.models(for: selectedProvider)
+                if !allowed.contains(model) {
+                    return AIVisionModel.defaultModel(for: selectedProvider)
+                }
                 return model
             }
             return AIVisionModel.defaultModel(for: selectedProvider)
         }
         set {
+            let providerKey = "gemini_selected_model_\(selectedProvider.rawValue)"
+            UserDefaults.standard.set(newValue.rawValue, forKey: providerKey)
             UserDefaults.standard.set(newValue.rawValue, forKey: "gemini_selected_model")
             objectWillChange.send()
         }
@@ -1543,9 +1570,9 @@ public final class GeminiService: ObservableObject {
     }
 
     // Live Inspection Observables
-    public private(set) var lastLatencyMs: Int = 0
-    public private(set) var lastModelUsed: String = ""
-    public private(set) var lastExplanation: String = ""
+    @Published public private(set) var lastLatencyMs: Int = 0
+    @Published public private(set) var lastModelUsed: String = ""
+    @Published public private(set) var lastExplanation: String = ""
 
     private let urlSession: URLSession = {
         let config = URLSessionConfiguration.default
@@ -1582,18 +1609,18 @@ public final class GeminiService: ObservableObject {
     public func testAPIKey(completion: @escaping (Bool, String) -> Void) {
         let key = apiKey
         guard !key.isEmpty else {
-            completion(false, "API Key cho \(selectedProvider.displayName) đang trống. Hãy nhập API Key trong Cài đặt.")
+            completion(false, "API Key cho \(selectedProvider.displayName) đang trống. Hãy nhập hoặc dán API Key.")
             return
         }
 
         let testCandidates = AIVisionModel.fallbackChain(selected: selectedModel, customModelName: customModelName, provider: selectedProvider)
-        guard let testModel = testCandidates.first else {
+        guard !testCandidates.isEmpty else {
             completion(false, "Không tìm thấy model phù hợp.")
             return
         }
 
-        // Test đúng 1 model chính do người dùng chọn để phản hồi siêu tốc, không test chuỗi gây hao tốn quota và lag
-        testModelCandidate(candidates: [testModel], index: 0, key: key, completion: completion)
+        // Thử model chính trước, tự dự phòng tối đa 3 model trong chuỗi nếu model đầu bảo trì (404/503)
+        testModelCandidate(candidates: Array(testCandidates.prefix(3)), index: 0, key: key, completion: completion)
     }
 
     private func testModelCandidate(

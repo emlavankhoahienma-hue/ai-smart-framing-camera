@@ -987,7 +987,7 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             "AVAssetWriterInputPixelBufferAdaptor",
             "exportTimelapseVideo(",
             "let outW: CGFloat = 720",
-            "let fps: Int32 = 24",
+            "let fps: Int32 = 30",
             "prescaleCGImageIfNeeded",
             "photoIndex(forRenderedRectIndex:",
         ]:
@@ -998,7 +998,7 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         for layout_case in [
             "case strip4x1", "case grid2x4", "case twin2x4", "case grid2x2", "case strip3x1",
             "case couple2x1", "case mini6Cut", "case polaroidSingle",
-            "case sec6 = 6", "case x1_5 = 1.5",
+            "case sec6 = 6", "case x1_25 = 1.25", "case x1_5 = 1.5", "case x2 = 2.0",
             "slotCornerRadiusRatio: CGFloat = 0.0",
             "case oldmoonWhite", "case boardingPass", "case denimScrapbook",
             "case starryVelvet", "case coquettePinstripe", "pb_tex_denim.jpg",
@@ -1042,7 +1042,7 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         self.assertIn("liveFrameSelectorStrip", overlay_view)
         self.assertIn("outer.addRect(winRect)", overlay_view)
         self.assertIn("PhotoboothTimelapsePreviewSheet", editor_view)
-        self.assertIn("selectedSpeed: PhotoboothTimelapseSpeed = .x2", editor_view)
+        self.assertIn("selectedSpeed: PhotoboothTimelapseSpeed = .x1_5", editor_view)
         self.assertIn("stripZoomScale", editor_view)
         self.assertIn("calmBottomActionBar", editor_view)
         self.assertIn("focusedDrawerContainer", editor_view)
@@ -1367,6 +1367,68 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         ]:
             self.assertIn(tok, pad)
         self.assertNotIn('"bookmark.fill"', pad)
+
+    def test_26_clean_settings_ai_cloud_and_smooth_30fps_photobooth_video(self):
+        # 1. Verify Crash/Debug Logs & Habit Learning cards are removed from SettingsSheetView
+        settings = source("Views/SettingsSheetView.swift")
+        for removed in [
+            "systemLogsCard",
+            "Nhật ký hệ thống & Gỡ lỗi",
+            "compositionFeedbackCard",
+            "Học thói quen bố cục",
+            "CompositionPreferenceStore",
+        ]:
+            self.assertNotIn(removed, settings)
+
+        # 2. Verify clean native iOS Settings form with auto-saving Keychain, 1-tap Paste, and instant diagnostics
+        for expected in [
+            "applyEditedAPIKey(",
+            "pasteAPIKeyFromClipboard",
+            "runConnectionDiagnostics",
+            "selectProvider(",
+            "syncLocalInputsWithActiveProvider",
+            'title: "Bố cục & Khung ngắm"',
+            'title: "Tự động hóa"',
+            'title: "Động cơ AI & Kết nối Cloud"',
+        ]:
+            self.assertIn(expected, settings)
+
+        gemini = source("Services/GeminiService.swift")
+        for tok in [
+            "public static func detectProvider(fromKey rawKey: String) -> AICloudProvider?",
+            "public var summarySubtitle: String",
+            'let providerKey = "gemini_selected_model_\\(selectedProvider.rawValue)"',
+            "Array(testCandidates.prefix(3))",
+        ]:
+            self.assertIn(tok, gemini)
+
+        # 3. Verify 30 FPS smooth Photobooth video with 1.25x, 1.5x, 2x speeds, ~18 FPS capture, pre-baked slot canvas & cache
+        pb_models = source("Models/PhotoboothModels.swift")
+        for sp in ['case x1_25 = 1.25', 'case x1_5 = 1.5', 'case x2 = 2.0', '"1.25x"', '"1.5x"', '"2x"']:
+            self.assertIn(sp, pb_models)
+        self.assertNotIn("case x3 = 3.0", pb_models)
+
+        timelapse = source("Services/PhotoboothTimelapseEngine.swift")
+        for tok in [
+            "qos: .userInitiated",
+            "(now - lastCaptureTime) < 0.055",
+            "maxFramesPerSlot: Int = 120",
+            "snapshotDecodedImagesBySlot()",
+            "let fps: Int32 = 30",
+            "AVVideoAllowFrameReorderingKey: false",
+            "writer.shouldOptimizeForNetworkUse = true",
+            "slotBaseCanvasCG",
+            "drawInterpolatedClipSlot(",
+        ]:
+            self.assertIn(tok, timelapse)
+
+        editor = source("Views/PhotoboothEditorSheetView.swift")
+        for tok in [
+            "cachedVideoURLs",
+            "automaticallyWaitsToMinimizeStalling = false",
+            "toleranceBefore: .zero, toleranceAfter: .zero",
+        ]:
+            self.assertIn(tok, editor)
 
 
 if __name__ == "__main__":
