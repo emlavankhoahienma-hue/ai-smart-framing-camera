@@ -103,7 +103,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install "torch==2.5.1" "numpy==1.26.4" \
-            "ultralytics==8.4.190" "coremltools==9.0"
+            "ultralytics==8.4.190" "coremltools==9.0" "scikit-learn==1.5.2"
           if ! xcrun coremlc compile models/yolov26-engine/weights/yolov26_ane.mlpackage .; then
             cp models/yolov26-engine/weights/yolov26_ane.mlpackage/Data/com.apple.CoreML/model.mlmodel yolov26_ane.mlmodel
             xcrun coremlc compile yolov26_ane.mlmodel .
