@@ -177,22 +177,44 @@ def main() -> None:
             return ok, errs
 
         errors = []
-        for quant_mode, label in (("linear_symmetric", "W8A16-symmetric"), ("linear", "W8A16-linear")):
-            q_cfg = cto.OptimizationConfig(
-                global_config=cto.OpLinearQuantizerConfig(
-                    mode=quant_mode,
-                    dtype="int8",
-                    granularity="per_channel",
-                    weight_threshold=512,
-                )
-            )
-            candidate = cto.linear_quantize_weights(fp16_converted, config=q_cfg)
+        candidates = [
+            (
+                "W8A16-palettized8",
+                lambda m: cto.palettize_weights(
+                    m,
+                    config=cto.OptimizationConfig(
+                        global_config=cto.OpPalettizerConfig(
+                            nbits=8,
+                            mode="kmeans",
+                            granularity="per_tensor",
+                            weight_threshold=2048,
+                        )
+                    ),
+                ),
+            ),
+            (
+                "W8A16-linear",
+                lambda m: cto.linear_quantize_weights(
+                    m,
+                    config=cto.OptimizationConfig(
+                        global_config=cto.OpLinearQuantizerConfig(
+                            mode="linear",
+                            dtype="int8",
+                            granularity="per_channel",
+                            weight_threshold=512,
+                        )
+                    ),
+                ),
+            ),
+        ]
+        for label, compress_fn in candidates:
+            candidate = compress_fn(fp16_converted)
             passed, errs = evaluate_parity(candidate)
             if passed:
                 converted = candidate
                 selected_precision = label
                 errors = errs
-                print(f"SAMP-Net {label} quantization passed 24-photo parity "
+                print(f"SAMP-Net {label} compression passed 24-photo parity "
                       f"(maxProb={max(x['maxProbabilityError'] for x in errs):.4f}, "
                       f"maxMean={max(x['meanScoreError'] for x in errs):.4f})")
                 break

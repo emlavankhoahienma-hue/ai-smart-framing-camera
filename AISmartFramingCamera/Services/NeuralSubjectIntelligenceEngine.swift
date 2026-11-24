@@ -824,14 +824,15 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     /// Non-blocking serialized pressure-only trim for manual UI cancellation while remaining in camera:
     /// keeps warm singletons intact when iOS Jetsam headroom is healthy, avoiding costly reload leaks.
     public func scheduleTrimCachesUnderPressure(
-        minimumReserveBytes: Int = CompositionMemoryBudget.postRunPhotoCaptureReserveBytes
+        minimumReserveBytes: Int? = nil
     ) {
+        let targetReserve = minimumReserveBytes ?? CompositionMemoryBudget.postRunPhotoCaptureReserveBytes
         analysisQueue.async { [weak self] in
             guard let self else { return }
             self.analysisLock.lock()
             defer { self.analysisLock.unlock() }
             self.renderer.clearCaches()
-            let evicted = CompositionMemoryBudget.trimForReserve(minimumBytes: minimumReserveBytes)
+            let evicted = CompositionMemoryBudget.trimForReserve(minimumBytes: targetReserve)
             if !evicted.isEmpty {
                 CameraLogger.info(
                     "LocalAI cancel-trim: evicted=\(evicted.joined(separator: ",")) availMB=\(CompositionMemoryBudget.availableMB())",

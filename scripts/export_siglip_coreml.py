@@ -144,24 +144,46 @@ def main() -> None:
     converted = fp16_converted
     selected_precision = "FP16"
     min_cosine = float("nan")
-    for quant_mode, label in (("linear_symmetric", "W8A16-symmetric"), ("linear", "W8A16-linear")):
-        q_cfg = cto.OptimizationConfig(
-            global_config=cto.OpLinearQuantizerConfig(
-                mode=quant_mode,
-                dtype="int8",
-                granularity="per_channel",
-                weight_threshold=512,
-            )
-        )
-        candidate = cto.linear_quantize_weights(fp16_converted, config=q_cfg)
+    candidates = [
+        (
+            "W8A16-palettized8",
+            lambda m: cto.palettize_weights(
+                m,
+                config=cto.OptimizationConfig(
+                    global_config=cto.OpPalettizerConfig(
+                        nbits=8,
+                        mode="kmeans",
+                        granularity="per_tensor",
+                        weight_threshold=2048,
+                    )
+                ),
+            ),
+        ),
+        (
+            "W8A16-symmetric",
+            lambda m: cto.linear_quantize_weights(
+                m,
+                config=cto.OptimizationConfig(
+                    global_config=cto.OpLinearQuantizerConfig(
+                        mode="linear_symmetric",
+                        dtype="int8",
+                        granularity="per_channel",
+                        weight_threshold=512,
+                    )
+                ),
+            ),
+        ),
+    ]
+    for label, compress_fn in candidates:
+        candidate = compress_fn(fp16_converted)
         cos = measure_min_cosine(candidate)
         if np.isfinite(cos) and cos >= 0.985:
             converted = candidate
             selected_precision = label
             min_cosine = cos
-            print(f"SigLIP {label} quantization passed parity (min_cosine={cos:.5f})")
+            print(f"SigLIP {label} compression passed parity (min_cosine={cos:.5f})")
             break
-        print(f"SigLIP {label} quantization drifted (min_cosine={cos:.5f}), trying fallback")
+        print(f"SigLIP {label} compression drifted (min_cosine={cos:.5f}), trying fallback")
 
     if selected_precision == "FP16":
         min_cosine = measure_min_cosine(converted)

@@ -175,16 +175,38 @@ def main() -> None:
     converted = fp16_converted
     selected_precision = "FP16"
     score_max_diff, score_corr, box_diff = float("nan"), float("nan"), float("nan")
-    for quant_mode, label in (("linear_symmetric", "W8A16-symmetric"), ("linear", "W8A16-linear")):
-        q_cfg = cto.OptimizationConfig(
-            global_config=cto.OpLinearQuantizerConfig(
-                mode=quant_mode,
-                dtype="int8",
-                granularity="per_channel",
-                weight_threshold=512,
-            )
-        )
-        candidate = cto.linear_quantize_weights(fp16_converted, config=q_cfg)
+    candidates = [
+        (
+            "W8A16-palettized8",
+            lambda m: cto.palettize_weights(
+                m,
+                config=cto.OptimizationConfig(
+                    global_config=cto.OpPalettizerConfig(
+                        nbits=8,
+                        mode="kmeans",
+                        granularity="per_tensor",
+                        weight_threshold=2048,
+                    )
+                ),
+            ),
+        ),
+        (
+            "W8A16-symmetric",
+            lambda m: cto.linear_quantize_weights(
+                m,
+                config=cto.OptimizationConfig(
+                    global_config=cto.OpLinearQuantizerConfig(
+                        mode="linear_symmetric",
+                        dtype="int8",
+                        granularity="per_channel",
+                        weight_threshold=512,
+                    )
+                ),
+            ),
+        ),
+    ]
+    for label, compress_fn in candidates:
+        candidate = compress_fn(fp16_converted)
         s_diff, s_corr, b_diff = measure_parity(candidate)
         if np.isfinite(s_diff) and s_diff <= 0.06 and s_corr >= 0.99:
             converted = candidate
