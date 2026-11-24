@@ -39,65 +39,108 @@ private final class SemanticCropRanker: @unchecked Sendable {
     }
 
     static let shared = SemanticCropRanker()
+    private let lock = NSLock()
     private var attemptedLoad = false
     private var activeSessionDepth = 0
     private var model: VNCoreMLModel?
     private var prompts: [String: [Double]] = [:]
-    private(set) var didProduceEvidence = false
+    private var _didProduceEvidence = false
+    var didProduceEvidence: Bool { lock.withLock { _didProduceEvidence } }
 
     func beginAnalysis() {
-        if activeSessionDepth == 0 {
-            didProduceEvidence = false
+        lock.withLock {
+            if activeSessionDepth == 0 {
+                _didProduceEvidence = false
+            }
+            activeSessionDepth += 1
         }
-        activeSessionDepth += 1
     }
     func endAnalysis() {
-        activeSessionDepth = max(0, activeSessionDepth - 1)
-        guard activeSessionDepth == 0 else { return }
-        releaseModelNow()
+        let shouldRelease: Bool = lock.withLock {
+            activeSessionDepth = max(0, activeSessionDepth - 1)
+            return activeSessionDepth == 0
+        }
+        if shouldRelease {
+            releaseModelNow()
+        }
+    }
+    /// Resets any leaked depth (e.g. early cancellation return inside `analyzeCapturedFrame`)
+    /// and unloads SigLIP cleanly under lock.
+    func resetSessionAndRelease() {
+        lock.withLock {
+            activeSessionDepth = 0
+            model = nil
+            prompts.removeAll(keepingCapacity: false)
+            attemptedLoad = false
+        }
     }
     /// Releases SigLIP weights (~350MB runtime RAM) immediately before heavy OpenWorld/Mask/SAMP/Charm stages
     /// while preserving `activeSessionDepth` balance.
     func releaseModelNow() {
-        model = nil
-        prompts.removeAll(keepingCapacity: false)
-        attemptedLoad = false
+        lock.withLock {
+            model = nil
+            prompts.removeAll(keepingCapacity: false)
+            attemptedLoad = false
+        }
     }
 
-    private func loadIfAvailable() {
-        guard !attemptedLoad else { return }
+    private func loadAndSnapshot() -> (model: VNCoreMLModel?, prompts: [String: [Double]]) {
+        lock.lock()
+        if attemptedLoad {
+            let snap = (model, prompts)
+            lock.unlock()
+            return snap
+        }
         attemptedLoad = true
+        lock.unlock()
+
         guard ProcessInfo.processInfo.physicalMemory >= 2_500_000_000,
               ProcessInfo.processInfo.thermalState != .serious,
               ProcessInfo.processInfo.thermalState != .critical,
               !ProcessInfo.processInfo.isLowPowerModeEnabled,
+              CompositionMemoryBudget.hasHeadroom(minimumBytes: 160_000_000),
               let url = Bundle.main.url(forResource: "SigLIPBaseImage", withExtension: "mlmodelc"),
               let promptURL = Bundle.main.url(forResource: "SigLIPPrompts", withExtension: "json"),
               let data = try? Data(contentsOf: promptURL),
               let vectors = try? JSONDecoder().decode([String: [Double]].self, from: data),
-              !vectors.isEmpty else { return }
+              !vectors.isEmpty else {
+            return (nil, [:])
+        }
         do {
             let config = MLModelConfiguration()
-            config.computeUnits = .all
+            // Static 224x224 FP16 ViT runs purely on ANE — keeping SigLIP off Metal GPU prevents
+            // MPSGraph heap fragmentation and 60fps viewfinder stalls with 100% identical accuracy.
+            config.computeUnits = .cpuAndNeuralEngine
             config.allowLowPrecisionAccumulationOnGPU = true
-            model = try VNCoreMLModel(for: MLModel(contentsOf: url, configuration: config))
-            prompts = vectors
+            let loadedModel = try VNCoreMLModel(for: MLModel(contentsOf: url, configuration: config))
+            lock.lock()
+            // Guard against a concurrent release occurring while MLModel compiled
+            if attemptedLoad {
+                model = loadedModel
+                prompts = vectors
+            }
+            lock.unlock()
+            return (loadedModel, vectors)
         } catch {
-            model = nil
-            prompts = [:]
+            lock.withLock {
+                model = nil
+                prompts = [:]
+            }
             CameraLogger.warning("SigLIP không khả dụng, dùng Vision/YOLO: \(error)", category: .ai)
+            return (nil, [:])
         }
     }
 
     func sceneEvidence(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
                        cancellation: CompositionAnalysisCancellation) -> [String: Double] {
-        loadIfAvailable()
-        guard let model, !prompts.isEmpty, !cancellation.isCancelled else { return [:] }
+        let snap = loadAndSnapshot()
+        guard let model = snap.model, !snap.prompts.isEmpty, !cancellation.isCancelled else { return [:] }
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
-        return affinities(model: model, handler: handler, cancellation: cancellation)
+        return affinities(model: model, prompts: snap.prompts, handler: handler, cancellation: cancellation)
     }
 
-    private func affinities(model: VNCoreMLModel, handler: VNImageRequestHandler,
+    private func affinities(model: VNCoreMLModel, prompts: [String: [Double]],
+                            handler: VNImageRequestHandler,
                             cancellation: CompositionAnalysisCancellation,
                             topLeftRoI: CGRect? = nil,
                             cropScale: VNImageCropAndScaleOption = .scaleFit) -> [String: Double] {
@@ -148,7 +191,9 @@ private final class SemanticCropRanker: @unchecked Sendable {
             let score = zip(image, text).reduce(0) { $0 + $1.0 * $1.1 } / norm
             if score.isFinite { scores[key] = score }
         }
-        didProduceEvidence = didProduceEvidence || !scores.isEmpty
+        if !scores.isEmpty {
+            lock.withLock { _didProduceEvidence = true }
+        }
         return scores
     }
 
@@ -175,18 +220,20 @@ private final class SemanticCropRanker: @unchecked Sendable {
                         candidates: [NeuralSubjectCandidate],
                         detectedScene: DetectedSceneType,
                         cancellation: CompositionAnalysisCancellation) -> SpatialSemanticProfile {
-        loadIfAvailable()
+        let snap = loadAndSnapshot()
+        let activeModel = snap.model
+        let activePrompts = snap.prompts
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         let fullS: [String: Double]
         if !existingFull.isEmpty {
             fullS = existingFull
-        } else if let model, !prompts.isEmpty, !cancellation.isCancelled {
-            fullS = affinities(model: model, handler: handler, cancellation: cancellation)
+        } else if let activeModel, !activePrompts.isEmpty, !cancellation.isCancelled {
+            fullS = affinities(model: activeModel, prompts: activePrompts, handler: handler, cancellation: cancellation)
         } else {
             fullS = [:]
         }
 
-        let hasRichPrompts = prompts["architecture_facade"] != nil && model != nil && !fullS.isEmpty && !cancellation.isCancelled
+        let hasRichPrompts = activePrompts["architecture_facade"] != nil && activeModel != nil && !fullS.isEmpty && !cancellation.isCancelled
         let isThermalConstrained = ProcessInfo.processInfo.thermalState == .serious ||
             ProcessInfo.processInfo.thermalState == .critical ||
             ProcessInfo.processInfo.isLowPowerModeEnabled
@@ -202,26 +249,26 @@ private final class SemanticCropRanker: @unchecked Sendable {
         let botS: [String: Double]
         let coreS: [String: Double]
         let isMobileSingleModel = ProcessInfo.processInfo.physicalMemory < 16_000_000_000
-        if hasRichPrompts, let model, !isThermalConstrained, !cancellation.isSoftDeadlineReached {
+        if hasRichPrompts, let activeModel, !isThermalConstrained, !cancellation.isSoftDeadlineReached {
             coreS = autoreleasepool {
-                affinities(model: model, handler: handler, cancellation: cancellation,
+                affinities(model: activeModel, prompts: activePrompts, handler: handler, cancellation: cancellation,
                            topLeftRoI: CGRect(x: 0.16, y: 0.16, width: 0.68, height: 0.68), cropScale: .scaleFill)
             }
             // On mobile devices, CompositionRaster already extracts 64x64 pixel-exact sky/wall/pillar/floor
             // avoidance in <0.3ms; skipping 4 redundant peripheral SigLIP ViT passes cuts latency & ANE heat ~3x.
             if !isMobileSingleModel && fullClutterSignal >= 0.015 && !cancellation.isSoftDeadlineReached && cancellation.remainingSoftBudget > 2.2 {
-                leftS = affinities(model: model, handler: handler, cancellation: cancellation,
+                leftS = affinities(model: activeModel, prompts: activePrompts, handler: handler, cancellation: cancellation,
                                    topLeftRoI: CGRect(x: 0.0, y: 0.06, width: 0.52, height: 0.88), cropScale: .scaleFill)
                 rightS = !cancellation.isSoftDeadlineReached
-                    ? affinities(model: model, handler: handler, cancellation: cancellation,
+                    ? affinities(model: activeModel, prompts: activePrompts, handler: handler, cancellation: cancellation,
                                  topLeftRoI: CGRect(x: 0.48, y: 0.06, width: 0.52, height: 0.88), cropScale: .scaleFill)
                     : [:]
                 topS = !cancellation.isSoftDeadlineReached
-                    ? affinities(model: model, handler: handler, cancellation: cancellation,
+                    ? affinities(model: activeModel, prompts: activePrompts, handler: handler, cancellation: cancellation,
                                  topLeftRoI: CGRect(x: 0.06, y: 0.0, width: 0.88, height: 0.42), cropScale: .scaleFill)
                     : [:]
                 botS = !cancellation.isSoftDeadlineReached
-                    ? affinities(model: model, handler: handler, cancellation: cancellation,
+                    ? affinities(model: activeModel, prompts: activePrompts, handler: handler, cancellation: cancellation,
                                  topLeftRoI: CGRect(x: 0.06, y: 0.58, width: 0.88, height: 0.42), cropScale: .scaleFill)
                     : [:]
             } else {
@@ -470,10 +517,12 @@ private final class SemanticCropRanker: @unchecked Sendable {
                                     pixelBuffer: CVPixelBuffer,
                                     orientation: CGImagePropertyOrientation,
                                     cancellation: CompositionAnalysisCancellation) -> [CompositionProposal] {
-        guard let model, !prompts.isEmpty, prompts["clean_composition"] != nil,
+        let snap = lock.withLock { (model, prompts) }
+        guard let activeModel = snap.0, !snap.1.isEmpty, snap.1["clean_composition"] != nil,
               fullScores["clean_composition"] != nil, !cancellation.isCancelled, !proposals.isEmpty else {
             return proposals
         }
+        let activePrompts = snap.1
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         func cropRect(from corners: [CGPoint]) -> CGRect {
             let minX = max(0.0, min(1.0, corners.map(\.x).min() ?? 0.0))
@@ -506,7 +555,7 @@ private final class SemanticCropRanker: @unchecked Sendable {
             guard chosen.count < maxSemanticCrops, !cancellation.isCancelled else { break }
             let rect = cropRect(from: item.element.sourceCorners)
             if chosen.contains(where: { rectIoU($0.rect, rect) > 0.84 }) { continue }
-            let cropScores = affinities(model: model, handler: handler, cancellation: cancellation,
+            let cropScores = affinities(model: activeModel, prompts: activePrompts, handler: handler, cancellation: cancellation,
                                         topLeftRoI: rect, cropScale: .scaleFill)
             guard !cropScores.isEmpty else { continue }
             let bonus = cropBonus(cropScores: cropScores, origScores: fullScores, role: role)
@@ -671,24 +720,58 @@ struct LocalCompositionAnalysis: Sendable {
 /// No camera-pool buffer is cached and none of this state enters the target tracker.
 public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     public static let shared = NeuralSubjectIntelligenceEngine()
-    private let analysisLock = NSLock()
-    /// Dedicated serial worker queue so Swift Concurrency cooperative threads never block on `analysisLock`.
-    private let analysisQueue = DispatchQueue(label: "com.alignstudio.localAI.analysis", qos: .userInitiated)
+    private let analysisLock = NSRecursiveLock()
+    /// Dedicated serial worker queue with `.workItem` autorelease draining so CoreML/Vision ObjC
+    /// allocations never linger on the worker thread between runs and Swift Concurrency never blocks on `analysisLock`.
+    private let analysisQueue = DispatchQueue(
+        label: "com.alignstudio.localAI.analysis",
+        qos: .userInitiated,
+        autoreleaseFrequency: .workItem
+    )
     private let renderer = CompositionImageRenderer()
-    public init() {}
+    public init() {
+        #if canImport(UIKit)
+        _ = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            self?.scheduleReleaseAllModelCaches()
+        }
+        #endif
+    }
 
-    /// Releases cached on-device Core ML models and CoreImage scratch buffers so
-    /// high-memory camera pipelines (Live Photo ring buffer, RAW capture) stay safely
-    /// below iOS Jetsam limits without weakening AI model accuracy.
-    public func releaseAllModelCaches() {
+    private func releaseAllModelCachesLocked() {
         autoreleasepool {
-            SemanticCropRanker.shared.releaseModelNow()
+            SemanticCropRanker.shared.resetSessionAndRelease()
             OpenWorldSubjectDetector.shared.releaseCachedModel()
             GAICCompositionModel.clearCache()
             PhotographicCompositionModel.clearCache()
             CharmPhotographicModel.clearCache()
             renderer.releaseDepthModel()
             renderer.clearCaches()
+        }
+    }
+
+    /// Thread-safe cache release: runs immediately if idle, or serializes cleanly behind any
+    /// in-flight `analyzeComposition` on `analysisQueue` so external callers never race with
+    /// active `SemanticCropRanker` or `CIContext` work.
+    public func releaseAllModelCaches() {
+        if analysisLock.try() {
+            defer { analysisLock.unlock() }
+            releaseAllModelCachesLocked()
+        } else {
+            scheduleReleaseAllModelCaches()
+        }
+    }
+
+    /// Non-blocking serialized release on `analysisQueue` for UI / cancellation / memory warning callers.
+    public func scheduleReleaseAllModelCaches() {
+        analysisQueue.async { [weak self] in
+            guard let self else { return }
+            self.analysisLock.lock()
+            defer { self.analysisLock.unlock() }
+            self.releaseAllModelCachesLocked()
         }
     }
 
@@ -734,23 +817,29 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         let lowMem = lowMemoryBudget || ProcessInfo.processInfo.physicalMemory < 16_000_000_000
         analysisLock.lock()
         if lowMem {
-            releaseAllModelCaches()
+            releaseAllModelCachesLocked()
         }
         SemanticCropRanker.shared.beginAnalysis()
         defer {
-            SemanticCropRanker.shared.endAnalysis()
-            if lowMem { self.releaseAllModelCaches() }
+            SemanticCropRanker.shared.resetSessionAndRelease()
+            if lowMem { self.releaseAllModelCachesLocked() }
             analysisLock.unlock()
         }
         let started = ProcessInfo.processInfo.systemUptime
+        let startAvailMB = CompositionMemoryBudget.availableMB()
         func receipt(count: Int = 0, specialist: Bool = false, modern: Int = 0) -> CompositionAnalysisReceipt {
             CompositionAnalysisReceipt(requestID: requestID, sourceTimestamp: frame.timestamp,
                 elapsed: max(0, ProcessInfo.processInfo.systemUptime - started),
                 assessedFrames: count, usedSpecialist: specialist, modernAssessments: modern)
         }
-        guard !cancellation.isCancelled,
-              let output = analyzeCapturedFrame(pixelBuffer: pixelBuffer, orientation: frame.orientation,
-                                                 cancellation: cancellation) else { return nil }
+        // Stage 0 runs inside its own tight autoreleasepool so 9 Vision requests + DepthAnythingV2 + YOLO
+        // ObjC intermediates are immediately drained BEFORE OpenWorld/Mask/GAIC/SAMP/Charm allocate.
+        let maybeOutput: NeuralAnalysisOutput? = autoreleasepool {
+            guard !cancellation.isCancelled else { return nil }
+            return analyzeCapturedFrame(pixelBuffer: pixelBuffer, orientation: frame.orientation,
+                                        cancellation: cancellation)
+        }
+        guard !cancellation.isCancelled, let output = maybeOutput else { return nil }
         let tAfterDetect = ProcessInfo.processInfo.systemUptime
         // Choose identity intelligently using spatial SigLIP semantics, pixel clutter/roof/VP maps, and filtered detectors.
         guard let raster = output.compositionRaster else {
@@ -764,14 +853,16 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         // MEMORY-SAFE STAGE ORDER:
         // 1) SigLIP is ALREADY loaded in RAM by `analyzeCapturedFrame`. Extract spatial semantic profile NOW...
         progress("Đang phân tích ngữ nghĩa & chiều sâu bố cục…")
-        let spatialProfile = SemanticCropRanker.shared.spatialProfile(
-            pixelBuffer: pixelBuffer,
-            orientation: frame.orientation,
-            fullScores: output.semanticAffinities,
-            candidates: output.allCandidates,
-            detectedScene: output.detectedScene,
-            cancellation: cancellation
-        )
+        let spatialProfile: SemanticCropRanker.SpatialSemanticProfile = autoreleasepool {
+            SemanticCropRanker.shared.spatialProfile(
+                pixelBuffer: pixelBuffer,
+                orientation: frame.orientation,
+                fullScores: output.semanticAffinities,
+                candidates: output.allCandidates,
+                detectedScene: output.detectedScene,
+                cancellation: cancellation
+            )
+        }
         let tAfterSigLIP = ProcessInfo.processInfo.systemUptime
         // 2) IMMEDIATELY unload SigLIP (~350-450MB) and DepthAnythingV2 (~180MB) BEFORE
         //    OpenWorldPhotoYOLOE + ForegroundInstanceMask so peak memory stays strictly single-model!
@@ -786,12 +877,14 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
 
         // 3) Run Open-World Photographic YOLOE-26m (curated classes) + iOS 17+ Foreground Instance Mask
         progress("Đang nhận diện vật thể mở rộng & tách nền tiền cảnh…")
-        let openWorldDetections = OpenWorldSubjectDetector.shared.detect(
-            pixelBuffer: pixelBuffer,
-            orientation: frame.orientation,
-            cancellation: cancellation,
-            preferSequential: lowMem
-        )
+        let openWorldDetections: [DirectorDetection] = autoreleasepool {
+            OpenWorldSubjectDetector.shared.detect(
+                pixelBuffer: pixelBuffer,
+                orientation: frame.orientation,
+                cancellation: cancellation,
+                preferSequential: lowMem
+            )
+        }
         let tAfterOpenWorld = ProcessInfo.processInfo.systemUptime
         let directorDetections: [DirectorDetection] = {
             var list: [DirectorDetection] = output.allCandidates.map { c in
@@ -879,16 +972,18 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         var portraitBounds: CGRect?
         var poseProfile: AnatomicalPoseProfile?
         if hero.category == .human, !hero.isGroup {
-            let poseRequest = VNDetectHumanBodyPoseRequest()
-            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: frame.orientation, options: [:])
-            if (try? cancellation.perform(poseRequest, with: handler)) != nil {
-                let observations = poseRequest.results ?? []
-                if !hero.faceBounds.isEmpty {
-                    portraitBounds = PortraitFramingEvidence.bounds(body: hero.boundingBox,
+            autoreleasepool {
+                let poseRequest = VNDetectHumanBodyPoseRequest()
+                let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: frame.orientation, options: [:])
+                if (try? cancellation.perform(poseRequest, with: handler)) != nil {
+                    let observations = poseRequest.results ?? []
+                    if !hero.faceBounds.isEmpty {
+                        portraitBounds = PortraitFramingEvidence.bounds(body: hero.boundingBox,
+                            faces: hero.faceBounds, observations: observations)
+                    }
+                    poseProfile = PortraitFramingEvidence.extractProfile(body: hero.boundingBox,
                         faces: hero.faceBounds, observations: observations)
                 }
-                poseProfile = PortraitFramingEvidence.extractProfile(body: hero.boundingBox,
-                    faces: hero.faceBounds, observations: observations)
             }
         }
         if portraitBounds == nil && (hero.category == .human || hero.category == .face) && !hero.isGroup {
@@ -1070,19 +1165,21 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         progress("Đang đánh giá bố cục bằng mô hình trên máy…")
         let orientedCI = CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation)
         let tBeforeSearch = ProcessInfo.processInfo.systemUptime
-        let search = CompositionAestheticSearch(renderer: renderer)
-        let searchResult = search.run(proposals: initialProposals,
-            image: orientedCI,
-            aspect: frame.calibration.aspect, preferences: preferences,
-            raster: raster,
-            modelURL: sampModelURL,
-            gaicModelURL: gaicModelURL,
-            aestheticModelURL: constrained ? nil : Bundle.main.url(forResource: "CharmAesthetics", withExtension: "mlmodelc"),
-            positionURL: constrained ? nil : Bundle.main.url(forResource: "CharmPositionEmbedding", withExtension: "bin"),
-            requiresModernModel: false,
-            sceneHints: sceneHints,
-            lowMemoryBudget: lowMem,
-            cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) })
+        let searchResult: CompositionAestheticSearch.Result? = autoreleasepool {
+            let search = CompositionAestheticSearch(renderer: renderer)
+            return search.run(proposals: initialProposals,
+                image: orientedCI,
+                aspect: frame.calibration.aspect, preferences: preferences,
+                raster: raster,
+                modelURL: sampModelURL,
+                gaicModelURL: gaicModelURL,
+                aestheticModelURL: constrained ? nil : Bundle.main.url(forResource: "CharmAesthetics", withExtension: "mlmodelc"),
+                positionURL: constrained ? nil : Bundle.main.url(forResource: "CharmPositionEmbedding", withExtension: "bin"),
+                requiresModernModel: false,
+                sceneHints: sceneHints,
+                lowMemoryBudget: lowMem,
+                cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) })
+        }
         guard let result = searchResult else {
             renderer.clearCaches()
             return nil
@@ -1108,10 +1205,13 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             poseProfile: poseProfile
         )
         let tAfterDirector = ProcessInfo.processInfo.systemUptime
+        let endAvailMB = CompositionMemoryBudget.availableMB()
         CameraLogger.info(
             String(
-                format: "LocalAI timings [lowMem=%d]: detect=%.0fms siglip=%.0fms openWorld=%.0fms proposals=%.0fms search=%.0fms director=%.0fms total=%.0fms (hero=%@, style=%@)",
+                format: "LocalAI timings [lowMem=%d]: availMB=%d->%d detect=%.0fms siglip=%.0fms openWorld=%.0fms proposals=%.0fms search=%.0fms director=%.0fms total=%.0fms (hero=%@, style=%@)",
                 lowMem ? 1 : 0,
+                startAvailMB,
+                endAvailMB,
                 (tAfterDetect - started) * 1000.0,
                 (tAfterSigLIP - tAfterDetect) * 1000.0,
                 (tAfterOpenWorld - tAfterSigLIP) * 1000.0,
@@ -1136,11 +1236,13 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 CGPoint(x: cx - half, y: cy + half),
             ]
         }()
-        let directorPreviewImage = renderer.preview(
-            image: orientedCI,
-            corners: directorPreviewCorners,
-            aspect: frame.calibration.aspect
-        ) ?? result.views.first?.image
+        let directorPreviewImage: CGImage? = autoreleasepool {
+            renderer.preview(
+                image: orientedCI,
+                corners: directorPreviewCorners,
+                aspect: frame.calibration.aspect
+            ) ?? result.views.first?.image
+        }
         renderer.clearCaches()
 
         let primaryHero = hero

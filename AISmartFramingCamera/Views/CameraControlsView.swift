@@ -502,14 +502,14 @@ struct GalleryThumbnailButton: View {
                             .stroke(Color.white.opacity(0.18), lineWidth: 0.7)
                     )
 
-                if let photo = viewModel.latestCapturedPhoto {
-                    Image(decorative: photo.processedImage, scale: 1.0, orientation: .up)
+                if let thumb = viewModel.latestAlbumThumbnail {
+                    Image(uiImage: thumb)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                         .frame(width: 44, height: 44)
                         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                } else if let thumb = viewModel.latestAlbumThumbnail {
-                    Image(uiImage: thumb)
+                } else if let photo = viewModel.latestCapturedPhoto {
+                    Image(decorative: photo.processedImage, scale: 1.0, orientation: .up)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                         .frame(width: 44, height: 44)

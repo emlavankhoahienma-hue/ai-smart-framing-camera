@@ -23,7 +23,6 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
 
     private let lock = NSLock()
     private let renderLock = NSLock()
-    private let ciContext = CIContext(options: [.cacheIntermediates: false])
     private let defaultInputSide: Int = 512
 
     private var cachedModel: MLModel?
@@ -82,7 +81,7 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
             cachedModel = nil
         }
         renderLock.withLock {
-            ciContext.clearCaches()
+            CompositionImageRenderer.clearSharedCaches()
         }
     }
 
@@ -183,7 +182,8 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
         guard !cancellation.isCancelled,
               ProcessInfo.processInfo.physicalMemory >= 3_500_000_000,
               ProcessInfo.processInfo.thermalState != .critical,
-              !ProcessInfo.processInfo.isLowPowerModeEnabled else {
+              !ProcessInfo.processInfo.isLowPowerModeEnabled,
+              CompositionMemoryBudget.hasHeadroom(minimumBytes: 140_000_000) else {
             return []
         }
         let classes = loadClassesIfNeeded()
@@ -198,7 +198,9 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
             let model: MLModel? = lock.withLock {
                 if let cached = cachedModel { return cached }
                 let config = MLModelConfiguration()
-                config.computeUnits = .all
+                // Baked MobileCLIP2-B Conv2d 512x512 static graph runs purely on ANE — keeping it off Metal GPU
+                // prevents MPSGraph heap fragmentation and 60fps viewfinder stalls with zero accuracy loss.
+                config.computeUnits = .cpuAndNeuralEngine
                 config.allowLowPrecisionAccumulationOnGPU = true
                 guard let loaded = try? MLModel(contentsOf: modelURL, configuration: config) else { return nil }
                 if keepCached { cachedModel = loaded }
@@ -282,7 +284,7 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
         }
 
         renderLock.withLock {
-            ciContext.render(
+            CompositionImageRenderer.renderShared(
                 composed,
                 to: buffer,
                 bounds: CGRect(x: 0, y: 0, width: side, height: side),
@@ -494,7 +496,8 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
         cancellation: CompositionAnalysisCancellation
     ) -> [DirectorDetection] {
         guard !cancellation.isCancelled,
-              ProcessInfo.processInfo.thermalState != .critical else {
+              ProcessInfo.processInfo.thermalState != .critical,
+              CompositionMemoryBudget.hasHeadroom(minimumBytes: 140_000_000) else {
             return []
         }
         guard #available(iOS 17.0, macOS 14.0, *) else { return [] }

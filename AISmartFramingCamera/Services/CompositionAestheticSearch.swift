@@ -62,6 +62,7 @@ final class CompositionAestheticSearch {
             if singleModelResidency {
                 GAICCompositionModel.clearCache()
             }
+            CompositionImageRenderer.clearSharedCaches()
         }
         guard !cancellation.isCancelled else { return nil }
 
@@ -163,104 +164,115 @@ final class CompositionAestheticSearch {
             return bestDist < 0.14 ? bestBonus : proposal.semanticCropBonus
         }
 
-        var specialist: PhotographicCompositionModel? = nil
-        if let modelURL, !cancellation.isSoftDeadlineReached || !usedGAIC {
-            specialist = PhotographicCompositionModel.cachedOrLoad(url: modelURL)
-        }
+        // Stage B: SAMP-Net runs inside its own tight autoreleasepool so 100% of CoreML / ANE / ObjC
+        // buffers from PhotographicCompositionModel are drained BEFORE Charm DINOv2-small allocates.
         var assessedCount = 0
-        func evaluate(_ candidates: [CompositionProposal]) -> [View] {
-            var result: [View] = []
-            for (index, rawCandidate) in candidates.enumerated() {
-                if cancellation.isCancelled { return [] }
-                let skipHeavyModel = cancellation.isSoftDeadlineReached && (usedGAIC || assessedCount >= 2)
-                var candidate = rawCandidate
-                if usedGAIC && rawCandidate.gaicScore == 0.5 {
-                    candidate.gaicScore = matchedGAICScore(for: rawCandidate)
-                }
-                if abs(candidate.semanticCropBonus) <= 1e-4 && sceneHints.hasRichGuidance {
-                    candidate.semanticCropBonus = matchedSemanticBonus(for: candidate)
-                }
-                let item: View? = autoreleasepool {
-                    guard let preview = renderer.preview(image: image, corners: candidate.sourceCorners, aspect: aspect) else { return nil }
-                    let syncCrop = skipHeavyModel ? nil : raster.flatMap {
-                        renderer.synchronizedSaliencyCrop(from: $0, corners: candidate.sourceCorners, side: 224)
+        var hadSpecialist = false
+        var evaluated: [View] = autoreleasepool {
+            var specialist: PhotographicCompositionModel? = nil
+            if let modelURL,
+               (!cancellation.isSoftDeadlineReached || !usedGAIC),
+               CompositionMemoryBudget.hasHeadroom(minimumBytes: 140_000_000) {
+                specialist = PhotographicCompositionModel.cachedOrLoad(url: modelURL)
+            }
+            hadSpecialist = (specialist != nil)
+            func evaluate(_ candidates: [CompositionProposal]) -> [View] {
+                var result: [View] = []
+                for (index, rawCandidate) in candidates.enumerated() {
+                    if cancellation.isCancelled { return [] }
+                    let skipHeavyModel = cancellation.isSoftDeadlineReached && (usedGAIC || assessedCount >= 2)
+                    var candidate = rawCandidate
+                    if usedGAIC && rawCandidate.gaicScore == 0.5 {
+                        candidate.gaicScore = matchedGAICScore(for: rawCandidate)
                     }
-                    let assessment = skipHeavyModel ? nil : specialist?.assess(preview, synchronizedSaliencyCrop: syncCrop, cancellation: cancellation)
-                    var proposal = candidate
-                    let zoomRatio = Double(candidate.zoom) / sourceBaseZoom
-                    let justified = CompositionPreferencePolicy.isJustifiedZoom(candidate)
-                    let zoomReg = usedGAIC ? (justified ? 0.025 : 0.08) * max(0.0, zoomRatio - (justified ? 1.95 : 1.65)) : 0.0
-                    let oobPenalty = min(0.18, candidate.outOfBoundsFraction * 0.22)
-                    let geomClamped = min(1.35, max(0.0, candidate.score))
-                    let gaicClamped = min(1.0, max(0.0, candidate.gaicScore))
-                    let semBonus = sceneHints.hasRichGuidance ? min(0.35, max(-0.20, candidate.semanticCropBonus)) : 0.0
-                    if let assessment {
-                        assessedCount += 1
-                        let sampNorm = (assessment.mean - 1) / 4
-                        if usedGAIC {
-                            proposal.score = 0.44 * geomClamped +
-                                0.28 * sampNorm +
-                                0.28 * gaicClamped +
+                    if abs(candidate.semanticCropBonus) <= 1e-4 && sceneHints.hasRichGuidance {
+                        candidate.semanticCropBonus = matchedSemanticBonus(for: candidate)
+                    }
+                    let item: View? = autoreleasepool {
+                        guard let preview = renderer.preview(image: image, corners: candidate.sourceCorners, aspect: aspect) else { return nil }
+                        let syncCrop = skipHeavyModel ? nil : raster.flatMap {
+                            renderer.synchronizedSaliencyCrop(from: $0, corners: candidate.sourceCorners, side: 224)
+                        }
+                        let assessment = skipHeavyModel ? nil : specialist?.assess(preview, synchronizedSaliencyCrop: syncCrop, cancellation: cancellation)
+                        var proposal = candidate
+                        let zoomRatio = Double(candidate.zoom) / sourceBaseZoom
+                        let justified = CompositionPreferencePolicy.isJustifiedZoom(candidate)
+                        let zoomReg = usedGAIC ? (justified ? 0.025 : 0.08) * max(0.0, zoomRatio - (justified ? 1.95 : 1.65)) : 0.0
+                        let oobPenalty = min(0.18, candidate.outOfBoundsFraction * 0.22)
+                        let geomClamped = min(1.35, max(0.0, candidate.score))
+                        let gaicClamped = min(1.0, max(0.0, candidate.gaicScore))
+                        let semBonus = sceneHints.hasRichGuidance ? min(0.35, max(-0.20, candidate.semanticCropBonus)) : 0.0
+                        if let assessment {
+                            assessedCount += 1
+                            let sampNorm = (assessment.mean - 1) / 4
+                            if usedGAIC {
+                                proposal.score = 0.44 * geomClamped +
+                                    0.28 * sampNorm +
+                                    0.28 * gaicClamped +
+                                    0.24 * semBonus -
+                                    zoomReg - oobPenalty
+                            } else {
+                                proposal.score = 0.42 * sampNorm +
+                                    0.46 * candidate.score +
+                                    0.12 * gaicClamped +
+                                    0.24 * semBonus -
+                                    oobPenalty
+                            }
+                        } else if usedGAIC {
+                            proposal.score = 0.54 * geomClamped +
+                                0.46 * gaicClamped +
                                 0.24 * semBonus -
                                 zoomReg - oobPenalty
                         } else {
-                            proposal.score = 0.42 * sampNorm +
-                                0.46 * candidate.score +
-                                0.12 * gaicClamped +
-                                0.24 * semBonus -
-                                oobPenalty
+                            proposal.score += 0.24 * semBonus
+                            if !skipHeavyModel, let aesthetic = renderer.aestheticScore(image: preview, cancellation: cancellation) {
+                                proposal.score += aesthetic * 0.075
+                            }
                         }
-                    } else if usedGAIC {
-                        proposal.score = 0.54 * geomClamped +
-                            0.46 * gaicClamped +
-                            0.24 * semBonus -
-                            zoomReg - oobPenalty
-                    } else {
-                        proposal.score += 0.24 * semBonus
-                        if !skipHeavyModel, let aesthetic = renderer.aestheticScore(image: preview, cancellation: cancellation) {
-                            proposal.score += aesthetic * 0.075
-                        }
+                        // preferences bonus removed to ensure unbiased realtime evaluation
+                        return View(proposal: proposal, image: preview, assessment: assessment,
+                                    geometryScore: candidate.score)
                     }
-                    // preferences bonus removed to ensure unbiased realtime evaluation
-                    return View(proposal: proposal, image: preview, assessment: assessment,
-                                geometryScore: candidate.score)
+                    guard let item else { continue }
+                    result.append(item)
+                    progress("Đang so sánh bố cục và zoom \(index + 1)/\(candidates.count)…")
+                    if skipHeavyModel && result.count >= 4 { break }
                 }
-                guard let item else { continue }
-                result.append(item)
-                progress("Đang so sánh bố cục và zoom \(index + 1)/\(candidates.count)…")
-                if skipHeavyModel && result.count >= 4 { break }
+                return result
             }
-            return result
-        }
-        var evaluated = evaluate(workingProposals)
-        guard !cancellation.isCancelled else { return nil }
-        if !usedGAIC && !cancellation.isSoftDeadlineReached && cancellation.remainingSoftBudget > 1.2 {
-            let initial = CompositionPlanner.diverse(evaluated.map(\.proposal), limit: usedGAIC ? 2 : 3)
-            progress("Đang kiểm tra lại khung và các mức zoom lân cận…")
-            let refinedSeeds = refine(initial)
-            let cappedNeighbours = Array(refinedSeeds.prefix(usedGAIC ? 2 : 3))
-            let neighbours = evaluate(cappedNeighbours)
-            if usedGAIC {
-                let bestSeedScore = initial.map(\.score).max() ?? 0.0
-                for nb in neighbours where nb.proposal.score >= bestSeedScore - 0.008 {
-                    evaluated.append(nb)
+            var passViews = evaluate(workingProposals)
+            if cancellation.isCancelled {
+                specialist = nil
+                return []
+            }
+            if !usedGAIC && !cancellation.isSoftDeadlineReached && cancellation.remainingSoftBudget > 1.2 {
+                let initial = CompositionPlanner.diverse(passViews.map(\.proposal), limit: usedGAIC ? 2 : 3)
+                progress("Đang kiểm tra lại khung và các mức zoom lân cận…")
+                let refinedSeeds = refine(initial)
+                let cappedNeighbours = Array(refinedSeeds.prefix(usedGAIC ? 2 : 3))
+                let neighbours = evaluate(cappedNeighbours)
+                if usedGAIC {
+                    let bestSeedScore = initial.map(\.score).max() ?? 0.0
+                    for nb in neighbours where nb.proposal.score >= bestSeedScore - 0.008 {
+                        passViews.append(nb)
+                    }
+                } else {
+                    passViews.append(contentsOf: neighbours)
                 }
-            } else {
-                evaluated.append(contentsOf: neighbours)
             }
+            specialist = nil
+            return passViews
         }
+        if singleModelResidency {
+            PhotographicCompositionModel.clearCache()
+        }
+        CompositionImageRenderer.clearSharedCaches()
         guard !cancellation.isCancelled else { return nil }
         var usedSpecialist = !evaluated.isEmpty && assessedCount == evaluated.count
-        if specialist != nil && !usedSpecialist && !usedGAIC {
+        if hadSpecialist && !usedSpecialist && !usedGAIC {
             // Never compare learned 1-to-5 ratings against unrelated fallback
             // scores if a request fails partway through the comparison without GAIC.
             for index in evaluated.indices { evaluated[index].proposal.score = evaluated[index].geometryScore }
-        }
-        // Release SAMP-Net before loading Charm DINOv2-small whenever single-model residency is active
-        // (< 8GB devices or Live Photo enabled) so MPS/ANE buffers never stack above Jetsam limits.
-        specialist = nil
-        if singleModelResidency {
-            PhotographicCompositionModel.clearCache()
         }
         var allEvaluated = evaluated
         var modernCount = 0
@@ -292,52 +304,63 @@ final class CompositionAestheticSearch {
                 include(index)
             }
             var pool = indices.prefix(budget).map { evaluated[$0] }
-            var modern: CharmPhotographicModel?
-            if let aestheticModelURL, let positionURL {
-                modern = CharmPhotographicModel.cachedOrLoad(url: aestheticModelURL, positionURL: positionURL)
-            } else { modern = nil }
-            if let activeModern = modern {
-                for index in pool.indices {
-                    guard !cancellation.isCancelled else { return nil }
-                    if !requiresModernModel && cancellation.isSoftDeadlineReached && (modernCount >= 2 || usedGAIC) {
-                        break
+            // Stage C: Charm DINOv2-small (MPSGraph) runs inside its own tight autoreleasepool so 100%
+            // of Metal MPSGraph / CoreML ObjC objects drain immediately when Charm completes.
+            let charmCancelled: Bool = autoreleasepool {
+                var modern: CharmPhotographicModel?
+                if let aestheticModelURL, let positionURL,
+                   (requiresModernModel || CompositionMemoryBudget.hasHeadroom(minimumBytes: 150_000_000)) {
+                    modern = CharmPhotographicModel.cachedOrLoad(url: aestheticModelURL, positionURL: positionURL)
+                } else { modern = nil }
+                if let activeModern = modern {
+                    for index in pool.indices {
+                        guard !cancellation.isCancelled else {
+                            modern = nil
+                            return true
+                        }
+                        if !requiresModernModel && cancellation.isSoftDeadlineReached && (modernCount >= 2 || usedGAIC) {
+                            break
+                        }
+                        guard ProcessInfo.processInfo.thermalState != .critical else {
+                            progress("Nhiệt độ máy cao. Chuyển sang chọn bố cục thủ công…")
+                            break
+                        }
+                        let assessment = autoreleasepool {
+                            activeModern.assess(pool[index].image, cancellation: cancellation)
+                        }
+                        pool[index].aesthetics = assessment
+                        if let composition = pool[index].assessment, let aesthetics = pool[index].aesthetics,
+                           let score = CompositionPreferencePolicy.score(
+                               composition: composition.mean,
+                               aesthetics: aesthetics.mean,
+                               geometry: pool[index].geometryScore,
+                               gaic: pool[index].proposal.gaicScore,
+                               outOfBoundsFraction: pool[index].proposal.outOfBoundsFraction,
+                               hasLearnedGAIC: usedGAIC,
+                               zoomRatio: Double(pool[index].proposal.zoom) / sourceBaseZoom,
+                               justifiedZoom: CompositionPreferencePolicy.isJustifiedZoom(pool[index].proposal),
+                               semanticCropBonus: sceneHints.hasRichGuidance ? pool[index].proposal.semanticCropBonus : 0.0
+                           ) {
+                            pool[index].proposal.score = score
+                            modernCount += 1
+                        } else if let aesthetics = pool[index].aesthetics, usedGAIC {
+                            let aesthNorm = (aesthetics.mean - 1.0) / 4.0
+                            pool[index].proposal.score = 0.72 * pool[index].proposal.score + 0.28 * aesthNorm
+                            modernCount += 1
+                        }
+                        progress("Charm 2025 đã chấm \(modernCount)/\(pool.count) khung và mức zoom…")
                     }
-                    guard ProcessInfo.processInfo.thermalState != .critical else {
-                        progress("Nhiệt độ máy cao. Chuyển sang chọn bố cục thủ công…")
-                        break
-                    }
-                    let assessment = autoreleasepool {
-                        activeModern.assess(pool[index].image, cancellation: cancellation)
-                    }
-                    pool[index].aesthetics = assessment
-                    if let composition = pool[index].assessment, let aesthetics = pool[index].aesthetics,
-                       let score = CompositionPreferencePolicy.score(
-                           composition: composition.mean,
-                           aesthetics: aesthetics.mean,
-                           geometry: pool[index].geometryScore,
-                           gaic: pool[index].proposal.gaicScore,
-                           outOfBoundsFraction: pool[index].proposal.outOfBoundsFraction,
-                           hasLearnedGAIC: usedGAIC,
-                           zoomRatio: Double(pool[index].proposal.zoom) / sourceBaseZoom,
-                           justifiedZoom: CompositionPreferencePolicy.isJustifiedZoom(pool[index].proposal),
-                           semanticCropBonus: sceneHints.hasRichGuidance ? pool[index].proposal.semanticCropBonus : 0.0
-                       ) {
-                        pool[index].proposal.score = score
-                        modernCount += 1
-                    } else if let aesthetics = pool[index].aesthetics, usedGAIC {
-                        let aesthNorm = (aesthetics.mean - 1.0) / 4.0
-                        pool[index].proposal.score = 0.72 * pool[index].proposal.score + 0.28 * aesthNorm
-                        modernCount += 1
-                    }
-                    progress("Charm 2025 đã chấm \(modernCount)/\(pool.count) khung và mức zoom…")
+                } else {
+                    progress("Đang tổng hợp điểm bố cục từ GAIC & SAMP…")
                 }
-            } else {
-                progress("Đang tổng hợp điểm bố cục từ GAIC & SAMP…")
+                modern = nil
+                return false
             }
-            modern = nil
             if singleModelResidency {
                 CharmPhotographicModel.clearCache()
             }
+            CompositionImageRenderer.clearSharedCaches()
+            guard !charmCancelled else { return nil }
             for poolItem in pool {
                 if let matchIdx = allEvaluated.firstIndex(where: {
                     $0.proposal.sourceCorners == poolItem.proposal.sourceCorners &&

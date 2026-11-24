@@ -37,6 +37,7 @@ final class GAICCompositionModel {
                 cachedURL = nil
                 cachedInstance = nil
             }
+            CompositionImageRenderer.clearSharedCaches()
         }
 
         func getOrLoad(url: URL) -> GAICCompositionModel? {
@@ -64,14 +65,12 @@ final class GAICCompositionModel {
     }
 
     private let model: MLModel
-    private let context: CIContext
     private var reusableBoxes: MLMultiArray?
 
     init(url: URL) throws {
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .cpuAndNeuralEngine
         model = try MLModel(contentsOf: url, configuration: configuration)
-        context = CIContext(options: [.cacheIntermediates: false])
 
         guard model.modelDescription.inputDescriptionsByName["image"]?.imageConstraint != nil,
               let boxDesc = model.modelDescription.inputDescriptionsByName["boxes"]?.multiArrayConstraint,
@@ -183,7 +182,7 @@ final class GAICCompositionModel {
             scaleX: CGFloat(Self.imageSide) / extent.width,
             y: CGFloat(Self.imageSide) / extent.height
         ))
-        context.render(
+        CompositionImageRenderer.renderShared(
             scaled,
             to: buffer,
             bounds: CGRect(x: 0, y: 0, width: Self.imageSide, height: Self.imageSide),

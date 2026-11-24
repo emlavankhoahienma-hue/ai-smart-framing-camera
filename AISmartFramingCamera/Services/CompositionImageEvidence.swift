@@ -8,6 +8,31 @@ import Vision
 #if canImport(UIKit)
 import UIKit
 #endif
+#if os(iOS)
+import os
+#endif
+
+/// Real-time advisory iOS Jetsam headroom query (zero cost; 0 on macOS / non-sandboxed CLI).
+enum CompositionMemoryBudget {
+    static func availableBytes() -> Int {
+        #if os(iOS)
+        return Int(os_proc_available_memory())
+        #else
+        return 0
+        #endif
+    }
+
+    static func availableMB() -> Int {
+        let bytes = availableBytes()
+        return bytes > 0 ? bytes / (1024 * 1024) : -1
+    }
+
+    /// Returns true unless iOS explicitly reports critical imminent Jetsam pressure below `minimumBytes`.
+    static func hasHeadroom(minimumBytes: Int) -> Bool {
+        let bytes = availableBytes()
+        return bytes == 0 || bytes >= minimumBytes
+    }
+}
 
 /// Cancellation reaches every active Vision request as well as the bounded search.
 /// Also supports an optional monotonic `softDeadline` so stages yield gracefully
@@ -66,7 +91,44 @@ final class CompositionAnalysisCancellation: @unchecked Sendable {
 
 /// Used only by the serialized analysis worker. Outputs are immutable preview images.
 final class CompositionImageRenderer {
-    private let context = CIContext(options: [.cacheIntermediates: false])
+    /// Single shared low-priority, non-caching CIContext for ALL Local AI preprocessing
+    /// (DepthAnythingV2, OpenWorldYOLOE, GAIC, preview crops). Sharing one locked context avoids
+    /// creating/leaking per-model Metal CIContexts (~30-60MB each) and keeps GPU priority below
+    /// the 60fps MTKView live camera preview.
+    private static let sharedRenderLock = NSLock()
+    private static let context = CIContext(options: [
+        .cacheIntermediates: false,
+        .priorityRequestLow: true
+    ])
+
+    static func renderShared(
+        _ image: CIImage,
+        to pixelBuffer: CVPixelBuffer,
+        bounds: CGRect,
+        colorSpace: CGColorSpace
+    ) {
+        sharedRenderLock.withLock {
+            context.render(image, to: pixelBuffer, bounds: bounds, colorSpace: colorSpace)
+        }
+    }
+
+    static func createSharedCGImage(
+        _ image: CIImage,
+        from rect: CGRect,
+        format: CIFormat = .RGBA8,
+        colorSpace: CGColorSpace
+    ) -> CGImage? {
+        sharedRenderLock.withLock {
+            context.createCGImage(image, from: rect, format: format, colorSpace: colorSpace)
+        }
+    }
+
+    static func clearSharedCaches() {
+        sharedRenderLock.withLock {
+            context.clearCaches()
+        }
+    }
+
     private let depthModelLock = NSLock()
     private var cachedDepthModel: MLModel?
 
@@ -78,6 +140,7 @@ final class CompositionImageRenderer {
             queue: nil
         ) { [weak self] _ in
             self?.releaseDepthModel()
+            Self.clearSharedCaches()
         }
         #endif
     }
@@ -87,7 +150,7 @@ final class CompositionImageRenderer {
     }
 
     func clearCaches() {
-        context.clearCaches()
+        Self.clearSharedCaches()
     }
 
     /// Apple's pretrained aesthetic assessment complements geometry on iOS 18+.
@@ -155,8 +218,8 @@ final class CompositionImageRenderer {
                 guard !extent.isEmpty, extent.width > 0, extent.height > 0 else { return nil }
                 let translated = image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
                 let scaled = translated.transformed(by: CGAffineTransform(scaleX: CGFloat(w) / extent.width, y: CGFloat(h) / extent.height))
-                context.render(scaled, to: buffer, bounds: CGRect(x: 0, y: 0, width: w, height: h),
-                               colorSpace: CGColorSpaceCreateDeviceRGB())
+                Self.renderShared(scaled, to: buffer, bounds: CGRect(x: 0, y: 0, width: w, height: h),
+                                  colorSpace: CGColorSpaceCreateDeviceRGB())
                 inputFeature = MLFeatureValue(pixelBuffer: buffer)
             } else if let arrayConstraint = inputDesc.multiArrayConstraint,
                       arrayConstraint.shape.count == 4 {
@@ -921,8 +984,8 @@ final class CompositionImageRenderer {
         let translated = image.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
         let scaled = translated.transformed(by: CGAffineTransform(scaleX: size.width / extent.width,
                                                                    y: size.height / extent.height))
-        return context.createCGImage(scaled, from: CGRect(origin: .zero, size: size),
-                                     format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+        return Self.createSharedCGImage(scaled, from: CGRect(origin: .zero, size: size),
+                                        format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
     }
 
     private func attentionMap(_ buffer: CVPixelBuffer, side: Int) -> [Double]? {

@@ -1476,6 +1476,71 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         ]:
             self.assertIn(tok, director)
 
+    def test_28_local_ai_repeat_run_stability_zero_downgrade(self):
+        # 1. Single shared locked low-priority CIContext (no per-run Metal CIContext leaks) + real os_proc_available_memory
+        evidence = source("Services/CompositionImageEvidence.swift")
+        for tok in [
+            "enum CompositionMemoryBudget",
+            "os_proc_available_memory()",
+            "private static let sharedRenderLock = NSLock()",
+            ".priorityRequestLow: true",
+            "static func renderShared(",
+            "static func createSharedCGImage(",
+            "static func clearSharedCaches()",
+        ]:
+            self.assertIn(tok, evidence)
+
+        gaic = source("Services/GAICCompositionModel.swift")
+        self.assertNotIn("CIContext(", gaic)
+        self.assertIn("CompositionImageRenderer.renderShared(", gaic)
+
+        ow = source("Services/OpenWorldSubjectDetector.swift")
+        self.assertNotIn("CIContext(", ow)
+        self.assertIn("CompositionImageRenderer.renderShared(", ow)
+        self.assertIn("config.computeUnits = .cpuAndNeuralEngine", ow)
+
+        # 2. Thread-safe SemanticCropRanker + NSRecursiveLock + .workItem autorelease + per-stage autoreleasepool + pure ANE SigLIP
+        neural = source("Services/NeuralSubjectIntelligenceEngine.swift")
+        for tok in [
+            "func resetSessionAndRelease()",
+            "private func loadAndSnapshot()",
+            "config.computeUnits = .cpuAndNeuralEngine",
+            "private let analysisLock = NSRecursiveLock()",
+            "autoreleaseFrequency: .workItem",
+            "public func scheduleReleaseAllModelCaches()",
+            "let maybeOutput: NeuralAnalysisOutput? = autoreleasepool {",
+            "let searchResult: CompositionAestheticSearch.Result? = autoreleasepool {",
+        ]:
+            self.assertIn(tok, neural)
+
+        # 3. Per-stage autoreleasepool around SAMP-Net and Charm-PARA + Charm position cache preserved across normal runs
+        search = source("Services/CompositionAestheticSearch.swift")
+        self.assertIn("var evaluated: [View] = autoreleasepool {", search)
+        self.assertIn("let charmCancelled: Bool = autoreleasepool {", search)
+        charm = source("Services/CharmPhotographicModel.swift")
+        self.assertIn("func clear(includingPositions: Bool = false)", charm)
+        self.assertIn("self?.clear(includingPositions: true)", charm)
+
+        # 4. Eliminate 150MB+ post-capture bitmap leak & Run #2 restart race in CameraViewModel & CameraControlsView
+        vm = source("ViewModels/CameraViewModel.swift")
+        for tok in [
+            "private static func makeTinyAlbumThumbnail(",
+            "cancelAISessionInternal(restarting: true)",
+            "NeuralSubjectIntelligenceEngine.shared.scheduleReleaseAllModelCaches()",
+            "nonisolated private static func clonePixelBuffer(",
+            "let directSnapshot = frameProcessor.latestTrackingFrameSnapshot()",
+            "FilmFilterEngine.shared.clearCache()",
+            "UnifiedMetalColorEngine.shared.flushCaches()",
+        ]:
+            self.assertIn(tok, vm)
+
+        controls = source("Views/CameraControlsView.swift")
+        self.assertLess(
+            controls.index("if let thumb = viewModel.latestAlbumThumbnail"),
+            controls.index("else if let photo = viewModel.latestCapturedPhoto"),
+            "GalleryThumbnailButton must render 160px thumbnail instead of 48MB full-res CGImage",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

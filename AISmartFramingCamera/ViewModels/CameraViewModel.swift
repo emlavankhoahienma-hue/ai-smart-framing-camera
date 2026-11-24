@@ -2426,12 +2426,51 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     @Published public var isShowingPhotoDetail: Bool = false {
-        didSet { updateCameraHibernationState() }
+        didSet {
+            updateCameraHibernationState()
+            // Giải phóng ngay ~120MB ảnh 12MP/48MP (original + processed + RAW Data) khi đóng màn xem ảnh;
+            // ảnh đã lưu trên đĩa (AppPhotoStorageService) và nút thư viện chỉ cần thumbnail 160px (~100KB).
+            if oldValue && !isShowingPhotoDetail && !pendingPhotoPreview {
+                if let photo = latestCapturedPhoto {
+                    latestAlbumThumbnail = Self.makeTinyAlbumThumbnail(from: photo.processedImage)
+                }
+                latestCapturedPhoto = nil
+            }
+        }
     }
     @Published public var isShowingGallerySheet: Bool = false {
         didSet { updateCameraHibernationState() }
     }
-    @Published public var latestAlbumThumbnail: UIImage? = nil
+    @Published public var latestAlbumThumbnail: UIImage? = nil {
+        didSet {
+            guard let img = latestAlbumThumbnail,
+                  max(img.size.width * img.scale, img.size.height * img.scale) > 220 else { return }
+            if let cg = img.cgImage {
+                latestAlbumThumbnail = Self.makeTinyAlbumThumbnail(from: cg)
+            }
+        }
+    }
+
+    private static func makeTinyAlbumThumbnail(from cgImage: CGImage, maxPixelSize: CGFloat = 160) -> UIImage {
+        let w = CGFloat(cgImage.width)
+        let h = CGFloat(cgImage.height)
+        guard w > 0, h > 0 else { return UIImage(cgImage: cgImage) }
+        let longest = max(w, h)
+        if longest <= maxPixelSize {
+            return UIImage(cgImage: cgImage)
+        }
+        let scale = maxPixelSize / longest
+        let dstSize = CGSize(width: max(1, (w * scale).rounded()), height: max(1, (h * scale).rounded()))
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 1.0
+        fmt.opaque = true
+        return autoreleasepool {
+            UIGraphicsImageRenderer(size: dstSize, format: fmt).image { ctx in
+                ctx.cgContext.interpolationQuality = .medium
+                UIImage(cgImage: cgImage).draw(in: CGRect(origin: .zero, size: dstSize))
+            }
+        }
+    }
     @Published public var isShowingSettings: Bool = false {
         didSet {
             updateCameraHibernationState()
@@ -3705,7 +3744,9 @@ public final class CameraViewModel: ObservableObject {
         if isCameraHibernating { return }
         if captureMode.isVideo { selectCaptureMode(.photo) }
         if isShutterPressing { isShutterPressing = false }
-        if aiSessionState != .idle && aiSessionState != .done { cancelAISession() }
+        if aiSessionState != .idle && aiSessionState != .done {
+            cancelAISessionInternal(restarting: true)
+        }
         if aiSessionState == .done {
             if plannedEVBias != 0.0 {
                 setExposure(0.0)
@@ -3720,6 +3761,17 @@ public final class CameraViewModel: ObservableObject {
             aiFilterRankingTask?.cancel()
             aiFilterRankingTask = nil
         }
+
+        // Giải phóng bộ nhớ ảnh chụp cũ & cache GPU tạm trước mỗi lượt phân tích mới
+        // để lần bấm AI thứ 2..N luôn xuất phát trên nền RAM sạch y hệt lần 1.
+        if !isShowingPhotoDetail && !pendingPhotoPreview, let photo = latestCapturedPhoto {
+            if latestAlbumThumbnail == nil {
+                latestAlbumThumbnail = Self.makeTinyAlbumThumbnail(from: photo.processedImage)
+            }
+            latestCapturedPhoto = nil
+        }
+        FilmFilterEngine.shared.clearCache()
+        UnifiedMetalColorEngine.shared.flushCaches()
 
         let isOperational = isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning
         guard isOperational, recordingState == .idle else { return }
@@ -3856,37 +3908,56 @@ public final class CameraViewModel: ObservableObject {
             if !isOnline {
                 self.localSelectionMessage = "Ngoai tuyen (khong co mang/4G) - Su dung AI tren may"
             }
-            requestFreshAIFrame(generation: requestGeneration, requestedAt: requestedAt) { [weak self] _, buffer, context, pose in
-                let source = AITrackingSource(buffer: buffer, frame: context, pose: pose,
-                                              subjectRect: nil, faceRects: [])
-                self?.beginLocalCompositionAnalysis(source: source)
-            }
-            // Fast 1.5s frame-delivery watchdog: if VisionFramingEngine missed or throttled the callback,
-            // immediately grab the latest camera frame snapshot instead of hanging until timeout.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                guard let self, self.aiSessionGeneration == requestGeneration,
-                      self.aiSessionState == .analyzing, !self.isOneShotCaptured,
-                      !self.localAnalysisFinished else { return }
-                let snap = self.frameProcessor.latestTrackingFrameSnapshot()
-                let fallbackBuffer = snap?.0 ?? self.cameraService.currentMultiCamPixelBuffer() ?? self.latestCameraPixelBuffer()
-                guard let buffer = fallbackBuffer else { return }
-                let now = CACurrentMediaTime()
-                let fallbackFrame = snap?.1 ?? TrackingFrameContext(
-                    timestamp: now,
-                    calibration: TrackingCalibration.fallback(fovLongDegrees: CompositionTuning.defaultCameraFOVWide, zoom: Double(self.displayZoom), aspect: 9.0/16.0),
-                    imageSize: CGSize(width: CGFloat(CVPixelBufferGetWidth(buffer)),
-                                      height: CGFloat(CVPixelBufferGetHeight(buffer))),
-                    displayZoom: Double(self.displayZoom)
-                )
-                let fallbackPose = SpatialTrackingEngine.shared.pose(at: fallbackFrame.timestamp)
+            // Fast zero-contention path cho Local AI: nếu frameProcessor đã có sẵn khung hình mới & ống kính ổn định,
+            // lấy trực tiếp pixelBuffer (không đánh thức VisionFramingEngine render CGImage dư thừa và chạy detect() song song!).
+            let directSnapshot = frameProcessor.latestTrackingFrameSnapshot()
+            let directFresh = directSnapshot.map { requestedAt - $0.1.timestamp <= 0.28 } ?? false
+            if let snap = directSnapshot, directFresh,
+               manualZoomRequestID == nil, !isPinchingZoom, cameraService.isFocusSettled {
+                let pose = SpatialTrackingEngine.shared.pose(at: snap.1.timestamp)
                     ?? SpatialTrackingEngine.shared.latestPose()
                     ?? simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
                 self.isOneShotCaptured = true
                 self.visionEngine.captureNextFrameForGemini = false
                 self.visionEngine.onFrameCapturedForAIWithSource = nil
-                let source = AITrackingSource(buffer: buffer, frame: fallbackFrame, pose: fallbackPose,
+                let source = AITrackingSource(buffer: snap.0, frame: snap.1, pose: pose,
                                               subjectRect: nil, faceRects: [])
                 self.beginLocalCompositionAnalysis(source: source)
+            } else {
+                requestFreshAIFrame(generation: requestGeneration, requestedAt: requestedAt) { [weak self] _, buffer, context, pose in
+                    let source = AITrackingSource(buffer: buffer, frame: context, pose: pose,
+                                                  subjectRect: nil, faceRects: [])
+                    self?.beginLocalCompositionAnalysis(source: source)
+                }
+                // Fast 1.5s frame-delivery watchdog: if VisionFramingEngine missed or throttled the callback,
+                // immediately grab the latest camera frame snapshot instead of hanging until timeout.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                    guard let self, self.aiSessionGeneration == requestGeneration,
+                          self.aiSessionState == .analyzing, !self.isOneShotCaptured,
+                          !self.localAnalysisFinished else { return }
+                    let snap = self.frameProcessor.latestTrackingFrameSnapshot()
+                    let fallbackBuffer = snap?.0 ?? self.cameraService.currentMultiCamPixelBuffer() ?? self.latestCameraPixelBuffer()
+                    guard let buffer = fallbackBuffer else { return }
+                    let now = CACurrentMediaTime()
+                    let fallbackFrame = snap?.1 ?? TrackingFrameContext(
+                        timestamp: now,
+                        calibration: TrackingCalibration.fallback(fovLongDegrees: CompositionTuning.defaultCameraFOVWide, zoom: Double(self.displayZoom), aspect: 9.0/16.0),
+                        imageSize: CGSize(width: CGFloat(CVPixelBufferGetWidth(buffer)),
+                                          height: CGFloat(CVPixelBufferGetHeight(buffer))),
+                        displayZoom: Double(self.displayZoom)
+                    )
+                    let fallbackPose = SpatialTrackingEngine.shared.pose(at: fallbackFrame.timestamp)
+                        ?? SpatialTrackingEngine.shared.latestPose()
+                        ?? simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
+                    self.isOneShotCaptured = true
+                    self.visionEngine.captureNextFrameForGemini = false
+                    self.visionEngine.onFrameCapturedForAIWithSource = nil
+                    let source = AITrackingSource(buffer: buffer, frame: fallbackFrame, pose: fallbackPose,
+                                                  subjectRect: nil, faceRects: [])
+                    self.beginLocalCompositionAnalysis(source: source)
+                }
+                // Register the callback before admitting the capture frame.
+                visionEngine.captureNextFrameForGemini = true
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 18) { [weak self] in
                 guard let self, self.aiSessionGeneration == requestGeneration,
@@ -3901,11 +3972,17 @@ public final class CameraViewModel: ObservableObject {
                 self.localSelectionMessage = "AI quá thời gian. Chạm vùng muốn chụp hoặc chụp tay."
             }
         }
-        // Register the callback before admitting the capture frame.
-        visionEngine.captureNextFrameForGemini = true
+        if shouldUseCloud {
+            // Register the callback before admitting the capture frame.
+            visionEngine.captureNextFrameForGemini = true
+        }
     }
 
     public func cancelAISession() {
+        cancelAISessionInternal(restarting: false)
+    }
+
+    private func cancelAISessionInternal(restarting: Bool) {
         if plannedEVBias != 0.0 {
             setExposure(0.0)
             plannedEVBias = 0.0
@@ -3935,14 +4012,14 @@ public final class CameraViewModel: ObservableObject {
         localAnalysisCancellation = nil
         aiFilterRankingTask?.cancel()
         aiFilterRankingTask = nil
-        if hadActiveLocalWork {
-            Task.detached(priority: .utility) {
-                NeuralSubjectIntelligenceEngine.shared.releaseAllModelCaches()
-            }
+        if hadActiveLocalWork && !restarting {
+            NeuralSubjectIntelligenceEngine.shared.scheduleReleaseAllModelCaches()
         }
         visionEngine.stopTrackingObject()
         SpatialTrackingEngine.shared.stopTracking()
-        haptics.triggerSelectionChange()
+        if !restarting {
+            haptics.triggerSelectionChange()
+        }
         visionEngine.captureNextFrameForGemini = false
         visionEngine.onFrameCapturedForAI = nil
         visionEngine.onFrameCapturedForAIWithSource = nil
@@ -3964,18 +4041,23 @@ public final class CameraViewModel: ObservableObject {
             geminiColorRecipe = nil
         }
 
-        withAnimation(.easeInOut(duration: 0.3)) {
-            aiSessionState = .idle
-            initialTargetPoint = nil
-            currentTargetPoint = nil
-            isOneShotCaptured = false
-            isPerfectAlignment = false
-            alignmentDistance = 1.0
-            detectedSubjectRects = []
-            detectedFaceRects = []
-            liveDetectedEntities = []
-            activeEngineSource = nil
-            arTrackingWarning = nil
+        let applyReset = {
+            self.aiSessionState = .idle
+            self.initialTargetPoint = nil
+            self.currentTargetPoint = nil
+            self.isOneShotCaptured = false
+            self.isPerfectAlignment = false
+            self.alignmentDistance = 1.0
+            self.detectedSubjectRects = []
+            self.detectedFaceRects = []
+            self.liveDetectedEntities = []
+            self.activeEngineSource = nil
+            self.arTrackingWarning = nil
+        }
+        if restarting {
+            applyReset()
+        } else {
+            withAnimation(.easeInOut(duration: 0.3), applyReset)
         }
         liveEntitySmoother.reset()
     }
@@ -4010,9 +4092,7 @@ public final class CameraViewModel: ObservableObject {
         aiFilterRankingTask?.cancel()
         aiFilterRankingTask = nil
         if hadActiveLocalWork {
-            Task.detached(priority: .utility) {
-                NeuralSubjectIntelligenceEngine.shared.releaseAllModelCaches()
-            }
+            NeuralSubjectIntelligenceEngine.shared.scheduleReleaseAllModelCaches()
         }
         visionEngine.stopTrackingObject()
         visionEngine.captureNextFrameForGemini = false
@@ -4448,7 +4528,7 @@ public final class CameraViewModel: ObservableObject {
 
     /// Fast (<1.5ms) standalone copy of a camera `CVPixelBuffer` so `AVCaptureVideoDataOutput`'s
     /// tiny buffer pool gets its frame back immediately instead of stalling live preview/capture.
-    private static func clonePixelBuffer(_ source: CVPixelBuffer) -> CVPixelBuffer? {
+    nonisolated private static func clonePixelBuffer(_ source: CVPixelBuffer) -> CVPixelBuffer? {
         let width = CVPixelBufferGetWidth(source)
         let height = CVPixelBufferGetHeight(source)
         let format = CVPixelBufferGetPixelFormatType(source)
@@ -4492,15 +4572,8 @@ public final class CameraViewModel: ObservableObject {
         localAnalysisCompletedAt = nil
         localAnalysisCancellation?.cancel()
         localAnalysisTask?.cancel()
-        // Detach from AVCaptureVideoDataOutput's pool immediately so live camera frames never stall.
-        let detachedBuffer = Self.clonePixelBuffer(source.buffer) ?? source.buffer
-        let ownedSource = AITrackingSource(
-            buffer: detachedBuffer, frame: source.frame, pose: source.pose,
-            subjectRect: source.subjectRect, faceRects: source.faceRects
-        )
         let cancellation = CompositionAnalysisCancellation(softTimeoutSeconds: 5.5)
         localAnalysisCancellation = cancellation
-        localTrackingSource = ownedSource
         localSelectionMessage = nil
         localAnalysisExpired = false
         localAnalysisFinished = false
@@ -4510,6 +4583,17 @@ public final class CameraViewModel: ObservableObject {
         let zooms = cameraService.availableDisplayZoomOptions
         let livePhotoLowMemoryBudget = isLivePhotoEnabled
         localAnalysisTask = Task { [weak self] in
+            // Detach from AVCaptureVideoDataOutput's pool off @MainActor so IOSurface lock never stalls live UI.
+            let ownedSource = await Task.detached(priority: .userInitiated) { () -> AITrackingSource in
+                let detachedBuffer = Self.clonePixelBuffer(source.buffer) ?? source.buffer
+                return AITrackingSource(
+                    buffer: detachedBuffer, frame: source.frame, pose: source.pose,
+                    subjectRect: source.subjectRect, faceRects: source.faceRects
+                )
+            }.value
+            guard let self, !Task.isCancelled, !cancellation.isCancelled,
+                  self.aiSessionGeneration == generation, self.aiSessionState == .analyzing else { return }
+            self.localTrackingSource = ownedSource
             let preferences = await CompositionPreferenceStore.shared.bonuses()
             guard !Task.isCancelled, !cancellation.isCancelled else { return }
             let result = await withTaskCancellationHandler {
@@ -4528,7 +4612,7 @@ public final class CameraViewModel: ObservableObject {
             } onCancel: {
                 cancellation.cancel()
             }
-            guard let self, !Task.isCancelled, !cancellation.isCancelled,
+            guard !Task.isCancelled, !cancellation.isCancelled,
                   self.aiSessionGeneration == generation, self.aiSessionState == .analyzing,
                   !self.localAnalysisExpired, let result else { return }
             self.localAnalysisTask = nil

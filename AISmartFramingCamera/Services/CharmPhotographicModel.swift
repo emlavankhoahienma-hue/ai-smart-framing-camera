@@ -35,18 +35,20 @@ final class CharmPhotographicModel {
                 object: nil,
                 queue: nil
             ) { [weak self] _ in
-                self?.clear()
+                self?.clear(includingPositions: true)
             }
             #endif
         }
 
-        func clear() {
+        func clear(includingPositions: Bool = false) {
             lock.withLock {
                 cachedURL = nil
                 cachedPositionURL = nil
                 cachedInstance = nil
             }
-            SharedPositionCache.shared.clear()
+            if includingPositions {
+                SharedPositionCache.shared.clear()
+            }
         }
 
         func getOrLoad(url: URL, positionURL: URL) -> CharmPhotographicModel? {
@@ -82,7 +84,7 @@ final class CharmPhotographicModel {
 
         func set(_ key: String, value: MLMultiArray) {
             lock.withLock {
-                if storage.count >= 6 { storage.removeAll(keepingCapacity: true) }
+                if storage.count >= 2 { storage.removeAll(keepingCapacity: true) }
                 storage[key] = value
             }
         }
