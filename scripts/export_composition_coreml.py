@@ -14,6 +14,7 @@ os.environ["TQDM_DISABLE"] = "1"
 os.environ["TQDM_MONITOR_INTERVAL"] = "0"
 
 import coremltools as ct
+import coremltools.optimize.coreml as cto
 import numpy as np
 import torch
 from PIL import Image
@@ -128,17 +129,13 @@ def main() -> None:
             sample = (torch.rand_like(example[0]), torch.rand_like(example[1]))
             if not torch.allclose(author_reference(*sample), traced(*sample), atol=1e-5, rtol=1e-4):
                 raise RuntimeError("Static pooling rewrite changed the author network")
-    converted = ct.convert(traced, convert_to="mlprogram", minimum_deployment_target=ct.target.iOS17,
+    fp16_converted = ct.convert(traced, convert_to="mlprogram", minimum_deployment_target=ct.target.iOS17,
         compute_precision=ct.precision.FLOAT16,
         inputs=[ct.TensorType(name="image", shape=(1, 3, 224, 224), dtype=np.float32),
                 ct.TensorType(name="saliency", shape=(1, 1, 224, 224), dtype=np.float32)],
         outputs=[ct.TensorType(name="compositionDistribution", dtype=np.float32)])
-    converted.author = "Bo Zhang, Li Niu, Liqing Zhang; Core ML conversion by this project"
-    converted.license = "MIT; see SAMP-Net-LICENSE.txt"
-    converted.short_description = "SAMP-Net, BMVC 2021, CADB expert image composition assessment (1 to 5)"
-    converted.user_defined_metadata["paper"] = PAPER
-    converted.user_defined_metadata["weightsSHA256"] = WEIGHTS_SHA256
-    converted.save("SAMPComposition.mlpackage")
+    converted = fp16_converted
+    selected_precision = "FP16"
     manifest = {"model": "SAMP-Net", "paper": PAPER, "repository": REPOSITORY,
                 "revision": REVISION, "weightsSHA256": WEIGHTS_SHA256,
                 "trainingDataset": "CADB", "ratingScale": [1, 2, 3, 4, 5],
@@ -151,28 +148,76 @@ def main() -> None:
         photos = sorted(args.photos.glob("*.jpg"))[:24]
         if len(photos) < 24:
             raise RuntimeError("At least 24 real-photo conversion fixtures are required")
-        errors = []
+        fixtures = []
         references = []
         for photo in photos:
             image = Image.open(photo).convert("RGB")
             image_tensor, saliency = inputs(image)
             with torch.inference_mode(), fixed_shape_pooling():
                 expected = model(image_tensor, saliency)[2].numpy().reshape(-1)
-            rgb = np.asarray(image.resize((224, 224), Image.Resampling.BILINEAR), dtype=np.float32).transpose(2, 0, 1)[None] / 255
-            actual = converted.predict({"image": rgb,
-                                        "saliency": saliency.numpy()})["compositionDistribution"].reshape(-1)
-            error = float(np.max(np.abs(expected - actual)))
-            score_error = float(abs(np.dot(actual - expected, np.arange(1, 6))))
-            if error > 0.02 or score_error > 0.04 or not np.isfinite(actual).all():
-                raise RuntimeError(f"Core ML parity failed: {photo.name}, probability {error}, mean {score_error}")
-            errors.append({"image": photo.name, "maxProbabilityError": error, "meanScoreError": score_error})
-            saliency.numpy().astype("<f4").tofile(args.photos / f"{photo.stem}.saliency.f32")
-            np.asarray(image.resize((224, 224), Image.Resampling.BILINEAR), dtype=np.uint8).tofile(args.photos / f"{photo.stem}.rgb.u8")
+            resized = image.resize((224, 224), Image.Resampling.BILINEAR)
+            rgb = np.asarray(resized, dtype=np.float32).transpose(2, 0, 1)[None] / 255
+            sal_np = saliency.numpy()
+            sal_np.astype("<f4").tofile(args.photos / f"{photo.stem}.saliency.f32")
+            np.asarray(resized, dtype=np.uint8).tofile(args.photos / f"{photo.stem}.rgb.u8")
             references.append({"file": photo.name, "distribution": expected.tolist()})
+            fixtures.append((photo.name, rgb, sal_np, expected))
         (args.photos / "parity-references.json").write_text(json.dumps(references, indent=2), encoding="utf-8")
+
+        def evaluate_parity(candidate_model: ct.models.MLModel) -> tuple[bool, list[dict]]:
+            errs = []
+            ok = True
+            for name, rgb, sal_np, expected in fixtures:
+                actual = candidate_model.predict({"image": rgb, "saliency": sal_np})["compositionDistribution"].reshape(-1)
+                error = float(np.max(np.abs(expected - actual)))
+                score_error = float(abs(np.dot(actual - expected, np.arange(1, 6))))
+                errs.append({"image": name, "maxProbabilityError": error, "meanScoreError": score_error})
+                if error > 0.02 or score_error > 0.04 or not np.isfinite(actual).all():
+                    ok = False
+            return ok, errs
+
+        errors = []
+        for quant_mode, label in (("linear_symmetric", "W8A16-symmetric"), ("linear", "W8A16-linear")):
+            q_cfg = cto.OptimizationConfig(
+                global_config=cto.OpLinearQuantizerConfig(
+                    mode=quant_mode,
+                    dtype="int8",
+                    granularity="per_channel",
+                    weight_threshold=512,
+                )
+            )
+            candidate = cto.linear_quantize_weights(fp16_converted, config=q_cfg)
+            passed, errs = evaluate_parity(candidate)
+            if passed:
+                converted = candidate
+                selected_precision = label
+                errors = errs
+                print(f"SAMP-Net {label} quantization passed 24-photo parity "
+                      f"(maxProb={max(x['maxProbabilityError'] for x in errs):.4f}, "
+                      f"maxMean={max(x['meanScoreError'] for x in errs):.4f})")
+                break
+            print(f"SAMP-Net {label} drifted on 24-photo parity "
+                  f"(maxProb={max(x['maxProbabilityError'] for x in errs):.4f}, "
+                  f"maxMean={max(x['meanScoreError'] for x in errs):.4f}), trying fallback")
+
+        if selected_precision == "FP16":
+            passed, errors = evaluate_parity(converted)
+            if not passed:
+                worst = max(errors, key=lambda x: max(x["maxProbabilityError"], x["meanScoreError"]))
+                raise RuntimeError(
+                    f"Core ML parity failed: {worst['image']}, probability {worst['maxProbabilityError']}, mean {worst['meanScoreError']}"
+                )
+
+        manifest["precision"] = selected_precision
         manifest["parity"] = {"images": len(errors), "maxProbabilityError": max(x["maxProbabilityError"] for x in errors),
                               "maxMeanScoreError": max(x["meanScoreError"] for x in errors), "details": errors}
         print(json.dumps(manifest["parity"], indent=2))
+    converted.author = "Bo Zhang, Li Niu, Liqing Zhang; Core ML conversion by this project"
+    converted.license = "MIT; see SAMP-Net-LICENSE.txt"
+    converted.short_description = "SAMP-Net, BMVC 2021, CADB expert image composition assessment (1 to 5)"
+    converted.user_defined_metadata["paper"] = PAPER
+    converted.user_defined_metadata["weightsSHA256"] = WEIGHTS_SHA256
+    converted.save("SAMPComposition.mlpackage")
     Path("SAMPModelManifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 

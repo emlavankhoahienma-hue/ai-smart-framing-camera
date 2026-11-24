@@ -189,7 +189,7 @@ jobs:
             --output GAICCompositionScorer.mlpackage \
             --manifest GAICModelManifest.json \
             --parity-image "$PARITY_IMG" \
-            --precision fp16
+            --precision w8a16
           xcrun coremlc compile GAICCompositionScorer.mlpackage .
           test -d SAMPComposition.mlmodelc
           test -d GAICCompositionScorer.mlmodelc

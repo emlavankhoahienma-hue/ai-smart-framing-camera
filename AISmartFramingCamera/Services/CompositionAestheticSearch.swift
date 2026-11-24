@@ -36,7 +36,9 @@ final class CompositionAestheticSearch {
              progress: @Sendable (String) -> Void,
              refine: ([CompositionProposal]) -> [CompositionProposal]) -> Result? {
         guard !cancellation.isCancelled else { return nil }
-        let singleModelResidency = lowMemoryBudget || ProcessInfo.processInfo.physicalMemory < 16_000_000_000
+        let gaicRetainBytes = lowMemoryBudget ? 300_000_000 : CompositionMemoryBudget.gaicRetainThresholdBytes
+        let sampRetainBytes = lowMemoryBudget ? 340_000_000 : CompositionMemoryBudget.sampRetainThresholdBytes
+        let charmRetainBytes = lowMemoryBudget ? 280_000_000 : CompositionMemoryBudget.charmRetainThresholdBytes
         let resolvedGaicURL = gaicModelURL ?? GAICCompositionModel.defaultModelURL(near: modelURL)
         let sourceBaseZoom = max(0.5, Double(proposals.first(where: \.isUnchangedView)?.zoom ?? proposals.first?.zoom ?? 1.0))
         var workingProposals = proposals
@@ -58,8 +60,8 @@ final class CompositionAestheticSearch {
                 allGAICScoredProposals = workingProposals
                 progress("GAIC đã đánh giá \(workingProposals.count) khung hình đa tỷ lệ…")
             }
-            // Free GAIC immediately before SAMP-Net loads so peak RAM stays flat under Live Photo.
-            if singleModelResidency {
+            // Keep GAIC singleton warm when Jetsam headroom is healthy; evict only under genuine RAM pressure.
+            if !CompositionMemoryBudget.shouldRetainModelCache(minimumAvailableBytes: gaicRetainBytes) {
                 GAICCompositionModel.clearCache()
             }
             CompositionImageRenderer.clearSharedCaches()
@@ -171,8 +173,7 @@ final class CompositionAestheticSearch {
         var evaluated: [View] = autoreleasepool {
             var specialist: PhotographicCompositionModel? = nil
             if let modelURL,
-               (!cancellation.isSoftDeadlineReached || !usedGAIC),
-               CompositionMemoryBudget.hasHeadroom(minimumBytes: 140_000_000) {
+               (!cancellation.isSoftDeadlineReached || !usedGAIC) {
                 specialist = PhotographicCompositionModel.cachedOrLoad(url: modelURL)
             }
             hadSpecialist = (specialist != nil)
@@ -263,7 +264,7 @@ final class CompositionAestheticSearch {
             specialist = nil
             return passViews
         }
-        if singleModelResidency {
+        if !CompositionMemoryBudget.shouldRetainModelCache(minimumAvailableBytes: sampRetainBytes) {
             PhotographicCompositionModel.clearCache()
         }
         CompositionImageRenderer.clearSharedCaches()
@@ -308,8 +309,7 @@ final class CompositionAestheticSearch {
             // of Metal MPSGraph / CoreML ObjC objects drain immediately when Charm completes.
             let charmCancelled: Bool = autoreleasepool {
                 var modern: CharmPhotographicModel?
-                if let aestheticModelURL, let positionURL,
-                   (requiresModernModel || CompositionMemoryBudget.hasHeadroom(minimumBytes: 150_000_000)) {
+                if let aestheticModelURL, let positionURL {
                     modern = CharmPhotographicModel.cachedOrLoad(url: aestheticModelURL, positionURL: positionURL)
                 } else { modern = nil }
                 if let activeModern = modern {
@@ -356,7 +356,7 @@ final class CompositionAestheticSearch {
                 modern = nil
                 return false
             }
-            if singleModelResidency {
+            if !CompositionMemoryBudget.shouldRetainModelCache(minimumAvailableBytes: charmRetainBytes) {
                 CharmPhotographicModel.clearCache()
             }
             CompositionImageRenderer.clearSharedCaches()

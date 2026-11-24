@@ -21,37 +21,50 @@ final class PhotographicCompositionModel {
         private var cachedInstance: PhotographicCompositionModel?
 
         private init() {
+            CompositionMemoryBudget.registerCacheEvictor(id: "SAMP", priority: 40) { [weak self] in
+                self?.clear() ?? false
+            }
             #if canImport(UIKit)
             _ = NotificationCenter.default.addObserver(
                 forName: UIApplication.didReceiveMemoryWarningNotification,
                 object: nil,
                 queue: nil
             ) { [weak self] _ in
-                self?.clear()
+                _ = self?.clear()
             }
             #endif
         }
 
-        func clear() {
+        @discardableResult
+        func clear() -> Bool {
             lock.withLock {
+                let had = (cachedInstance != nil)
                 cachedURL = nil
                 cachedInstance = nil
+                return had
             }
         }
 
         func getOrLoad(url: URL) -> PhotographicCompositionModel? {
-            let keepCached = ProcessInfo.processInfo.physicalMemory >= 16_000_000_000
-            return lock.withLock {
-                if keepCached, cachedURL == url, let existing = cachedInstance {
-                    return existing
-                }
-                guard let loaded = try? PhotographicCompositionModel(url: url) else { return nil }
-                if keepCached {
+            if let existing = lock.withLock({ cachedURL == url ? cachedInstance : nil }) {
+                return existing
+            }
+            guard CompositionMemoryBudget.ensureHeadroom(
+                minimumBytes: CompositionMemoryBudget.sampLoadHeadroomBytes,
+                excluding: "SAMP"
+            ) else {
+                return nil
+            }
+            guard let loaded = try? PhotographicCompositionModel(url: url) else { return nil }
+            if CompositionMemoryBudget.shouldRetainModelCache(
+                minimumAvailableBytes: CompositionMemoryBudget.sampRetainThresholdBytes
+            ) {
+                lock.withLock {
                     cachedURL = url
                     cachedInstance = loaded
                 }
-                return loaded
             }
+            return loaded
         }
     }
 

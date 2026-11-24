@@ -47,68 +47,115 @@ private final class SemanticCropRanker: @unchecked Sendable {
     private var _didProduceEvidence = false
     var didProduceEvidence: Bool { lock.withLock { _didProduceEvidence } }
 
+    private init() {
+        // Evict SigLIP FIRST (priority 10) whenever real-time Jetsam headroom runs low so
+        // smaller models and Metal MPSGraph (Charm, priority 90) avoid costly recompilations.
+        CompositionMemoryBudget.registerCacheEvictor(id: "SigLIP", priority: 10) { [weak self] in
+            self?.releaseModelNow() ?? false
+        }
+    }
+
     func beginAnalysis() {
         lock.withLock {
             if activeSessionDepth == 0 {
                 _didProduceEvidence = false
+                if model == nil {
+                    attemptedLoad = false
+                }
             }
             activeSessionDepth += 1
         }
     }
     func endAnalysis() {
-        let shouldRelease: Bool = lock.withLock {
+        let shouldCheckRelease: Bool = lock.withLock {
             activeSessionDepth = max(0, activeSessionDepth - 1)
             return activeSessionDepth == 0
         }
-        if shouldRelease {
-            releaseModelNow()
+        if shouldCheckRelease && !CompositionMemoryBudget.shouldRetainModelCache(
+            minimumAvailableBytes: CompositionMemoryBudget.siglipRetainThresholdBytes
+        ) {
+            _ = releaseModelNow()
+        }
+    }
+    /// Completes the outer analysis session and keeps SigLIP warm when Jetsam headroom is healthy,
+    /// releasing it immediately on memory-constrained devices.
+    func finishSession(lowMemoryBudget: Bool) {
+        let modelWasNil: Bool = lock.withLock {
+            activeSessionDepth = 0
+            if model == nil {
+                attemptedLoad = false
+                return true
+            }
+            return false
+        }
+        if modelWasNil { return }
+        let retainThreshold = lowMemoryBudget ? 520_000_000 : CompositionMemoryBudget.siglipRetainThresholdBytes
+        if !CompositionMemoryBudget.shouldRetainModelCache(minimumAvailableBytes: retainThreshold) {
+            _ = releaseModelNow()
         }
     }
     /// Resets any leaked depth (e.g. early cancellation return inside `analyzeCapturedFrame`)
-    /// and unloads SigLIP cleanly under lock.
+    /// and unloads SigLIP cleanly under lock (used on memory warnings / app backgrounding).
     func resetSessionAndRelease() {
         lock.withLock {
             activeSessionDepth = 0
             model = nil
-            prompts.removeAll(keepingCapacity: false)
             attemptedLoad = false
         }
     }
-    /// Releases SigLIP weights (~350MB runtime RAM) immediately before heavy OpenWorld/Mask/SAMP/Charm stages
-    /// while preserving `activeSessionDepth` balance.
-    func releaseModelNow() {
+    /// Releases SigLIP weights while keeping decoded prompt vectors (~150KB) cached and
+    /// preserving `activeSessionDepth` balance.
+    @discardableResult
+    func releaseModelNow() -> Bool {
         lock.withLock {
+            let hadModel = (model != nil)
             model = nil
-            prompts.removeAll(keepingCapacity: false)
             attemptedLoad = false
+            return hadModel
         }
     }
 
     private func loadAndSnapshot() -> (model: VNCoreMLModel?, prompts: [String: [Double]]) {
         lock.lock()
+        if let existingModel = model, !prompts.isEmpty {
+            let snap = (Optional(existingModel), prompts)
+            lock.unlock()
+            return snap
+        }
         if attemptedLoad {
             let snap = (model, prompts)
             lock.unlock()
             return snap
         }
         attemptedLoad = true
+        let cachedPrompts = prompts
         lock.unlock()
 
         guard ProcessInfo.processInfo.physicalMemory >= 2_500_000_000,
               ProcessInfo.processInfo.thermalState != .serious,
               ProcessInfo.processInfo.thermalState != .critical,
               !ProcessInfo.processInfo.isLowPowerModeEnabled,
-              CompositionMemoryBudget.hasHeadroom(minimumBytes: 160_000_000),
-              let url = Bundle.main.url(forResource: "SigLIPBaseImage", withExtension: "mlmodelc"),
-              let promptURL = Bundle.main.url(forResource: "SigLIPPrompts", withExtension: "json"),
-              let data = try? Data(contentsOf: promptURL),
-              let vectors = try? JSONDecoder().decode([String: [Double]].self, from: data),
-              !vectors.isEmpty else {
+              CompositionMemoryBudget.ensureHeadroom(
+                  minimumBytes: CompositionMemoryBudget.siglipLoadHeadroomBytes,
+                  excluding: "SigLIP"
+              ),
+              let url = Bundle.main.url(forResource: "SigLIPBaseImage", withExtension: "mlmodelc") else {
+            return (nil, [:])
+        }
+        let vectors: [String: [Double]]
+        if !cachedPrompts.isEmpty {
+            vectors = cachedPrompts
+        } else if let promptURL = Bundle.main.url(forResource: "SigLIPPrompts", withExtension: "json"),
+                  let data = try? Data(contentsOf: promptURL),
+                  let decoded = try? JSONDecoder().decode([String: [Double]].self, from: data),
+                  !decoded.isEmpty {
+            vectors = decoded
+        } else {
             return (nil, [:])
         }
         do {
             let config = MLModelConfiguration()
-            // Static 224x224 FP16 ViT runs purely on ANE — keeping SigLIP off Metal GPU prevents
+            // Static 224x224 W8A16 ViT runs purely on ANE — keeping SigLIP off Metal GPU prevents
             // MPSGraph heap fragmentation and 60fps viewfinder stalls with 100% identical accuracy.
             config.computeUnits = .cpuAndNeuralEngine
             config.allowLowPrecisionAccumulationOnGPU = true
@@ -124,7 +171,6 @@ private final class SemanticCropRanker: @unchecked Sendable {
         } catch {
             lock.withLock {
                 model = nil
-                prompts = [:]
             }
             CameraLogger.warning("SigLIP không khả dụng, dùng Vision/YOLO: \(error)", category: .ai)
             return (nil, [:])
@@ -744,11 +790,11 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     private func releaseAllModelCachesLocked() {
         autoreleasepool {
             SemanticCropRanker.shared.resetSessionAndRelease()
-            OpenWorldSubjectDetector.shared.releaseCachedModel()
+            _ = OpenWorldSubjectDetector.shared.releaseCachedModel()
             GAICCompositionModel.clearCache()
             PhotographicCompositionModel.clearCache()
             CharmPhotographicModel.clearCache()
-            renderer.releaseDepthModel()
+            _ = renderer.releaseDepthModel()
             renderer.clearCaches()
         }
     }
@@ -765,13 +811,33 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
     }
 
-    /// Non-blocking serialized release on `analysisQueue` for UI / cancellation / memory warning callers.
+    /// Non-blocking serialized release on `analysisQueue` for app backgrounding / memory warning callers.
     public func scheduleReleaseAllModelCaches() {
         analysisQueue.async { [weak self] in
             guard let self else { return }
             self.analysisLock.lock()
             defer { self.analysisLock.unlock() }
             self.releaseAllModelCachesLocked()
+        }
+    }
+
+    /// Non-blocking serialized pressure-only trim for manual UI cancellation while remaining in camera:
+    /// keeps warm singletons intact when iOS Jetsam headroom is healthy, avoiding costly reload leaks.
+    public func scheduleTrimCachesUnderPressure(
+        minimumReserveBytes: Int = CompositionMemoryBudget.postRunPhotoCaptureReserveBytes
+    ) {
+        analysisQueue.async { [weak self] in
+            guard let self else { return }
+            self.analysisLock.lock()
+            defer { self.analysisLock.unlock() }
+            self.renderer.clearCaches()
+            let evicted = CompositionMemoryBudget.trimForReserve(minimumBytes: minimumReserveBytes)
+            if !evicted.isEmpty {
+                CameraLogger.info(
+                    "LocalAI cancel-trim: evicted=\(evicted.joined(separator: ",")) availMB=\(CompositionMemoryBudget.availableMB())",
+                    category: .ai
+                )
+            }
         }
     }
 
@@ -814,19 +880,29 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                             cancellation: CompositionAnalysisCancellation,
                             progress: @Sendable (String) -> Void = { _ in }) -> LocalCompositionAnalysis? {
         guard !cancellation.isCancelled else { return nil }
-        let lowMem = lowMemoryBudget || ProcessInfo.processInfo.physicalMemory < 16_000_000_000
+        let lowMem = lowMemoryBudget
+        let siglipRetainBytes = lowMemoryBudget ? 520_000_000 : CompositionMemoryBudget.siglipRetainThresholdBytes
+        let postRunReserveBytes = lowMemoryBudget ? 420_000_000 : CompositionMemoryBudget.postRunPhotoCaptureReserveBytes
         analysisLock.lock()
-        if lowMem {
-            releaseAllModelCachesLocked()
-        }
         SemanticCropRanker.shared.beginAnalysis()
         defer {
-            SemanticCropRanker.shared.resetSessionAndRelease()
-            if lowMem { self.releaseAllModelCachesLocked() }
+            SemanticCropRanker.shared.finishSession(lowMemoryBudget: lowMemoryBudget)
+            renderer.clearCaches()
+            let evicted = CompositionMemoryBudget.trimForReserve(minimumBytes: postRunReserveBytes)
+            if !evicted.isEmpty {
+                CameraLogger.info(
+                    "LocalAI post-run trim: evicted=\(evicted.joined(separator: ",")) availMB=\(CompositionMemoryBudget.availableMB())",
+                    category: .ai
+                )
+            }
             analysisLock.unlock()
         }
         let started = ProcessInfo.processInfo.systemUptime
         let startAvailMB = CompositionMemoryBudget.availableMB()
+        CameraLogger.info(
+            "LocalAI start [livePhotoLowMem=\(lowMem ? 1 : 0)]: availMB=\(startAvailMB)",
+            category: .ai
+        )
         func receipt(count: Int = 0, specialist: Bool = false, modern: Int = 0) -> CompositionAnalysisReceipt {
             CompositionAnalysisReceipt(requestID: requestID, sourceTimestamp: frame.timestamp,
                 elapsed: max(0, ProcessInfo.processInfo.systemUptime - started),
@@ -864,25 +940,24 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             )
         }
         let tAfterSigLIP = ProcessInfo.processInfo.systemUptime
-        // 2) IMMEDIATELY unload SigLIP (~350-450MB) and DepthAnythingV2 (~180MB) BEFORE
-        //    OpenWorldPhotoYOLOE + ForegroundInstanceMask so peak memory stays strictly single-model!
+        // 2) Keep SigLIP singleton warm across taps when Jetsam headroom is healthy (preventing
+        //    ANE/CoreML reload leaks on Run #2/#3); evict immediately only when RAM is constrained.
         autoreleasepool {
-            SemanticCropRanker.shared.releaseModelNow()
-            if lowMem {
-                renderer.releaseDepthModel()
-                renderer.clearCaches()
+            if !CompositionMemoryBudget.shouldRetainModelCache(minimumAvailableBytes: siglipRetainBytes) {
+                _ = SemanticCropRanker.shared.releaseModelNow()
             }
+            renderer.clearCaches()
         }
         guard !cancellation.isCancelled else { return nil }
 
-        // 3) Run Open-World Photographic YOLOE-26m (curated classes) + iOS 17+ Foreground Instance Mask
+        // 3) Run Open-World Photographic YOLOE-26m (curated classes) + iOS 17+ Foreground Instance Mask (512px)
         progress("Đang nhận diện vật thể mở rộng & tách nền tiền cảnh…")
         let openWorldDetections: [DirectorDetection] = autoreleasepool {
             OpenWorldSubjectDetector.shared.detect(
                 pixelBuffer: pixelBuffer,
                 orientation: frame.orientation,
                 cancellation: cancellation,
-                preferSequential: lowMem
+                preferSequential: lowMemoryBudget || ProcessInfo.processInfo.physicalMemory < 16_000_000_000
             )
         }
         let tAfterOpenWorld = ProcessInfo.processInfo.systemUptime
@@ -1153,14 +1228,10 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 profile: spatialProfile
             )
         }
-        // Release DepthAnythingV2 and OpenWorldYOLOE caches before loading GAIC -> SAMP -> Charm
-        // whenever single-model residency is active (< 8GB devices or Live Photo enabled).
-        if lowMem {
-            autoreleasepool {
-                renderer.releaseDepthModel()
-                OpenWorldSubjectDetector.shared.releaseCachedModel()
-                renderer.clearCaches()
-            }
+        // Trim cached models strictly if headroom fell below search reserve; keep all warm when healthy.
+        autoreleasepool {
+            renderer.clearCaches()
+            _ = CompositionMemoryBudget.trimForReserve(minimumBytes: lowMemoryBudget ? 380_000_000 : 300_000_000)
         }
         progress("Đang đánh giá bố cục bằng mô hình trên máy…")
         let orientedCI = CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation)

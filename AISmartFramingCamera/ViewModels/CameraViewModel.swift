@@ -4013,7 +4013,7 @@ public final class CameraViewModel: ObservableObject {
         aiFilterRankingTask?.cancel()
         aiFilterRankingTask = nil
         if hadActiveLocalWork && !restarting {
-            NeuralSubjectIntelligenceEngine.shared.scheduleReleaseAllModelCaches()
+            NeuralSubjectIntelligenceEngine.shared.scheduleTrimCachesUnderPressure()
         }
         visionEngine.stopTrackingObject()
         SpatialTrackingEngine.shared.stopTracking()
@@ -4582,20 +4582,27 @@ public final class CameraViewModel: ObservableObject {
         let requestID = localAnalysisRequestID
         let zooms = cameraService.availableDisplayZoomOptions
         let livePhotoLowMemoryBudget = isLivePhotoEnabled
+        // Detach from AVCaptureVideoDataOutput's tiny pool in a standalone task so `source.buffer`
+        // is NOT captured by `localAnalysisTask` for the entire 2-5s AI run (returns to pool in <1.5ms).
+        let detachTask = Task.detached(priority: .userInitiated) { () -> AITrackingSource in
+            let detachedBuffer = Self.clonePixelBuffer(source.buffer) ?? source.buffer
+            return AITrackingSource(
+                buffer: detachedBuffer, frame: source.frame, pose: source.pose,
+                subjectRect: source.subjectRect, faceRects: source.faceRects
+            )
+        }
         localAnalysisTask = Task { [weak self] in
-            // Detach from AVCaptureVideoDataOutput's pool off @MainActor so IOSurface lock never stalls live UI.
-            let ownedSource = await Task.detached(priority: .userInitiated) { () -> AITrackingSource in
-                let detachedBuffer = Self.clonePixelBuffer(source.buffer) ?? source.buffer
-                return AITrackingSource(
-                    buffer: detachedBuffer, frame: source.frame, pose: source.pose,
-                    subjectRect: source.subjectRect, faceRects: source.faceRects
-                )
-            }.value
+            let ownedSource = await detachTask.value
             guard let self, !Task.isCancelled, !cancellation.isCancelled,
                   self.aiSessionGeneration == generation, self.aiSessionState == .analyzing else { return }
             self.localTrackingSource = ownedSource
             let preferences = await CompositionPreferenceStore.shared.bonuses()
-            guard !Task.isCancelled, !cancellation.isCancelled else { return }
+            guard !Task.isCancelled, !cancellation.isCancelled else {
+                if self.localTrackingSource?.frame.timestamp == ownedSource.frame.timestamp {
+                    self.localTrackingSource = nil
+                }
+                return
+            }
             let result = await withTaskCancellationHandler {
                 await NeuralSubjectIntelligenceEngine.shared.analyzeCompositionAsync(
                     pixelBuffer: ownedSource.buffer, frame: ownedSource.frame, pose: ownedSource.pose,
@@ -4614,7 +4621,12 @@ public final class CameraViewModel: ObservableObject {
             }
             guard !Task.isCancelled, !cancellation.isCancelled,
                   self.aiSessionGeneration == generation, self.aiSessionState == .analyzing,
-                  !self.localAnalysisExpired, let result else { return }
+                  !self.localAnalysisExpired, let result else {
+                if self.localTrackingSource?.frame.timestamp == ownedSource.frame.timestamp {
+                    self.localTrackingSource = nil
+                }
+                return
+            }
             self.localAnalysisTask = nil
             self.localAnalysisCancellation = nil
             self.finishLocalAnalysis(result, source: ownedSource)

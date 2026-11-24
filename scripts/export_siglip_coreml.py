@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 import coremltools as ct
+import coremltools.optimize.coreml as cto
 import numpy as np
 import torch
 from huggingface_hub import snapshot_download
@@ -112,7 +113,7 @@ def main() -> None:
     encoder = ImageEncoder(model).eval()
     example = torch.zeros(1, 3, 224, 224)
     traced = torch.jit.trace(encoder, example, strict=False)
-    converted = ct.convert(
+    fp16_converted = ct.convert(
         traced, convert_to="mlprogram", minimum_deployment_target=ct.target.iOS17,
         compute_precision=ct.precision.FLOAT16,
         inputs=[ct.ImageType(name="image", shape=example.shape,
@@ -120,16 +121,52 @@ def main() -> None:
                              scale=2.0 / 255.0, bias=[-1.0, -1.0, -1.0])],
         outputs=[ct.TensorType(name="embedding")],
     )
+
+    fixtures = []
     for seed in (1, 5, 11):
         image = fixture(seed)
         inputs = processor(images=image, return_tensors="pt")
         with torch.no_grad():
             reference = encoder(inputs["pixel_values"]).numpy().reshape(-1)
-        actual = np.asarray(converted.predict({"image": image})["embedding"]).reshape(-1)
-        cosine = float(np.dot(reference, actual) /
-                       (np.linalg.norm(reference) * np.linalg.norm(actual)))
-        if not np.isfinite(cosine) or cosine < 0.98:
-            raise RuntimeError(f"Core ML parity failed on fixture {seed}: cosine={cosine}")
+        fixtures.append((seed, image, reference))
+
+    def measure_min_cosine(candidate_model: ct.models.MLModel) -> float:
+        min_cos = 1.0
+        for seed, image, reference in fixtures:
+            actual = np.asarray(candidate_model.predict({"image": image})["embedding"]).reshape(-1)
+            cosine = float(np.dot(reference, actual) /
+                           (np.linalg.norm(reference) * np.linalg.norm(actual)))
+            if not np.isfinite(cosine):
+                return float("nan")
+            min_cos = min(min_cos, cosine)
+        return min_cos
+
+    converted = fp16_converted
+    selected_precision = "FP16"
+    min_cosine = float("nan")
+    for quant_mode, label in (("linear_symmetric", "W8A16-symmetric"), ("linear", "W8A16-linear")):
+        q_cfg = cto.OptimizationConfig(
+            global_config=cto.OpLinearQuantizerConfig(
+                mode=quant_mode,
+                dtype="int8",
+                granularity="per_channel",
+                weight_threshold=512,
+            )
+        )
+        candidate = cto.linear_quantize_weights(fp16_converted, config=q_cfg)
+        cos = measure_min_cosine(candidate)
+        if np.isfinite(cos) and cos >= 0.985:
+            converted = candidate
+            selected_precision = label
+            min_cosine = cos
+            print(f"SigLIP {label} quantization passed parity (min_cosine={cos:.5f})")
+            break
+        print(f"SigLIP {label} quantization drifted (min_cosine={cos:.5f}), trying fallback")
+
+    if selected_precision == "FP16":
+        min_cosine = measure_min_cosine(converted)
+        if not np.isfinite(min_cosine) or min_cosine < 0.98:
+            raise RuntimeError(f"Core ML parity failed: min_cosine={min_cosine}")
 
     converted.save("SigLIPBaseImage.mlpackage")
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
@@ -146,11 +183,13 @@ def main() -> None:
         "repository": REPO, "revision": REVISION,
         "weightsSHA256": WEIGHTS_SHA256,
         "license": "Apache-2.0",
+        "precision": selected_precision,
         "parityMinimumCosine": 0.98,
+        "parityMeasuredMinCosine": round(min_cosine, 6),
         "promptSchemaVersion": 2,
         "promptKeys": sorted(PROMPTS),
     }, indent=2), encoding="utf-8")
-    print("SigLIP Core ML export and parity checks passed")
+    print(f"SigLIP Core ML export ({selected_precision}) and parity checks passed (min_cosine={min_cosine:.5f})")
 
 
 if __name__ == "__main__":

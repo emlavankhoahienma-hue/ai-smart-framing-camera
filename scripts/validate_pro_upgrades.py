@@ -1431,7 +1431,7 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             self.assertIn(tok, editor)
 
     def test_27_ai_compose_memory_oom_fix_and_3d_director_v2(self):
-        # 1. Universal single-model residency on ALL iPhones (incl. 8GB/12GB) so repeated AI Compose never OOMs/lags
+        # 1. Real-time os_proc_available_memory() adaptive residency (never blind 7.5GB RAM trap, never 6x reload leak)
         for rel in [
             "Services/CompositionImageEvidence.swift",
             "Services/OpenWorldSubjectDetector.swift",
@@ -1443,7 +1443,8 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         ]:
             src = source(rel)
             self.assertNotIn("7_500_000_000", src, f"8GB iPhone Jetsam cache trap still in {rel}")
-            self.assertIn("16_000_000_000", src, f"Missing 16GB mobile single-model threshold in {rel}")
+            self.assertIn("CompositionMemoryBudget.shouldRetainModelCache(", src,
+                          f"Missing adaptive Jetsam residency guard in {rel}")
 
         neural = source("Services/NeuralSubjectIntelligenceEngine.swift")
         for tok in [
@@ -1540,6 +1541,59 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             controls.index("else if let photo = viewModel.latestCapturedPhoto"),
             "GalleryThumbnailButton must render 160px thumbnail instead of 48MB full-res CGImage",
         )
+
+    def test_29_w8a16_quantization_adaptive_singleton_and_512px_foreground_mask(self):
+        # 1. All 5 FP16 Core ML exporters apply parity-verified W8A16 (INT8 weights / FP16 activations)
+        for rel in [
+            "scripts/export_siglip_coreml.py",
+            "scripts/export_openworld_yoloe_coreml.py",
+            "scripts/export_composition_coreml.py",
+            "scripts/export_charm_coreml.py",
+            "models/gaic-cropper/export_coreml.py",
+        ]:
+            py_src = (ROOT.parent / rel).read_text(encoding="utf-8")
+            self.assertIn("linear_quantize_weights", py_src, f"Missing W8A16 quantization in {rel}")
+            self.assertIn("OpLinearQuantizerConfig", py_src, f"Missing OpLinearQuantizerConfig in {rel}")
+            self.assertIn('dtype="int8"', py_src, f"Missing int8 weight dtype in {rel}")
+
+        # 2. Priority-ordered evictor registry keeps Charm MPSGraph warm (priority 90) and evicts SigLIP first (priority 10)
+        evidence = source("Services/CompositionImageEvidence.swift")
+        for tok in [
+            "final class CompositionImageRenderer: @unchecked Sendable",
+            "static func registerCacheEvictor(",
+            "static func shouldRetainModelCache(",
+            "static func ensureHeadroom(",
+            "static func trimForReserve(",
+            'registerCacheEvictor(id: "DepthAnythingV2", priority: 30)',
+        ]:
+            self.assertIn(tok, evidence)
+
+        self.assertIn('registerCacheEvictor(id: "SigLIP", priority: 10)',
+                      source("Services/NeuralSubjectIntelligenceEngine.swift"))
+        self.assertIn('registerCacheEvictor(id: "OpenWorldYOLOE", priority: 20)',
+                      source("Services/OpenWorldSubjectDetector.swift"))
+        self.assertIn('registerCacheEvictor(id: "SAMP", priority: 40)',
+                      source("Services/PhotographicCompositionModel.swift"))
+        self.assertIn('registerCacheEvictor(id: "GAIC", priority: 50)',
+                      source("Services/GAICCompositionModel.swift"))
+        self.assertIn('registerCacheEvictor(id: "Charm", priority: 90)',
+                      source("Services/CharmPhotographicModel.swift"))
+
+        # 3. Vision Foreground Instance Mask downsamples to <=512px upright buffer (cuts ~200MB matting peak)
+        ow = source("Services/OpenWorldSubjectDetector.swift")
+        for tok in [
+            "private func makeForegroundMaskInputBuffer(",
+            "maxSide: Int = 512",
+            "CompositionMemoryBudget.ensureHeadroom(",
+            "allowCache: true",
+        ]:
+            self.assertIn(tok, ow)
+
+        # 4. CameraViewModel detaches camera pool CVPixelBuffer in standalone task & uses pressure-only trim on cancel
+        vm = source("ViewModels/CameraViewModel.swift")
+        self.assertIn("let detachTask = Task.detached(priority: .userInitiated)", vm)
+        self.assertIn("let ownedSource = await detachTask.value", vm)
+        self.assertIn("NeuralSubjectIntelligenceEngine.shared.scheduleTrimCachesUnderPressure()", vm)
 
 
 if __name__ == "__main__":

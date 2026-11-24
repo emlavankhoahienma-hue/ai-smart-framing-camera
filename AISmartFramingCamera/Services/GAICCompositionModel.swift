@@ -21,38 +21,52 @@ final class GAICCompositionModel {
         private var cachedInstance: GAICCompositionModel?
 
         private init() {
+            CompositionMemoryBudget.registerCacheEvictor(id: "GAIC", priority: 50) { [weak self] in
+                self?.clear() ?? false
+            }
             #if canImport(UIKit)
             _ = NotificationCenter.default.addObserver(
                 forName: UIApplication.didReceiveMemoryWarningNotification,
                 object: nil,
                 queue: nil
             ) { [weak self] _ in
-                self?.clear()
+                _ = self?.clear()
             }
             #endif
         }
 
-        func clear() {
-            lock.withLock {
+        @discardableResult
+        func clear() -> Bool {
+            let evicted = lock.withLock { () -> Bool in
+                let had = (cachedInstance != nil)
                 cachedURL = nil
                 cachedInstance = nil
+                return had
             }
             CompositionImageRenderer.clearSharedCaches()
+            return evicted
         }
 
         func getOrLoad(url: URL) -> GAICCompositionModel? {
-            let keepCached = ProcessInfo.processInfo.physicalMemory >= 16_000_000_000
-            return lock.withLock {
-                if keepCached, cachedURL == url, let existing = cachedInstance {
-                    return existing
-                }
-                guard let loaded = try? GAICCompositionModel(url: url) else { return nil }
-                if keepCached {
+            if let existing = lock.withLock({ cachedURL == url ? cachedInstance : nil }) {
+                return existing
+            }
+            guard CompositionMemoryBudget.ensureHeadroom(
+                minimumBytes: CompositionMemoryBudget.gaicLoadHeadroomBytes,
+                excluding: "GAIC"
+            ) else {
+                return nil
+            }
+            guard let loaded = try? GAICCompositionModel(url: url) else { return nil }
+            if CompositionMemoryBudget.shouldRetainModelCache(
+                minimumAvailableBytes: CompositionMemoryBudget.gaicRetainThresholdBytes
+            ) {
+                lock.withLock {
                     cachedURL = url
                     cachedInstance = loaded
                 }
-                return loaded
             }
+            return loaded
         }
     }
 

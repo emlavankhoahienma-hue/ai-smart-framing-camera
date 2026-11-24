@@ -12,8 +12,57 @@ import UIKit
 import os
 #endif
 
-/// Real-time advisory iOS Jetsam headroom query (zero cost; 0 on macOS / non-sandboxed CLI).
+/// Real-time advisory iOS Jetsam headroom query and priority-ordered cache eviction manager.
+/// Keeps compiled Core ML / MPSGraph singletons warm across repeated AI Compose taps when
+/// `os_proc_available_memory()` is healthy (eliminating Apple CoreML/MPSGraph reload leaks
+/// and stalls on Run #2/#3), while deterministically evicting heaviest models first under real pressure.
 enum CompositionMemoryBudget {
+    static let postRunPhotoCaptureReserveBytes = 360_000_000
+    static let siglipRetainThresholdBytes = 460_000_000
+    static let openWorldRetainThresholdBytes = 340_000_000
+    static let depthRetainThresholdBytes = 280_000_000
+    static let sampRetainThresholdBytes = 260_000_000
+    static let gaicRetainThresholdBytes = 220_000_000
+    static let charmRetainThresholdBytes = 200_000_000
+
+    static let siglipLoadHeadroomBytes = 220_000_000
+    static let openWorldLoadHeadroomBytes = 180_000_000
+    static let foregroundMaskLoadHeadroomBytes = 150_000_000
+    static let depthLoadHeadroomBytes = 160_000_000
+    static let gaicLoadHeadroomBytes = 130_000_000
+    static let sampLoadHeadroomBytes = 160_000_000
+    static let charmLoadHeadroomBytes = 200_000_000
+
+    private struct CacheEvictor: Sendable {
+        let id: String
+        let priority: Int // Lower value = evicted first; Charm MPSGraph uses 90 (evicted last)
+        let evict: @Sendable () -> Bool
+    }
+
+    private final class EvictorRegistry: @unchecked Sendable {
+        static let shared = EvictorRegistry()
+        private let lock = NSLock()
+        private var entries: [String: CacheEvictor] = [:]
+
+        func register(id: String, priority: Int, evict: @escaping @Sendable () -> Bool) {
+            lock.withLock {
+                entries[id] = CacheEvictor(id: id, priority: priority, evict: evict)
+            }
+        }
+
+        func sortedEvictors(excluding excludedID: String?) -> [CacheEvictor] {
+            lock.withLock {
+                entries.values
+                    .filter { $0.id != excludedID }
+                    .sorted { $0.priority < $1.priority }
+            }
+        }
+    }
+
+    static func registerCacheEvictor(id: String, priority: Int, evict: @escaping @Sendable () -> Bool) {
+        EvictorRegistry.shared.register(id: id, priority: priority, evict: evict)
+    }
+
     static func availableBytes() -> Int {
         #if os(iOS)
         return Int(os_proc_available_memory())
@@ -27,10 +76,59 @@ enum CompositionMemoryBudget {
         return bytes > 0 ? bytes / (1024 * 1024) : -1
     }
 
-    /// Returns true unless iOS explicitly reports critical imminent Jetsam pressure below `minimumBytes`.
+    /// Returns true unless iOS explicitly reports Jetsam headroom below `minimumBytes`.
     static func hasHeadroom(minimumBytes: Int) -> Bool {
         let bytes = availableBytes()
         return bytes == 0 || bytes >= minimumBytes
+    }
+
+    /// Returns true when the current device can safely keep a compiled singleton model cached
+    /// without approaching iOS Jetsam limits.
+    static func shouldRetainModelCache(minimumAvailableBytes: Int) -> Bool {
+        guard ProcessInfo.processInfo.thermalState != .critical else { return false }
+        let bytes = availableBytes()
+        if bytes == 0 {
+            return ProcessInfo.processInfo.physicalMemory >= 8_000_000_000
+        }
+        return bytes >= minimumAvailableBytes
+    }
+
+    /// Ensures at least `minimumBytes` of iOS Jetsam headroom before loading a non-cached model.
+    /// Evicts only the minimum number of other cached models in priority order (never thrashing
+    /// unrelated warm singletons when headroom is already healthy).
+    @discardableResult
+    static func ensureHeadroom(minimumBytes: Int, excluding activeID: String? = nil) -> Bool {
+        if hasHeadroom(minimumBytes: minimumBytes) { return true }
+        CompositionImageRenderer.clearSharedCaches()
+        if hasHeadroom(minimumBytes: minimumBytes) { return true }
+        let candidates = EvictorRegistry.shared.sortedEvictors(excluding: activeID)
+        for entry in candidates {
+            _ = autoreleasepool { entry.evict() }
+            if hasHeadroom(minimumBytes: minimumBytes) { return true }
+        }
+        return hasHeadroom(minimumBytes: minimumBytes)
+    }
+
+    /// Trims cached models in priority order ONLY when real-time Jetsam headroom falls below
+    /// `minimumBytes` (leaving ample free memory for post-AI 12MP/48MP photo capture).
+    @discardableResult
+    static func trimForReserve(minimumBytes: Int = postRunPhotoCaptureReserveBytes) -> [String] {
+        guard !hasHeadroom(minimumBytes: minimumBytes) else { return [] }
+        CompositionImageRenderer.clearSharedCaches()
+        guard !hasHeadroom(minimumBytes: minimumBytes) else { return [] }
+        var evictedIDs: [String] = []
+        let candidates = EvictorRegistry.shared.sortedEvictors(excluding: nil)
+        for entry in candidates {
+            // Preserve Charm MPSGraph unless headroom is critically low (< 200 MB) to avoid
+            // repeated Metal MPSGraph recompilations across taps.
+            if entry.id == "Charm" && hasHeadroom(minimumBytes: charmRetainThresholdBytes) {
+                continue
+            }
+            let didEvict = autoreleasepool { entry.evict() }
+            if didEvict { evictedIDs.append(entry.id) }
+            if hasHeadroom(minimumBytes: minimumBytes) { break }
+        }
+        return evictedIDs
     }
 }
 
@@ -90,7 +188,7 @@ final class CompositionAnalysisCancellation: @unchecked Sendable {
 }
 
 /// Used only by the serialized analysis worker. Outputs are immutable preview images.
-final class CompositionImageRenderer {
+final class CompositionImageRenderer: @unchecked Sendable {
     /// Single shared low-priority, non-caching CIContext for ALL Local AI preprocessing
     /// (DepthAnythingV2, OpenWorldYOLOE, GAIC, preview crops). Sharing one locked context avoids
     /// creating/leaking per-model Metal CIContexts (~30-60MB each) and keeps GPU priority below
@@ -133,20 +231,28 @@ final class CompositionImageRenderer {
     private var cachedDepthModel: MLModel?
 
     init() {
+        CompositionMemoryBudget.registerCacheEvictor(id: "DepthAnythingV2", priority: 30) { [weak self] in
+            self?.releaseDepthModel() ?? false
+        }
         #if canImport(UIKit)
         _ = NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification,
             object: nil,
             queue: nil
         ) { [weak self] _ in
-            self?.releaseDepthModel()
+            _ = self?.releaseDepthModel()
             Self.clearSharedCaches()
         }
         #endif
     }
 
-    func releaseDepthModel() {
-        depthModelLock.withLock { cachedDepthModel = nil }
+    @discardableResult
+    func releaseDepthModel() -> Bool {
+        depthModelLock.withLock {
+            let hadModel = (cachedDepthModel != nil)
+            cachedDepthModel = nil
+            return hadModel
+        }
     }
 
     func clearCaches() {
@@ -190,17 +296,28 @@ final class CompositionImageRenderer {
         guard let url = candidateNames.compactMap({ Bundle.main.url(forResource: $0, withExtension: "mlmodelc") }).first else {
             return nil
         }
-        let keepCached = ProcessInfo.processInfo.physicalMemory >= 16_000_000_000
         return autoreleasepool {
             guard !cancellation.isCancelled else { return nil }
-            let model: MLModel? = depthModelLock.withLock {
-                if let cached = cachedDepthModel { return cached }
+            let model: MLModel? = {
+                if let cached = depthModelLock.withLock({ cachedDepthModel }) {
+                    return cached
+                }
+                guard CompositionMemoryBudget.ensureHeadroom(
+                    minimumBytes: CompositionMemoryBudget.depthLoadHeadroomBytes,
+                    excluding: "DepthAnythingV2"
+                ) else {
+                    return nil
+                }
                 let config = MLModelConfiguration()
                 config.computeUnits = .cpuAndNeuralEngine
                 guard let loaded = try? MLModel(contentsOf: url, configuration: config) else { return nil }
-                if keepCached { cachedDepthModel = loaded }
+                if CompositionMemoryBudget.shouldRetainModelCache(
+                    minimumAvailableBytes: CompositionMemoryBudget.depthRetainThresholdBytes
+                ) {
+                    depthModelLock.withLock { cachedDepthModel = loaded }
+                }
                 return loaded
-            }
+            }()
             guard let model else { return nil }
 
             let inputEntries = model.modelDescription.inputDescriptionsByName

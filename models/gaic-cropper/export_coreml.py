@@ -14,6 +14,7 @@ import numpy as np
 from PIL import Image, ImageOps
 import torch
 import coremltools as ct
+import coremltools.optimize.coreml as cto
 
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
@@ -56,7 +57,7 @@ def main():
     parser.add_argument("--output", type=Path, default=THIS_DIR / "GAICCompositionScorer.mlpackage")
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--parity-image", type=Path, default=None)
-    parser.add_argument("--precision", choices=("fp16", "fp32"), default="fp16")
+    parser.add_argument("--precision", choices=("w8a16", "fp16", "fp32"), default="w8a16")
     args = parser.parse_args()
 
     digest = verify_weight_digest(args.weights, THIS_DIR / "weights_sha256.txt")
@@ -74,7 +75,7 @@ def main():
     with torch.no_grad():
         traced = torch.jit.trace(wrapper, (dummy_img, dummy_boxes))
 
-    mlmodel = ct.convert(
+    base_model = ct.convert(
         traced,
         inputs=[
             ct.ImageType(
@@ -89,19 +90,11 @@ def main():
         outputs=[ct.TensorType(name="scores")],
         convert_to="mlprogram",
         minimum_deployment_target=ct.target.iOS17,
-        compute_precision=ct.precision.FLOAT16 if args.precision == "fp16" else ct.precision.FLOAT32,
+        compute_precision=ct.precision.FLOAT32 if args.precision == "fp32" else ct.precision.FLOAT16,
     )
 
-    mlmodel.author = "AI Smart Framing Camera"
-    mlmodel.short_description = "RoI+RoD multi-scale compositional crop scorer (MobilenetV3-FPN)."
-    mlmodel.user_defined_metadata["weights_sha256"] = digest
-    mlmodel.user_defined_metadata["max_boxes"] = str(MAX_EXPORT_BOXES)
-    mlmodel.user_defined_metadata["image_size"] = str(IMAGE_SIZE)
-
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    mlmodel.save(str(args.output))
-    print(f"[GAIC-Export] Saved {args.output} ({args.precision})")
-
+    mlmodel = base_model
+    selected_precision = "FP32" if args.precision == "fp32" else "FP16"
     parity_info = {"checked": False}
     if sys.platform == "darwin":
         if args.parity_image and args.parity_image.exists():
@@ -115,14 +108,59 @@ def main():
         bxs = make_candidate_grid_256()
         with torch.no_grad():
             pt_scores = wrapper(img_t, torch.from_numpy(bxs).unsqueeze(0))[0].numpy()
-        cm_out = mlmodel.predict({"image": pil, "boxes": bxs[None, ...]})
-        cm_scores = np.asarray(cm_out["scores"], dtype=np.float32).reshape(-1)
-        max_abs = float(np.max(np.abs(pt_scores - cm_scores)))
-        corr = float(np.corrcoef(pt_scores, cm_scores)[0, 1])
-        parity_info = {"checked": True, "max_abs_diff": round(max_abs, 5), "pearson_corr": round(corr, 6)}
-        print(f"[GAIC-Export] macOS CoreML parity: max_abs_diff={max_abs:.5f}, corr={corr:.6f}")
-        if max_abs > 0.08 or corr < 0.995:
-            raise RuntimeError(f"PyTorch vs CoreML GAICCompositionScorer parity failed: {parity_info}")
+
+        def measure_gaic_parity(candidate_model: ct.models.MLModel) -> tuple[float, float]:
+            cm_out = candidate_model.predict({"image": pil, "boxes": bxs[None, ...]})
+            cm_scores = np.asarray(cm_out["scores"], dtype=np.float32).reshape(-1)
+            return float(np.max(np.abs(pt_scores - cm_scores))), float(np.corrcoef(pt_scores, cm_scores)[0, 1])
+
+        if args.precision == "w8a16":
+            for quant_mode, label in (("linear_symmetric", "W8A16-symmetric"), ("linear", "W8A16-linear")):
+                q_cfg = cto.OptimizationConfig(
+                    global_config=cto.OpLinearQuantizerConfig(
+                        mode=quant_mode,
+                        dtype="int8",
+                        granularity="per_channel",
+                        weight_threshold=512,
+                    )
+                )
+                candidate = cto.linear_quantize_weights(base_model, config=q_cfg)
+                max_abs, corr = measure_gaic_parity(candidate)
+                if np.isfinite(max_abs) and max_abs <= 0.08 and corr >= 0.995:
+                    mlmodel = candidate
+                    selected_precision = label
+                    parity_info = {"checked": True, "max_abs_diff": round(max_abs, 5), "pearson_corr": round(corr, 6)}
+                    print(f"[GAIC-Export] {label} parity passed: max_abs_diff={max_abs:.5f}, corr={corr:.6f}")
+                    break
+                print(f"[GAIC-Export] {label} drifted (max_abs={max_abs:.5f}, corr={corr:.6f}), trying fallback")
+
+        if not parity_info["checked"]:
+            max_abs, corr = measure_gaic_parity(mlmodel)
+            parity_info = {"checked": True, "max_abs_diff": round(max_abs, 5), "pearson_corr": round(corr, 6)}
+            print(f"[GAIC-Export] macOS CoreML parity ({selected_precision}): max_abs_diff={max_abs:.5f}, corr={corr:.6f}")
+            if not np.isfinite(max_abs) or max_abs > 0.08 or corr < 0.995:
+                raise RuntimeError(f"PyTorch vs CoreML GAICCompositionScorer parity failed: {parity_info}")
+    elif args.precision == "w8a16":
+        q_cfg = cto.OptimizationConfig(
+            global_config=cto.OpLinearQuantizerConfig(
+                mode="linear_symmetric",
+                dtype="int8",
+                granularity="per_channel",
+                weight_threshold=512,
+            )
+        )
+        mlmodel = cto.linear_quantize_weights(base_model, config=q_cfg)
+        selected_precision = "W8A16-symmetric"
+
+    mlmodel.author = "AI Smart Framing Camera"
+    mlmodel.short_description = "RoI+RoD multi-scale compositional crop scorer (MobilenetV3-FPN)."
+    mlmodel.user_defined_metadata["weights_sha256"] = digest
+    mlmodel.user_defined_metadata["max_boxes"] = str(MAX_EXPORT_BOXES)
+    mlmodel.user_defined_metadata["image_size"] = str(IMAGE_SIZE)
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    mlmodel.save(str(args.output))
+    print(f"[GAIC-Export] Saved {args.output} ({selected_precision})")
 
     if args.manifest:
         args.manifest.parent.mkdir(parents=True, exist_ok=True)
@@ -131,7 +169,7 @@ def main():
             "backbone": "mobilenetv3_large_100",
             "image_size": IMAGE_SIZE,
             "max_boxes": MAX_EXPORT_BOXES,
-            "precision": args.precision,
+            "precision": selected_precision,
             "weights_sha256": digest,
             "training_metrics": meta,
             "parity": parity_info,

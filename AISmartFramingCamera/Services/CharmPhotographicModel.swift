@@ -29,45 +29,60 @@ final class CharmPhotographicModel {
         private var cachedInstance: CharmPhotographicModel?
 
         private init() {
+            CompositionMemoryBudget.registerCacheEvictor(id: "Charm", priority: 90) { [weak self] in
+                self?.clear(includingPositions: false) ?? false
+            }
             #if canImport(UIKit)
             _ = NotificationCenter.default.addObserver(
                 forName: UIApplication.didReceiveMemoryWarningNotification,
                 object: nil,
                 queue: nil
             ) { [weak self] _ in
-                self?.clear(includingPositions: true)
+                _ = self?.clear(includingPositions: true)
             }
             #endif
         }
 
-        func clear(includingPositions: Bool = false) {
-            lock.withLock {
+        @discardableResult
+        func clear(includingPositions: Bool = false) -> Bool {
+            let evicted = lock.withLock { () -> Bool in
+                let had = (cachedInstance != nil)
                 cachedURL = nil
                 cachedPositionURL = nil
                 cachedInstance = nil
+                return had
             }
             if includingPositions {
                 SharedPositionCache.shared.clear()
             }
+            return evicted
         }
 
         func getOrLoad(url: URL, positionURL: URL) -> CharmPhotographicModel? {
-            let keepCached = ProcessInfo.processInfo.physicalMemory >= 16_000_000_000
-            return lock.withLock {
-                if keepCached, cachedURL == url, cachedPositionURL == positionURL,
-                   let existing = cachedInstance {
-                    return existing
-                }
-                guard let loaded = try? CharmPhotographicModel(url: url, positionURL: positionURL) else {
-                    return nil
-                }
-                if keepCached {
+            if let existing = lock.withLock({
+                (cachedURL == url && cachedPositionURL == positionURL) ? cachedInstance : nil
+            }) {
+                return existing
+            }
+            guard CompositionMemoryBudget.ensureHeadroom(
+                minimumBytes: CompositionMemoryBudget.charmLoadHeadroomBytes,
+                excluding: "Charm"
+            ) else {
+                return nil
+            }
+            guard let loaded = try? CharmPhotographicModel(url: url, positionURL: positionURL) else {
+                return nil
+            }
+            if CompositionMemoryBudget.shouldRetainModelCache(
+                minimumAvailableBytes: CompositionMemoryBudget.charmRetainThresholdBytes
+            ) {
+                lock.withLock {
                     cachedURL = url
                     cachedPositionURL = positionURL
                     cachedInstance = loaded
                 }
-                return loaded
             }
+            return loaded
         }
     }
 
