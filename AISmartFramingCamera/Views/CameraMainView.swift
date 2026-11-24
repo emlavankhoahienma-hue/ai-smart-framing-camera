@@ -318,20 +318,32 @@ public struct CameraMainView: View {
                             let horizonOffset: CGFloat = viewModel.isHorizonLockEnabled ? 34 : 0
 
                             if !isPhotoStylePadActive && !viewModel.isPhotoboothModeActive {
-                                if viewModel.showHistogramInViewfinder && viewModel.isHistogramBarExpanded && !viewModel.isCameraHibernating {
-                                    ProHistogramExpandedHUDView(viewModel: viewModel)
-                                        .padding(.top, layout.viewfinderTopOverlayInset + proTopOffset + horizonOffset)
-                                        .padding(.trailing, 10)
-                                        .transition(.scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity))
-                                } else if !viewModel.captureMode.isVideo &&
-                                          !viewModel.isProPhotoModeEnabled &&
-                                          !viewModel.isCameraHibernating &&
-                                          !viewModel.isWindowedZoomActive {
-                                    PhotographicStyleQuickTriggerButton(viewModel: viewModel)
-                                        .padding(.top, layout.viewfinderTopOverlayInset + horizonOffset)
-                                        .padding(.trailing, 10)
-                                        .transition(.scale(scale: 0.90, anchor: .topTrailing).combined(with: .opacity))
+                                // Histogram card và nút Photographic Styles cùng tồn tại (xếp dọc), không còn loại trừ nhau.
+                                VStack(alignment: .trailing, spacing: 8) {
+                                    if viewModel.showHistogramInViewfinder && !viewModel.isCameraHibernating {
+                                        if viewModel.isHistogramBarExpanded {
+                                            ProHistogramExpandedHUDView(viewModel: viewModel)
+                                                .transition(.scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity))
+                                        } else {
+                                            HistogramAlertPillView(viewModel: viewModel, expandsOnTap: true)
+                                        }
+                                    }
+                                    if !viewModel.captureMode.isVideo &&
+                                       !viewModel.isProPhotoModeEnabled &&
+                                       !viewModel.isCameraHibernating &&
+                                       !viewModel.isWindowedZoomActive {
+                                        PhotographicStyleQuickTriggerButton(viewModel: viewModel)
+                                            .transition(.scale(scale: 0.90, anchor: .topTrailing).combined(with: .opacity))
+                                    }
                                 }
+                                .padding(.top, layout.viewfinderTopOverlayInset + proTopOffset + horizonOffset)
+                                .padding(.trailing, 10)
+                            } else if isPhotoStylePadActive && viewModel.showHistogramInViewfinder && !viewModel.isCameraHibernating {
+                                // Khi chỉnh Tone/Color vẫn thấy cảnh báo cháy sáng / bết tối / nhiễu
+                                HistogramAlertPillView(viewModel: viewModel, expandsOnTap: false)
+                                    .allowsHitTesting(false)
+                                    .padding(.top, layout.viewfinderTopOverlayInset + 6)
+                                    .padding(.trailing, 10)
                             }
                         }
                         // Unobstructed Viewfinder Swipe Overlay khi bật Photographic Styles hoặc Photobooth Studio

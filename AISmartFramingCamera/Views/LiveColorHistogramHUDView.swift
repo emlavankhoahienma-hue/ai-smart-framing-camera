@@ -432,3 +432,54 @@ struct ProHistogramWaveformCanvas: View {
         }
     }
 }
+
+// MARK: - Cảnh báo Cháy sáng / Bết tối / Nhiễu dạng viên thuốc (chỉ hiện khi có cảnh báo thật)
+public struct HistogramAlertPillView: View {
+    @ObservedObject var viewModel: CameraViewModel
+    let expandsOnTap: Bool
+
+    public init(viewModel: CameraViewModel, expandsOnTap: Bool) {
+        self.viewModel = viewModel
+        self.expandsOnTap = expandsOnTap
+    }
+
+    public var body: some View {
+        let t = viewModel.histogramTelemetry
+        let hasAlert = t.isHighlightClipping || t.isShadowClipping || t.isHighNoise
+        Group {
+            if hasAlert {
+                Button(action: {
+                    guard expandsOnTap else { return }
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
+                        viewModel.isHistogramBarExpanded = true
+                    }
+                }) {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(t.isHighlightClipping ? AlignTheme.studioRecordRed
+                                  : (t.isShadowClipping ? LiveColorHistogramHUDView.studioBlueChannel : AlignTheme.studioAccent))
+                            .frame(width: 5, height: 5)
+                        Text(Self.label(for: t))
+                            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                            .foregroundColor(AlignTheme.studioInkPrimary)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 9)
+                    .frame(height: 22)
+                    .background(StudioGlassRoundedSurface(cornerRadius: 11, tintOpacity: 0.64, borderOpacity: 0.16))
+                }
+                .buttonStyle(.plain)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: hasAlert)
+    }
+
+    private static func label(for t: HistogramTelemetry) -> String {
+        var parts: [String] = []
+        if t.isHighlightClipping { parts.append(t.isSevereHighlightClipping ? "Cháy sáng mạnh" : "Cháy sáng") }
+        if t.isShadowClipping { parts.append("Bết tối") }
+        if t.isHighNoise { parts.append(t.sensorISO >= 1000 ? "Nhiễu · ISO \(Int(round(t.sensorISO)))" : "Nhiễu cao") }
+        return parts.joined(separator: " · ")
+    }
+}

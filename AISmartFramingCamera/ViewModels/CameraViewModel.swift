@@ -2617,7 +2617,11 @@ public final class CameraViewModel: ObservableObject {
         }
     }
     @Published public var isHistogramBarExpanded: Bool = true {
-        didSet { UserDefaults.standard.set(isHistogramBarExpanded, forKey: "isHistogramBarExpanded") }
+        didSet {
+            UserDefaults.standard.set(isHistogramBarExpanded, forKey: "isHistogramBarExpanded")
+            // Bật Biểu đồ Pro RGB luôn phải làm Histogram hiện ra, kể cả khi trước đó nút 6 chấm đã tắt
+            if isHistogramBarExpanded && !showHistogramInViewfinder { showHistogramInViewfinder = true }
+        }
     }
     @Published public var showAudioLevelMeter: Bool = true {
         didSet { UserDefaults.standard.set(showAudioLevelMeter, forKey: "showAudioLevelMeter") }
