@@ -1430,6 +1430,52 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         ]:
             self.assertIn(tok, editor)
 
+    def test_27_ai_compose_memory_oom_fix_and_3d_director_v2(self):
+        # 1. Universal single-model residency on ALL iPhones (incl. 8GB/12GB) so repeated AI Compose never OOMs/lags
+        for rel in [
+            "Services/CompositionImageEvidence.swift",
+            "Services/OpenWorldSubjectDetector.swift",
+            "Services/GAICCompositionModel.swift",
+            "Services/PhotographicCompositionModel.swift",
+            "Services/CharmPhotographicModel.swift",
+            "Services/CompositionAestheticSearch.swift",
+            "Services/NeuralSubjectIntelligenceEngine.swift",
+        ]:
+            src = source(rel)
+            self.assertNotIn("7_500_000_000", src, f"8GB iPhone Jetsam cache trap still in {rel}")
+            self.assertIn("16_000_000_000", src, f"Missing 16GB mobile single-model threshold in {rel}")
+
+        neural = source("Services/NeuralSubjectIntelligenceEngine.swift")
+        for tok in [
+            "let result: LocalCompositionAnalysis? = autoreleasepool {",
+            "let isMobileSingleModel = ProcessInfo.processInfo.physicalMemory < 16_000_000_000",
+            "portraitBounds: portraitBounds",
+            "poseProfile: poseProfile",
+            "let directedCropProtection = CompositionCropProtection.bounds(",
+        ]:
+            self.assertIn(tok, neural)
+
+        # 2. Cancellation & zero main-thread live-pool lock contention in CameraViewModel
+        vm = source("ViewModels/CameraViewModel.swift")
+        self.assertGreaterEqual(vm.count("localAnalysisCancellation?.cancel()"), 4)
+        self.assertGreaterEqual(vm.count("localAnalysisTask?.cancel()"), 4)
+        self.assertIn("if isAIFullColorEnabled, let framedPreview = analysis.choices.first?.preview", vm)
+        self.assertIn("pixelBuffer: isSmartExposureEnabled ? source.buffer : nil", vm)
+        self.assertIn("var reconciledGuideRay = plan.aimWorldRay", vm)
+
+        # 3. 3D Director v2: anatomical face/bust laws, bi-directional zoom-out, actualDest truth & overcast sky guard
+        director = source("Services/CameraFramingDirector.swift")
+        for tok in [
+            "var isFaceOnlyHero = false",
+            "var portraitBustBox: CGRect? = nil",
+            "func appendZoomRung(_ candidateZoom: CGFloat)",
+            "actualDest: CGPoint",
+            "let clampDrift = hypot(",
+            "let ankleCutPen: Double =",
+            "guard peakVal - p85 >= 0.12 else { return nil }",
+        ]:
+            self.assertIn(tok, director)
+
 
 if __name__ == "__main__":
     unittest.main()

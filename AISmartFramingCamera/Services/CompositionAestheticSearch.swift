@@ -36,7 +36,7 @@ final class CompositionAestheticSearch {
              progress: @Sendable (String) -> Void,
              refine: ([CompositionProposal]) -> [CompositionProposal]) -> Result? {
         guard !cancellation.isCancelled else { return nil }
-        let singleModelResidency = lowMemoryBudget || ProcessInfo.processInfo.physicalMemory < 7_500_000_000
+        let singleModelResidency = lowMemoryBudget || ProcessInfo.processInfo.physicalMemory < 16_000_000_000
         let resolvedGaicURL = gaicModelURL ?? GAICCompositionModel.defaultModelURL(near: modelURL)
         let sourceBaseZoom = max(0.5, Double(proposals.first(where: \.isUnchangedView)?.zoom ?? proposals.first?.zoom ?? 1.0))
         var workingProposals = proposals
@@ -68,7 +68,7 @@ final class CompositionAestheticSearch {
         // Shortlist diverse peak candidates for SAMP-Net to stay fast and memory-safe even when
         // GAIC is unavailable (preventing runaway 64+28 SAMP / 28 Charm stalls on mobile devices).
         let isHighMem = ProcessInfo.processInfo.physicalMemory >= 5_800_000_000
-        let sampBudget = usedGAIC ? (isHighMem ? 8 : 6) : (isHighMem ? 12 : 8)
+        let sampBudget = usedGAIC ? (isHighMem ? 6 : 4) : (isHighMem ? 10 : 6)
         if workingProposals.count > sampBudget {
             let rankedForSamp = workingProposals.map { candidate -> CompositionProposal in
                 var copy = candidate
@@ -234,7 +234,7 @@ final class CompositionAestheticSearch {
         }
         var evaluated = evaluate(workingProposals)
         guard !cancellation.isCancelled else { return nil }
-        if !cancellation.isSoftDeadlineReached && cancellation.remainingSoftBudget > 1.2 {
+        if !usedGAIC && !cancellation.isSoftDeadlineReached && cancellation.remainingSoftBudget > 1.2 {
             let initial = CompositionPlanner.diverse(evaluated.map(\.proposal), limit: usedGAIC ? 2 : 3)
             progress("Đang kiểm tra lại khung và các mức zoom lân cận…")
             let refinedSeeds = refine(initial)
@@ -286,7 +286,7 @@ final class CompositionAestheticSearch {
                 ProcessInfo.processInfo.thermalState == .serious
             let isLowMemory = ProcessInfo.processInfo.physicalMemory < 5_800_000_000
             // Bounded Charm-PARA DINOv2 budget (never 28x even if GAIC is absent!)
-            let budget = thermalOrLowPower ? 2 : (isLowMemory ? 3 : 4)
+            let budget = usedGAIC ? 2 : (thermalOrLowPower ? 2 : (isLowMemory ? 3 : 4))
             for index in evaluated.indices.sorted(by: { evaluated[$0].proposal.score > evaluated[$1].proposal.score }) {
                 if indices.count >= budget { break }
                 include(index)

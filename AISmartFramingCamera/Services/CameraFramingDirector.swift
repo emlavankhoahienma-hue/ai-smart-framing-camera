@@ -298,6 +298,7 @@ enum CameraFramingDirector {
         let style: DirectorCompositionStyle
         let aim: CGPoint
         let rotation: simd_quatd
+        let futureCalib: TrackingCalibration
         let cropBox: CGRect
         let isBaseline: Bool
     }
@@ -314,7 +315,9 @@ enum CameraFramingDirector {
         calibration: TrackingCalibration,
         pose: simd_quatd,
         currentZoom: CGFloat,
-        allowedZooms: [CGFloat]
+        allowedZooms: [CGFloat],
+        portraitBounds: CGRect? = nil,
+        poseProfile: AnatomicalPoseProfile? = nil
     ) -> DirectorDecision {
         let safeZoom = max(0.5, currentZoom)
         let safePose = simd_length(pose.vector) > 1e-6 ? simd_normalize(pose) : simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
@@ -555,56 +558,118 @@ enum CameraFramingDirector {
         var heroAnchor = CGPoint(x: 0.50, y: 0.48)
         var heroGazeX = 0.0
         var protectedBoxes: [CGRect] = []
+        var isFaceOnlyHero = false
+        var portraitBustBox: CGRect? = nil
 
         if !validPeople.isEmpty && !bystanderOverridden {
             if let explicitGroup = validPeople.first(where: { $0.det.isGroup }) {
                 role = .group
                 heroBox = explicitGroup.det.boundingBox
-                heroAnchor = explicitGroup.det.anchor ?? CGPoint(x: heroBox.midX, y: heroBox.minY + 0.26 * heroBox.height)
+                let memberFaces = faceDets.filter { explicitGroup.det.boundingBox.insetBy(dx: -0.04, dy: -0.04).contains($0.center) }
+                if !memberFaces.isEmpty {
+                    let meanFaceY = memberFaces.map { Double($0.boundingBox.minY + 0.40 * $0.boundingBox.height) }.reduce(0.0, +) / Double(memberFaces.count)
+                    heroAnchor = CGPoint(x: heroBox.midX, y: CGFloat(meanFaceY))
+                } else {
+                    heroAnchor = explicitGroup.det.anchor ?? CGPoint(x: heroBox.midX, y: heroBox.minY + 0.24 * heroBox.height)
+                }
                 heroLabel = explicitGroup.det.label
                 heroLocalized = explicitGroup.det.localizedLabel
                 heroConf = explicitGroup.det.confidence
-                protectedBoxes = explicitGroup.det.companionBounds.isEmpty ? [heroBox] : explicitGroup.det.companionBounds
+                protectedBoxes = (explicitGroup.det.companionBounds.isEmpty ? [heroBox] : explicitGroup.det.companionBounds) + memberFaces.map(\.boundingBox)
             } else if validPeople.count >= 2 && validPeople[1].heroScore >= 0.35 * validPeople[0].heroScore {
                 let members = Array(validPeople.filter { $0.heroScore >= 0.30 * validPeople[0].heroScore }.prefix(6))
                 let box = unionRects(members.map(\.det.boundingBox))
                 role = .group
                 heroBox = box
-                heroAnchor = CGPoint(x: box.midX, y: box.minY + 0.26 * box.height)
+                let memberFaces = faceDets.filter { box.insetBy(dx: -0.04, dy: -0.04).contains($0.center) }
+                if !memberFaces.isEmpty {
+                    let meanFaceY = memberFaces.map { Double($0.boundingBox.minY + 0.40 * $0.boundingBox.height) }.reduce(0.0, +) / Double(memberFaces.count)
+                    heroAnchor = CGPoint(x: box.midX, y: CGFloat(meanFaceY))
+                } else {
+                    heroAnchor = CGPoint(x: box.midX, y: box.minY + 0.24 * box.height)
+                }
                 heroLabel = "group(\(members.count))"
                 heroLocalized = "Nhóm \(members.count) người"
                 heroConf = validPeople[0].det.confidence
-                protectedBoxes = members.map(\.det.boundingBox)
+                protectedBoxes = members.map(\.det.boundingBox) + memberFaces.map(\.boundingBox)
             } else {
                 let p0 = validPeople[0]
-                let scenicContext = (siglipScene == "landscape" || siglipScene == "sky_clouds" || siglipScene == "sunset" ||
-                    siglipScene == "person_scenery" || siglipScene == "architecture" || siglipScene == "street") &&
-                    p0.det.area < 0.16
-                role = scenicContext ? .environmentalPortrait : .portrait
                 heroBox = p0.det.boundingBox
-                if let explicitAnchor = p0.det.anchor {
-                    heroAnchor = explicitAnchor
-                } else if let matchingFace = faceDets.first(where: { f in
+                let matchingFace = faceDets.first(where: { f in
                     let fc = f.center
-                    return fc.x >= heroBox.minX - 0.03 && fc.x <= heroBox.maxX + 0.03 &&
-                        fc.y >= heroBox.minY - 0.05 && fc.y <= heroBox.minY + 0.45 * heroBox.height
-                }) {
-                    heroAnchor = CGPoint(x: matchingFace.boundingBox.midX,
-                                         y: matchingFace.boundingBox.minY + 0.42 * matchingFace.boundingBox.height)
+                    return fc.x >= heroBox.minX - 0.04 && fc.x <= heroBox.maxX + 0.04 &&
+                        fc.y >= heroBox.minY - 0.05 && fc.y <= heroBox.minY + 0.52 * heroBox.height
+                })
+                let maxFaceH = max(
+                    Double(p0.det.faceBounds.map(\.height).max() ?? 0),
+                    Double(matchingFace?.boundingBox.height ?? 0)
+                )
+                isFaceOnlyHero = (p0.det.domain == .face) || (maxFaceH >= 0.44 * Double(heroBox.height))
+
+                // Reserve environmentalPortrait ONLY for genuine grand scenery / landmarks with clean edges,
+                // never for ordinary streets where a small distant person needs optical portrait zoom.
+                let hasGrandLandmark = !strongWideNature.isEmpty ||
+                    strongArchitecture.contains { $0.confidence >= 0.40 && $0.area >= 0.22 }
+                let scenicContext = !isFaceOnlyHero &&
+                    (siglipScene == "landscape" || siglipScene == "sky_clouds" || siglipScene == "sunset" ||
+                     siglipScene == "person_scenery" || (hasGrandLandmark && (siglipScene == "architecture" || siglipScene == "landscape"))) &&
+                    sceneHints.avoid.maxAvoid < 0.48 &&
+                    p0.det.area < 0.14
+                role = scenicContext ? .environmentalPortrait : .portrait
+
+                if let lEye = poseProfile?.leftEye, let rEye = poseProfile?.rightEye,
+                   heroBox.insetBy(dx: -0.05, dy: -0.05).contains(lEye) {
+                    heroAnchor = CGPoint(x: (lEye.x + rEye.x) * 0.5, y: (lEye.y + rEye.y) * 0.5)
+                } else if let explicitAnchor = p0.det.anchor,
+                          (isFaceOnlyHero || heroBox.height < 0.34 || explicitAnchor.y <= heroBox.minY + 0.36 * heroBox.height) {
+                    heroAnchor = explicitAnchor
+                } else if let mf = matchingFace {
+                    heroAnchor = CGPoint(x: mf.boundingBox.midX,
+                                         y: mf.boundingBox.minY + 0.40 * mf.boundingBox.height)
+                } else if let nose = poseProfile?.nose, heroBox.insetBy(dx: -0.05, dy: -0.05).contains(nose) {
+                    heroAnchor = nose
+                } else if isFaceOnlyHero {
+                    heroAnchor = CGPoint(x: heroBox.midX, y: heroBox.minY + 0.40 * heroBox.height)
                 } else {
-                    heroAnchor = CGPoint(x: heroBox.midX, y: heroBox.minY + 0.18 * heroBox.height)
+                    heroAnchor = CGPoint(x: heroBox.midX, y: heroBox.minY + 0.17 * heroBox.height)
                 }
-                heroGazeX = p0.det.gazeX
+                heroGazeX = abs(p0.det.gazeX) >= 0.05 ? p0.det.gazeX : (matchingFace?.gazeX ?? 0.0)
                 heroLabel = p0.det.label
                 heroLocalized = p0.det.localizedLabel
                 heroConf = p0.det.confidence
-                protectedBoxes = p0.det.faceBounds.isEmpty ? [heroBox] : (p0.det.faceBounds + [heroBox])
+
+                let knownFaces = !p0.det.faceBounds.isEmpty ? p0.det.faceBounds : (matchingFace.map { [$0.boundingBox] } ?? [])
+                if role == .portrait {
+                    if let measuredBust = portraitBounds,
+                       heroBox.insetBy(dx: -0.04, dy: -0.04).contains(measuredBust),
+                       measuredBust.contains(heroAnchor) {
+                        portraitBustBox = measuredBust
+                    } else if let fBox = knownFaces.first, !isFaceOnlyHero {
+                        let bustTop = max(0.0, min(heroBox.minY, fBox.minY - 0.18 * fBox.height))
+                        let bustBottom = min(heroBox.maxY, max(fBox.maxY + 0.10, fBox.minY + 2.65 * fBox.height))
+                        portraitBustBox = CGRect(x: heroBox.minX, y: bustTop, width: heroBox.width, height: max(0.14, bustBottom - bustTop))
+                    } else if !isFaceOnlyHero && heroBox.height >= 0.48 {
+                        portraitBustBox = CGRect(x: heroBox.minX, y: heroBox.minY, width: heroBox.width, height: heroBox.height * 0.58)
+                    }
+                    // Protect face(s) strictly and upper bust for 1.5x/2.0x medium shots instead of locking shoes into frame!
+                    if let bust = portraitBustBox {
+                        protectedBoxes = knownFaces + [bust]
+                    } else {
+                        protectedBoxes = knownFaces.isEmpty ? [heroBox] : (knownFaces + [heroBox])
+                    }
+                } else {
+                    protectedBoxes = knownFaces.isEmpty ? [heroBox] : (knownFaces + [heroBox])
+                }
             }
         } else if let a0 = validAnimals.first,
                   topNamed.map({ $0.det.domain == .animal || a0.heroScore >= $0.heroScore * 0.75 }) ?? true {
             role = .animal
             heroBox = a0.det.boundingBox
-            heroAnchor = a0.det.anchor ?? CGPoint(x: heroBox.midX, y: heroBox.minY + 0.30 * heroBox.height)
+            let gazeLeadShift = abs(a0.det.gazeX) >= 0.10 ? CGFloat(a0.det.gazeX) * heroBox.width * 0.14 : 0.0
+            heroAnchor = a0.det.anchor ?? CGPoint(
+                x: min(heroBox.maxX - 0.02, max(heroBox.minX + 0.02, heroBox.midX + gazeLeadShift)),
+                y: heroBox.minY + 0.30 * heroBox.height
+            )
             heroGazeX = a0.det.gazeX
             heroLabel = a0.det.label
             heroLocalized = a0.det.localizedLabel
@@ -659,18 +724,31 @@ enum CameraFramingDirector {
             let archDets = fgCandidates.filter { $0.det.domain == .architecture && !$0.isEdgeSliver && $0.det.confidence >= 0.20 }
             role = (siglipScene == "street" || sceneHints.role == .streetLeading) ? .street : .architecture
             if archDets.count >= 2 {
-                let box = unionRects(archDets.prefix(5).map(\.det.boundingBox))
+                var box = unionRects(archDets.prefix(5).map(\.det.boundingBox))
+                if let roofY = sceneHints.archRoofTopY ?? raster.structuralArchRoofTopY,
+                   roofY > 0.04, roofY < Double(box.minY) {
+                    let ny = CGFloat(max(0.03, roofY - 0.02))
+                    box = CGRect(x: box.minX, y: ny, width: box.width, height: max(0.16, box.maxY - ny))
+                }
                 heroBox = box
-                heroAnchor = CGPoint(x: box.midX, y: box.midY)
+                heroAnchor = CGPoint(x: box.midX, y: box.minY + 0.46 * box.height)
                 heroLabel = "architecture(\(archDets.count))"
                 heroLocalized = "Cụm kiến trúc"
                 heroConf = archDets[0].det.confidence
+                protectedBoxes = [box]
             } else if let a0 = archDets.first {
-                heroBox = a0.det.boundingBox
-                heroAnchor = a0.det.center
+                var box = a0.det.boundingBox
+                if let roofY = sceneHints.archRoofTopY ?? raster.structuralArchRoofTopY,
+                   roofY > 0.04, roofY < Double(box.minY) {
+                    let ny = CGFloat(max(0.03, roofY - 0.02))
+                    box = CGRect(x: box.minX, y: ny, width: box.width, height: max(0.16, box.maxY - ny))
+                }
+                heroBox = box
+                heroAnchor = CGPoint(x: box.midX, y: box.minY + 0.46 * box.height)
                 heroLabel = a0.det.label
                 heroLocalized = a0.det.localizedLabel
                 heroConf = a0.det.confidence
+                protectedBoxes = [box]
             } else if role == .street, let vp = sceneHints.refinedVanishingPoint ?? raster.measuredVanishingPoint.map({ VanishingPointHint(point: $0.point, confidence: $0.confidence) }) {
                 heroBox = CGRect(x: max(0.08, vp.point.x - 0.30), y: max(0.10, vp.point.y - 0.24), width: 0.60, height: 0.52)
                 heroAnchor = vp.point
@@ -783,7 +861,11 @@ enum CameraFramingDirector {
             (heroBox.maxX >= 0.985 ? 1 : 0) +
             (heroBox.minY <= 0.015 ? 1 : 0) +
             (heroBox.maxY >= 0.985 ? 1 : 0)
-        let topFaceClipped = (role == .portrait || role == .group) && heroBox.minY <= 0.012 && bArea >= 0.64
+        let topFaceClipped = (role == .portrait || role == .group) && (
+            (heroBox.minY <= 0.012 && bArea >= 0.64) ||
+            (isFaceOnlyHero && bh >= 0.44) ||
+            (isFaceOnlyHero && heroBox.minY <= 0.025 && bh >= 0.34)
+        )
         let archCramped = role == .architecture && heroBox.minY <= 0.015 && heroBox.maxY >= 0.985 && bw >= 0.76
         let groupCramped = role == .group && edgeTouches >= 3 && bArea >= 0.66
         let isSeverelyCramped = topFaceClipped || archCramped || groupCramped
@@ -798,12 +880,12 @@ enum CameraFramingDirector {
             let solved = solveAimAndCrop(anchor: heroAnchor, destG: destG, relZoom: max(0.35, Double(wideZoom / safeZoom)), calibration: calibration)
             let aimWorldRay = safePose.act(solved.aimDeviceRay)
             let explanation = buildExplanation(
-                role: role, localizedLabel: heroLocalized, destG: destG, zoom: wideZoom,
+                role: role, localizedLabel: heroLocalized, destG: solved.actualDest, zoom: wideZoom,
                 currentZoom: safeZoom, style: .ultraWide, horizonY: horizonInfo.horizonY
             )
             return DirectorDecision(
                 role: role, heroLabel: heroLabel, heroLocalizedLabel: heroLocalized,
-                heroBounds: heroBox, heroAnchor: heroAnchor, destinationPoint: destG,
+                heroBounds: heroBox, heroAnchor: heroAnchor, destinationPoint: solved.actualDest,
                 aimPointInSource: solved.aim, aimWorldRay: aimWorldRay, rotation: solved.rotation,
                 recommendedZoom: wideZoom, confidence: max(0.45, min(0.98, heroConf)),
                 usesCenter: true, preservesOriginalFrame: false,
@@ -820,7 +902,15 @@ enum CameraFramingDirector {
         let areaRoot = sqrt(max(0.002, bArea))
         let visualSize: Double
         let targetScale: Double
-        if role == .portrait || role == .environmentalPortrait {
+        if role == .portrait && isFaceOnlyHero {
+            // A face-only box (no torso detected) represents a close-up where head+shoulders span ~2.5x face size;
+            // prevents zooming 2.5x into a close selfie while still zooming in on tiny distant faces.
+            let impliedW = max(bw, min(0.95, bw * 2.45))
+            let impliedH = max(bh, min(0.96, bh * 2.55))
+            let impliedRoot = sqrt(max(0.002, impliedW * impliedH))
+            visualSize = 0.55 * impliedRoot + 0.45 * impliedH
+            targetScale = targetLinear * (sensorAspect > 1.12 ? 0.86 : 0.92)
+        } else if role == .portrait || role == .environmentalPortrait {
             visualSize = 0.55 * areaRoot + 0.45 * bh
             targetScale = targetLinear * (sensorAspect > 1.12 ? 0.86 : 0.92)
         } else {
@@ -832,24 +922,49 @@ enum CameraFramingDirector {
         let isWaterReflection = (semanticAffinities["water_reflection"] ?? 0.0) > 0.045
 
         var zoomRungs: [CGFloat] = [safeZoom]
+        func appendZoomRung(_ candidateZoom: CGFloat) {
+            guard candidateZoom.isFinite,
+                  candidateZoom >= min(0.5, minHardwareZoom) - 0.02,
+                  candidateZoom <= max(safeZoom, maxHardwareZoom) + 0.02 else { return }
+            if !zoomRungs.contains(where: { abs($0 - candidateZoom) < 0.04 }) {
+                zoomRungs.append(candidateZoom)
+            }
+        }
+        // Bi-directional Zoom-OUT support when currently zoomed in (>1.08x) or cramped on 1.0x with Ultra-Wide
+        if safeZoom > 1.08 {
+            let minHeroMargin = min(Double(heroBox.minX), min(Double(1.0 - heroBox.maxX), min(Double(heroBox.minY), Double(1.0 - heroBox.maxY))))
+            let needsWiderView = (role == .skyLandscape || role == .indoorRoom || role == .architecture || role == .aperture) ||
+                visualSize > targetScale * 1.14 || edgeTouches >= 1 || minHeroMargin < 0.055
+            if needsWiderView {
+                appendZoomRung(1.0)
+                if safeZoom > 1.65 { appendZoomRung(1.5) }
+                if hasUltraWide && (role == .skyLandscape || role == .indoorRoom || role == .architecture || visualSize > targetScale * 1.45) {
+                    appendZoomRung(0.5)
+                }
+            }
+        } else if hasUltraWide && safeZoom >= 0.92 {
+            let benefitsFromUltraWide = ((role == .architecture || role == .indoorRoom) && (bw >= 0.74 || bh >= 0.80)) ||
+                (role == .group && (bw >= 0.78 || (edgeTouches >= 2 && bArea >= 0.48))) ||
+                (isFaceOnlyHero && bh >= 0.38)
+            if benefitsFromUltraWide {
+                appendZoomRung(0.5)
+            }
+        }
         if role != .skyLandscape && role != .indoorRoom {
             for rung in [CGFloat(1.0), 1.2, 1.5, 2.0, 3.0] {
                 if rung >= safeZoom * 0.98 && rung <= min(maxHardwareZoom, safeZoom * 3.0) {
-                    if !zoomRungs.contains(where: { abs($0 - rung) < 0.04 }) {
-                        zoomRungs.append(rung)
-                    }
+                    appendZoomRung(rung)
                 }
             }
-            for hw in allowedZooms where hw >= safeZoom * 0.98 && hw <= min(3.5, safeZoom * 3.0) {
-                if !zoomRungs.contains(where: { abs($0 - hw) < 0.04 }) {
-                    zoomRungs.append(hw)
-                }
+            for hw in allowedZooms where hw >= safeZoom * 0.98 && hw <= min(4.0, safeZoom * 3.2) {
+                appendZoomRung(hw)
             }
         }
 
-        // Adjust sky landscape anchor if a dramatic sun/bright accent exists
+        // Adjust sky landscape anchor ONLY if a genuine localized sun/moon disk exists (never overcast cloud corners)
         var effectiveAnchor = heroAnchor
-        if role == .skyLandscape, let hy = horizonInfo.horizonY, let sunX = brightSkyAccentX(horizonY: hy, raster: raster) {
+        if role == .skyLandscape, let hy = horizonInfo.horizonY,
+           let sunX = brightSkyAccentX(horizonY: hy, raster: raster, detections: fused) {
             effectiveAnchor = CGPoint(x: sunX, y: hy)
         }
 
@@ -857,7 +972,7 @@ enum CameraFramingDirector {
             FramingCandidate(
                 destG: effectiveAnchor, zoom: safeZoom, style: .keepNatural,
                 aim: CGPoint(x: 0.5, y: 0.5), rotation: simd_quatd(ix: 0, iy: 0, iz: 0, r: 1),
-                cropBox: CGRect(x: 0, y: 0, width: 1, height: 1), isBaseline: true
+                futureCalib: calibration, cropBox: CGRect(x: 0, y: 0, width: 1, height: 1), isBaseline: true
             )
         ]
 
@@ -865,11 +980,13 @@ enum CameraFramingDirector {
             let relZ = max(0.35, Double(z / safeZoom))
             let projW = bw * relZ
             let projH = bh * relZ
+            let checkW = (role == .portrait && portraitBustBox != nil) ? Double(portraitBustBox!.width) * relZ : projW
+            let checkH = (role == .portrait && portraitBustBox != nil) ? Double(portraitBustBox!.height) * relZ : projH
             if role != .portrait && role != .architecture && role != .street && role != .scene && role != .aperture &&
                (projW > 0.92 || projH > 0.92) && z > safeZoom * 1.04 {
                 continue
             }
-            if role == .portrait && (projW > 0.94 || projH > 1.38) && z > safeZoom * 1.04 {
+            if role == .portrait && (checkW > 0.94 || checkH > 0.94 || projH > 1.75) && z > safeZoom * 1.04 {
                 continue
             }
 
@@ -901,7 +1018,7 @@ enum CameraFramingDirector {
 
                 // 2) Center Hero / Symmetry + Single-Axis Centering for tall/wide heroes
                 let headToEye = max(0.04, Double(effectiveAnchor.y - heroBox.minY) * relZ)
-                let minPortraitY: Double = (role == .portrait && isPortraitSensor) ? 0.32 : (role == .portrait ? 0.33 : 0.37)
+                let minPortraitY: Double = isFaceOnlyHero ? 0.36 : ((role == .portrait && isPortraitSensor) ? 0.33 : (role == .portrait ? 0.34 : 0.37))
                 let portraitSafeY = min(0.45, max(minPortraitY, 0.07 + headToEye))
                 let centerY: Double = (role == .portrait || role == .environmentalPortrait || role == .group)
                     ? portraitSafeY
@@ -917,6 +1034,7 @@ enum CameraFramingDirector {
                 let thirdStyle: DirectorCompositionStyle = abs(heroGazeX) >= 0.14 ? .lookingRoom : .ruleOfThirds
                 let isDynamicRole = (role == .object || role == .food || role == .flower ||
                     role == .animal || role == .vehicle || role == .foliage)
+                let allowSubtleNudge = projW >= 0.40 || sceneHints.avoid.maxAvoid >= 0.28
 
                 // 3) Sensor-Aspect-Adapted Portfolio: Portrait (3:4 / 9:16) vs Square (1:1) vs Landscape (4:3 / 3:2)
                 if isPortraitSensor {
@@ -928,15 +1046,17 @@ enum CameraFramingDirector {
                         }
                     }
                     let subtleY: Double = (role == .portrait || role == .environmentalPortrait) ? portraitSafeY : 0.47
-                    styleDests.append((CGPoint(x: 0.44, y: subtleY), .subtleBalance))
-                    styleDests.append((CGPoint(x: 0.56, y: subtleY), .subtleBalance))
-                    if projW < 0.54 || abs(heroGazeX) >= 0.14 {
+                    if allowSubtleNudge {
+                        styleDests.append((CGPoint(x: 0.435, y: subtleY), .subtleBalance))
+                        styleDests.append((CGPoint(x: 0.565, y: subtleY), .subtleBalance))
+                    }
+                    if projW < 0.56 || abs(heroGazeX) >= 0.14 {
                         styleDests.append((CGPoint(x: 0.375, y: subtleY), thirdStyle))
                         styleDests.append((CGPoint(x: 0.625, y: subtleY), thirdStyle))
                     }
                     if isDynamicRole && projW < 0.56 && projH < 0.58 {
-                        styleDests.append((CGPoint(x: 0.39, y: 0.40), .diagonalDynamic))
-                        styleDests.append((CGPoint(x: 0.61, y: 0.58), .diagonalDynamic))
+                        styleDests.append((CGPoint(x: 0.382, y: 0.39), .diagonalDynamic))
+                        styleDests.append((CGPoint(x: 0.618, y: 0.58), .diagonalDynamic))
                     }
                 } else if isSquareSensor {
                     if role != .portrait && role != .environmentalPortrait && role != .group {
@@ -944,15 +1064,17 @@ enum CameraFramingDirector {
                         styleDests.append((CGPoint(x: 0.50, y: 0.56), .groundedCenter))
                     }
                     let subtleY: Double = (role == .portrait || role == .environmentalPortrait) ? portraitSafeY : 0.47
-                    styleDests.append((CGPoint(x: 0.43, y: subtleY), .subtleBalance))
-                    styleDests.append((CGPoint(x: 0.57, y: subtleY), .subtleBalance))
-                    if projW < 0.54 || abs(heroGazeX) >= 0.14 {
+                    if allowSubtleNudge {
+                        styleDests.append((CGPoint(x: 0.43, y: subtleY), .subtleBalance))
+                        styleDests.append((CGPoint(x: 0.57, y: subtleY), .subtleBalance))
+                    }
+                    if projW < 0.56 || abs(heroGazeX) >= 0.14 {
                         styleDests.append((CGPoint(x: 0.375, y: subtleY), thirdStyle))
                         styleDests.append((CGPoint(x: 0.625, y: subtleY), thirdStyle))
                     }
                     if isDynamicRole && projW < 0.56 && projH < 0.56 {
-                        styleDests.append((CGPoint(x: 0.38, y: 0.40), .diagonalDynamic))
-                        styleDests.append((CGPoint(x: 0.62, y: 0.58), .diagonalDynamic))
+                        styleDests.append((CGPoint(x: 0.382, y: 0.39), .diagonalDynamic))
+                        styleDests.append((CGPoint(x: 0.618, y: 0.58), .diagonalDynamic))
                     }
                 } else {
                     if role != .portrait && role != .environmentalPortrait && role != .group {
@@ -960,17 +1082,19 @@ enum CameraFramingDirector {
                         styleDests.append((CGPoint(x: 0.50, y: 0.55), .groundedCenter))
                     }
                     let subtleY: Double = (role == .portrait || role == .environmentalPortrait) ? portraitSafeY : 0.47
-                    styleDests.append((CGPoint(x: 0.435, y: subtleY), .subtleBalance))
-                    styleDests.append((CGPoint(x: 0.565, y: subtleY), .subtleBalance))
+                    if allowSubtleNudge {
+                        styleDests.append((CGPoint(x: 0.435, y: subtleY), .subtleBalance))
+                        styleDests.append((CGPoint(x: 0.565, y: subtleY), .subtleBalance))
+                    }
                     let thirdY: Double = (role == .portrait || role == .environmentalPortrait) ? portraitSafeY : 0.45
                     styleDests.append((CGPoint(x: 0.37, y: thirdY), thirdStyle))
                     styleDests.append((CGPoint(x: 0.63, y: thirdY), thirdStyle))
                     if projW < 0.50 && projH < 0.64 {
-                        styleDests.append((CGPoint(x: 0.33, y: 0.46), .negativeSpace))
-                        styleDests.append((CGPoint(x: 0.67, y: 0.46), .negativeSpace))
+                        styleDests.append((CGPoint(x: 0.333, y: 0.46), .negativeSpace))
+                        styleDests.append((CGPoint(x: 0.667, y: 0.46), .negativeSpace))
                     }
                     if isDynamicRole && projW < 0.54 && projH < 0.56 {
-                        styleDests.append((CGPoint(x: 0.37, y: 0.40), .diagonalDynamic))
+                        styleDests.append((CGPoint(x: 0.37, y: 0.39), .diagonalDynamic))
                         styleDests.append((CGPoint(x: 0.63, y: 0.58), .diagonalDynamic))
                     }
                 }
@@ -997,9 +1121,15 @@ enum CameraFramingDirector {
                 }
                 let dest = CGPoint(x: gx, y: gy)
                 let solved = solveAimAndCrop(anchor: effectiveAnchor, destG: dest, relZoom: relZ, calibration: calibration)
+                // Reject physically clamped candidates whose real post-pan destination drifts far from the intended composition
+                let clampDrift = hypot(Double(solved.actualDest.x - dest.x), Double(solved.actualDest.y - dest.y))
+                if clampDrift > 0.14 && style != .centerFocus && style != .symmetry {
+                    continue
+                }
                 candidates.append(FramingCandidate(
-                    destG: dest, zoom: z, style: style,
-                    aim: solved.aim, rotation: solved.rotation, cropBox: solved.cropBox, isBaseline: false
+                    destG: solved.actualDest, zoom: z, style: style,
+                    aim: solved.aim, rotation: solved.rotation, futureCalib: solved.futureCalib,
+                    cropBox: solved.cropBox, isBaseline: false
                 ))
             }
         }
@@ -1021,8 +1151,11 @@ enum CameraFramingDirector {
         let horizonTargetY: Double = isWaterReflection ? 0.50 : skyPrefY
         let rawHorizonOK = role != .skyLandscape || horizonInfo.horizonY.map { abs($0 - horizonTargetY) < 0.045 } ?? true
         let gaicHeadroom = neuralField.maxScore - neuralField.baseScore
+        let rawGazeAlreadyAligned = abs(heroGazeX) < 0.14 ||
+            (heroGazeX > 0 && Double(effectiveAnchor.x) >= 0.26 && Double(effectiveAnchor.x) <= 0.43) ||
+            (heroGazeX < 0 && Double(effectiveAnchor.x) >= 0.57 && Double(effectiveAnchor.x) <= 0.74)
         let rawAlreadyStrong = (gaicHeadroom < 0.025) && rawEdgeDist >= 0.27 && !heroCrampedSide && rawHorizonOK &&
-            visualSize >= targetScale * 0.72 && abs(heroGazeX) < 0.14 && clutterSum < 0.28
+            visualSize >= targetScale * 0.75 && visualSize <= targetScale * 1.22 && rawGazeAlreadyAligned && clutterSum < 0.28
 
         var bestCandidate = candidates[0]
         var bestScore = -Double.infinity
@@ -1030,34 +1163,56 @@ enum CameraFramingDirector {
         for cand in candidates {
             let relZ = max(0.35, Double(cand.zoom / safeZoom))
             let crop = cand.cropBox
-            let projHero = projectBox(heroBox, aim: cand.aim, relZoom: relZ)
+            let projHero = projectBox(
+                heroBox, calibration: calibration, futureCalib: cand.futureCalib,
+                rotation: cand.rotation, fallbackAim: cand.aim, relZoom: relZ
+            )
 
-            // Hard safety gate: never clip hero or companions when panning/zooming
+            // Hard safety gate: never clip hero head/bust or companions when panning/zooming
             if !cand.isBaseline && role != .skyLandscape && role != .scene && role != .architecture &&
                role != .street && role != .indoorRoom && role != .aperture {
-                let targetVis: Double = (role == .portrait) ? 0.72 : 0.85
-                let minVis = min(targetVis, max(0.68, baseVisHero - 0.02))
-                if visibleFraction(projHero, margin: 0.025) < minVis { continue }
+                if role == .portrait && portraitBustBox != nil {
+                    // For single-person portraits with bust box, allow clean 1.5x/2.0x medium shots (legs exiting bottom)
+                    // while strictly forbidding top-of-head clipping!
+                    if projHero.minY < -0.015 { continue }
+                } else {
+                    let targetVis: Double = (role == .portrait) ? 0.72 : 0.85
+                    let minVis = min(targetVis, max(0.68, baseVisHero - 0.02))
+                    if visibleFraction(projHero, margin: 0.025) < minVis { continue }
+                }
                 if !protectedBoxes.isEmpty {
                     let allProtectedOK = protectedBoxes.allSatisfy { pBox in
-                        let pp = projectBox(pBox, aim: cand.aim, relZoom: relZ)
+                        let pp = projectBox(
+                            pBox, calibration: calibration, futureCalib: cand.futureCalib,
+                            rotation: cand.rotation, fallbackAim: cand.aim, relZoom: relZ
+                        )
                         let basePVis = visibleFraction(pBox, margin: 0.02)
-                        let req = min((role == .portrait && pBox == heroBox) ? 0.72 : 0.82, max(0.66, basePVis - 0.02))
+                        let isBust = (portraitBustBox != nil && pBox == portraitBustBox)
+                        let isSmallFace = (role == .portrait || role == .group) && pBox.height < heroBox.height * 0.65 && !isBust
+                        let capReq: Double = isSmallFace ? 0.94 : (isBust ? 0.84 : ((role == .portrait && pBox == heroBox) ? 0.72 : 0.82))
+                        let req = min(capReq, max(0.66, basePVis - 0.02))
                         return visibleFraction(pp, margin: 0.02) >= req
                     }
                     if !allProtectedOK { continue }
                 }
+            } else if !cand.isBaseline && role == .architecture, !protectedBoxes.isEmpty {
+                // Never decapitate temple spires, church towers, or building rooflines when tilting!
+                let projArch = projectBox(
+                    heroBox, calibration: calibration, futureCalib: cand.futureCalib,
+                    rotation: cand.rotation, fallbackAim: cand.aim, relZoom: relZ
+                )
+                if heroBox.minY >= 0.025 && projArch.minY < 0.015 { continue }
             }
 
             // 1) Continuous 256-box Learned Neural Aesthetic Score
-            //    - Zoomed views: exact interpolated GAIC score with hard floor (never wreck composition!)
+            //    - Zoomed views: exact interpolated GAIC score with scale-aware floor so undersized heroes & clutter trims can zoom!
             //    - 1.0x pan views: same-aspect directional GAIC gradient capped cleanly so 1x never steals zoom's gain
             let rawGAIC: Double
             let effectiveGAIC: Double
             if relZ > 1.05 {
                 rawGAIC = neuralField.interpolatedScore(for: crop)
-                let heroIsTiny = visualSize < targetScale * 0.64
-                let maxAllowedDrop = heroIsTiny ? 0.050 : 0.015
+                let heroIsTiny = visualSize < targetScale * 0.76
+                let maxAllowedDrop = heroIsTiny ? 0.080 : ((clutterSum >= 0.35 || role == .portrait) ? 0.045 : 0.020)
                 if neuralField.hasLearnedScores && rawGAIC < neuralField.baseScore - maxAllowedDrop {
                     continue
                 }
@@ -1095,19 +1250,29 @@ enum CameraFramingDirector {
             var incidentalCleared = 0.0
             if !incidentalBounds.isEmpty && relZ > 1.05 {
                 let clearedCount = incidentalBounds.filter { inc in
-                    visibleFraction(projectBox(inc, aim: cand.aim, relZoom: relZ), margin: 0.0) < 0.25
+                    let pInc = projectBox(
+                        inc, calibration: calibration, futureCalib: cand.futureCalib,
+                        rotation: cand.rotation, fallbackAim: cand.aim, relZoom: relZ
+                    )
+                    return visibleFraction(pInc, margin: 0.0) < 0.25
                 }.count
                 incidentalCleared = min(0.22, Double(clearedCount) * 0.08)
             }
             let clutterScore = min(1.0, max(-0.4, 0.45 + 0.55 * clutterCleared + 0.35 * panAwayClutter + incidentalCleared - panIntoClutter))
 
             // 3) Sensor-Aspect-Invariant Shot Scale & Optical Lens Quality
-            let scaleErr = abs(log(max(0.05, visualSize * relZ) / targetScale))
+            let scaleErr: Double
+            if role == .skyLandscape || role == .indoorRoom {
+                scaleErr = abs(log(max(0.5, Double(cand.zoom)) / 1.0))
+            } else {
+                scaleErr = abs(log(max(0.05, visualSize * relZ) / targetScale))
+            }
             let scaleScore = exp(-1.15 * scaleErr * scaleErr)
             let isHardwareLens = allowedZooms.contains { abs($0 - cand.zoom) <= 0.06 }
-            let optBonus = isHardwareLens ? 0.032 : 0.022
+            let isPrimeSensorCrop = abs(cand.zoom - 1.2) <= 0.05 || abs(cand.zoom - 1.5) <= 0.05
+            let optBonus = isHardwareLens ? 0.040 : (isPrimeSensorCrop ? 0.025 : 0.018)
             let zoomPen = (visualSize >= targetScale * 0.85 && (!neuralField.hasLearnedScores || rawGAIC < neuralField.baseScore + 0.035))
-                ? 0.04 * max(0.0, relZ - 1.5)
+                ? 0.045 * max(0.0, relZ - 1.45)
                 : 0.0
 
             // 4) Natural Composition Harmony, Pan-Aware Visual Torque Balance, Edge-Relief & Depth Openness
@@ -1164,7 +1329,8 @@ enum CameraFramingDirector {
                 } else {
                     let placedLeft = Double(cand.destG.x) < 0.48
                     let openMatch = placedLeft ? (rightOpen - leftOpen) : (leftOpen - rightOpen)
-                    styleFit += 0.24 * max(-0.22, min(0.45, openMatch * 2.2))
+                    let openWeight = (role == .vehicle && bw >= bh * 1.25) ? 0.34 : 0.24
+                    styleFit += openWeight * max(-0.22, min(0.45, openMatch * 2.2))
                     if bw * relZ < 0.46 && bh * relZ < 0.56 {
                         styleFit += 0.08
                     }
@@ -1174,11 +1340,21 @@ enum CameraFramingDirector {
                 }
             }
 
-            // 5) Earned Keep-Natural stability + Breathing Negative-Space guard for tight zooms
+            // 5) Earned Keep-Natural stability, Ergonomic Pan Economy & Anti-Joint-Amputation guard
             let shift = hypot(Double(cand.aim.x) - 0.5, Double(cand.aim.y) - 0.5)
+            let gentleSweepEconomy = (!cand.isBaseline && abs(heroGazeX) < 0.14 && clutterSum < 0.30 && !heroCrampedSide)
+                ? (-0.036 * shift)
+                : 0.0
             let keepBonus = cand.isBaseline
-                ? (rawAlreadyStrong ? 0.042 : -0.055)
-                : (-0.022 * max(0.0, shift - 0.26))
+                ? (rawAlreadyStrong ? 0.052 : -0.055)
+                : (-0.022 * max(0.0, shift - 0.26) + gentleSweepEconomy)
+
+            // Portrait anti-ankle-amputation law: either keep full feet cleanly inside frame (<=0.965)
+            // or frame a deliberate 3/4 / half-body portrait (>=1.08), never slicing right across ankles!
+            let ankleCutPen: Double = (!cand.isBaseline && role == .portrait && !isFaceOnlyHero &&
+                                       heroBox.maxY <= 0.96 && projHero.maxY > 0.965 && projHero.maxY < 1.075)
+                ? 0.075
+                : 0.0
 
             let projFill = Double(projHero.width * projHero.height)
             let breathingPen: Double = (!cand.isBaseline && cand.zoom > safeZoom * 1.05 &&
@@ -1194,7 +1370,7 @@ enum CameraFramingDirector {
                 0.18 * clutterScore +
                 0.20 * scaleScore +
                 0.22 * styleFit +
-                optBonus + keepBonus - zoomPen - breathingPen
+                optBonus + keepBonus - zoomPen - breathingPen - ankleCutPen
 
             if totalScore > bestScore {
                 bestScore = totalScore
@@ -1263,7 +1439,14 @@ enum CameraFramingDirector {
         destG: CGPoint,
         relZoom: Double,
         calibration: TrackingCalibration
-    ) -> (aim: CGPoint, aimDeviceRay: SIMD3<Double>, rotation: simd_quatd, cropBox: CGRect) {
+    ) -> (
+        aim: CGPoint,
+        actualDest: CGPoint,
+        aimDeviceRay: SIMD3<Double>,
+        rotation: simd_quatd,
+        futureCalib: TrackingCalibration,
+        cropBox: CGRect
+    ) {
         let futureCalib = TrackingCalibration(
             fx: calibration.fx * relZoom,
             fy: calibration.fy * relZoom,
@@ -1313,9 +1496,15 @@ enum CameraFramingDirector {
         let finalAim = CGPoint(x: clampedX, y: clampedY)
         let aimRay = calibration.deviceRay(at: finalAim)
         let finalRot = simd_quatd(from: forward, to: aimRay)
+        let actualProj = futureCalib.project(deviceRay: finalRot.inverse.act(sourceRay))
+        let actualDest: CGPoint = (actualProj.isInFront && actualProj.point.x.isFinite && actualProj.point.y.isFinite)
+            ? actualProj.point
+            : destG
 
         let cropBox: CGRect
-        if relZoom <= 1.05 {
+        if relZoom < 0.95 {
+            cropBox = CGRect(x: 0, y: 0, width: 1, height: 1)
+        } else if relZoom <= 1.05 {
             // Visible overlap of the panned 1.0x frame inside the current sensor view
             let vx0 = max(CGFloat(0.0), finalAim.x - 0.5)
             let vy0 = max(CGFloat(0.0), finalAim.y - 0.5)
@@ -1329,13 +1518,37 @@ enum CameraFramingDirector {
             let vy0 = max(0.0, min(1.0 - visH, finalAim.y - visH * 0.5))
             cropBox = CGRect(x: vx0, y: vy0, width: visW, height: visH)
         }
-        return (finalAim, aimRay, finalRot, cropBox)
+        return (finalAim, actualDest, aimRay, finalRot, futureCalib, cropBox)
     }
 
-    private static func projectBox(_ box: CGRect, aim: CGPoint, relZoom: Double) -> CGRect {
+    private static func projectBox(
+        _ box: CGRect,
+        calibration: TrackingCalibration,
+        futureCalib: TrackingCalibration,
+        rotation: simd_quatd,
+        fallbackAim: CGPoint,
+        relZoom: Double
+    ) -> CGRect {
+        if calibration.isValid && futureCalib.isValid {
+            let corners = [
+                CGPoint(x: box.minX, y: box.minY),
+                CGPoint(x: box.maxX, y: box.minY),
+                CGPoint(x: box.minX, y: box.maxY),
+                CGPoint(x: box.maxX, y: box.maxY)
+            ]
+            let invRot = rotation.inverse
+            let projected = corners.map { futureCalib.project(deviceRay: invRot.act(calibration.deviceRay(at: $0))) }
+            if projected.allSatisfy({ $0.isInFront && $0.point.x.isFinite && $0.point.y.isFinite }),
+               let minX = projected.map(\.point.x).min(),
+               let maxX = projected.map(\.point.x).max(),
+               let minY = projected.map(\.point.y).min(),
+               let maxY = projected.map(\.point.y).max() {
+                return CGRect(x: minX, y: minY, width: max(1e-4, maxX - minX), height: max(1e-4, maxY - minY))
+            }
+        }
         let z = CGFloat(relZoom)
-        let nx0 = 0.5 + (box.minX - aim.x) * z
-        let ny0 = 0.5 + (box.minY - aim.y) * z
+        let nx0 = 0.5 + (box.minX - fallbackAim.x) * z
+        let ny0 = 0.5 + (box.minY - fallbackAim.y) * z
         return CGRect(x: nx0, y: ny0, width: box.width * z, height: box.height * z)
     }
 
@@ -1839,21 +2052,42 @@ enum CameraFramingDirector {
         return min(1.0, 1.8 * stdL + 2.0 * meanE + 1.2 * meanAccent)
     }
 
-    private static func brightSkyAccentX(horizonY: Double, raster: CompositionRaster) -> Double? {
+    private static func brightSkyAccentX(
+        horizonY: Double,
+        raster: CompositionRaster,
+        detections: [DirectorDetection] = []
+    ) -> Double? {
+        if let sunOrMoon = detections.first(where: {
+            let l = $0.label.lowercased()
+            return (l == "sun" || l == "moon" || l == "mặt trời" || l == "mặt trăng") &&
+                $0.confidence >= 0.22 && Double($0.boundingBox.midY) <= horizonY + 0.08
+        }) {
+            let sx = Double(sunOrMoon.boundingBox.midX)
+            if (0.08...0.92).contains(sx) { return sx }
+        }
         let s = raster.side
         guard s >= 8, raster.luminance.count == s * s else { return nil }
         let cut = max(2, min(s - 2, Int(horizonY * Double(s))))
+        var skyVals: [Double] = []
+        skyVals.reserveCapacity(cut * s)
         var peakVal = 0.0
         var peakX = s / 2
         for y in 0..<cut {
             let row = y * s
             for x in 0..<s {
                 let v = raster.luminance[row + x]
+                skyVals.append(v)
                 if v > peakVal { peakVal = v; peakX = x }
             }
         }
-        guard peakVal > 0.92 else { return nil }
-        return (Double(peakX) + 0.5) / Double(s)
+        guard peakVal >= 0.93, skyVals.count >= 8 else { return nil }
+        let sortedSky = skyVals.sorted()
+        let p85 = sortedSky[Int(Double(sortedSky.count - 1) * 0.85)]
+        // Require a genuine localized solar/glowing peak above the surrounding sky (never overcast white cloud corners!)
+        guard peakVal - p85 >= 0.12 else { return nil }
+        let normX = (Double(peakX) + 0.5) / Double(s)
+        guard (0.08...0.92).contains(normX) else { return nil }
+        return normX
     }
 
     private static func topSiglipScene(_ affinities: [String: Double]) -> String {

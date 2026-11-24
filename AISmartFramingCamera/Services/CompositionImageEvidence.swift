@@ -127,7 +127,7 @@ final class CompositionImageRenderer {
         guard let url = candidateNames.compactMap({ Bundle.main.url(forResource: $0, withExtension: "mlmodelc") }).first else {
             return nil
         }
-        let keepCached = ProcessInfo.processInfo.physicalMemory >= 7_500_000_000
+        let keepCached = ProcessInfo.processInfo.physicalMemory >= 16_000_000_000
         return autoreleasepool {
             guard !cancellation.isCancelled else { return nil }
             let model: MLModel? = depthModelLock.withLock {

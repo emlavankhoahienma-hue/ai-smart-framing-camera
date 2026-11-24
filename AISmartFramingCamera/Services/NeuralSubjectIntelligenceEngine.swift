@@ -201,10 +201,15 @@ private final class SemanticCropRanker: @unchecked Sendable {
         let topS: [String: Double]
         let botS: [String: Double]
         let coreS: [String: Double]
+        let isMobileSingleModel = ProcessInfo.processInfo.physicalMemory < 16_000_000_000
         if hasRichPrompts, let model, !isThermalConstrained, !cancellation.isSoftDeadlineReached {
-            coreS = affinities(model: model, handler: handler, cancellation: cancellation,
-                               topLeftRoI: CGRect(x: 0.16, y: 0.16, width: 0.68, height: 0.68), cropScale: .scaleFill)
-            if fullClutterSignal >= 0.015 && !cancellation.isSoftDeadlineReached && cancellation.remainingSoftBudget > 2.2 {
+            coreS = autoreleasepool {
+                affinities(model: model, handler: handler, cancellation: cancellation,
+                           topLeftRoI: CGRect(x: 0.16, y: 0.16, width: 0.68, height: 0.68), cropScale: .scaleFill)
+            }
+            // On mobile devices, CompositionRaster already extracts 64x64 pixel-exact sky/wall/pillar/floor
+            // avoidance in <0.3ms; skipping 4 redundant peripheral SigLIP ViT passes cuts latency & ANE heat ~3x.
+            if !isMobileSingleModel && fullClutterSignal >= 0.015 && !cancellation.isSoftDeadlineReached && cancellation.remainingSoftBudget > 2.2 {
                 leftS = affinities(model: model, handler: handler, cancellation: cancellation,
                                    topLeftRoI: CGRect(x: 0.0, y: 0.06, width: 0.52, height: 0.88), cropScale: .scaleFill)
                 rightS = !cancellation.isSoftDeadlineReached
@@ -706,12 +711,14 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     continuation.resume(returning: nil)
                     return
                 }
-                let result = self.analyzeComposition(
-                    pixelBuffer: bufferBox.value, frame: frame, pose: pose,
-                    allowedZooms: allowedZooms, preferences: preferences,
-                    requestID: requestID, lowMemoryBudget: lowMemoryBudget,
-                    cancellation: cancellation, progress: progress
-                )
+                let result: LocalCompositionAnalysis? = autoreleasepool {
+                    self.analyzeComposition(
+                        pixelBuffer: bufferBox.value, frame: frame, pose: pose,
+                        allowedZooms: allowedZooms, preferences: preferences,
+                        requestID: requestID, lowMemoryBudget: lowMemoryBudget,
+                        cancellation: cancellation, progress: progress
+                    )
+                }
                 continuation.resume(returning: result)
             }
         }
@@ -724,7 +731,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                             cancellation: CompositionAnalysisCancellation,
                             progress: @Sendable (String) -> Void = { _ in }) -> LocalCompositionAnalysis? {
         guard !cancellation.isCancelled else { return nil }
-        let lowMem = lowMemoryBudget || ProcessInfo.processInfo.physicalMemory < 7_500_000_000
+        let lowMem = lowMemoryBudget || ProcessInfo.processInfo.physicalMemory < 16_000_000_000
         analysisLock.lock()
         if lowMem {
             releaseAllModelCaches()
@@ -1096,7 +1103,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             calibration: frame.calibration,
             pose: pose,
             currentZoom: CGFloat(frame.displayZoom),
-            allowedZooms: allowedZooms
+            allowedZooms: allowedZooms,
+            portraitBounds: portraitBounds,
+            poseProfile: poseProfile
         )
         let tAfterDirector = ProcessInfo.processInfo.systemUptime
         CameraLogger.info(
@@ -1200,10 +1209,17 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     return .dynamicAI
                 }
             }()
+            let directedCropProtection = CompositionCropProtection.bounds(
+                body: directorDecision.heroBounds,
+                portrait: (directedCategory == .human && directorDecision.role == .portrait) ? portraitBounds : nil,
+                intent: directorDecision.role.intent,
+                anchor: directorDecision.heroAnchor,
+                attentionRegion: false
+            )
             let directedPlan = LocalFramingPlan(
                 subjectPoint: directorDecision.heroAnchor,
                 subjectRect: directorDecision.heroBounds,
-                cropProtectionRect: directorDecision.heroBounds,
+                cropProtectionRect: directedCropProtection,
                 aimPointInSource: directorDecision.aimPointInSource,
                 aimWorldRay: directorDecision.aimWorldRay,
                 zoom: directorDecision.recommendedZoom,

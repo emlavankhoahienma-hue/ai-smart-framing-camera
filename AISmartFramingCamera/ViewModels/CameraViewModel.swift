@@ -3702,6 +3702,20 @@ public final class CameraViewModel: ObservableObject {
         if captureMode.isVideo { selectCaptureMode(.photo) }
         if isShutterPressing { isShutterPressing = false }
         if aiSessionState != .idle && aiSessionState != .done { cancelAISession() }
+        if aiSessionState == .done {
+            if plannedEVBias != 0.0 {
+                setExposure(0.0)
+                plannedEVBias = 0.0
+                plannedLightingScene = "normal"
+                plannedLightingDescription = ""
+            }
+            localAnalysisCancellation?.cancel()
+            localAnalysisTask?.cancel()
+            localAnalysisTask = nil
+            localAnalysisCancellation = nil
+            aiFilterRankingTask?.cancel()
+            aiFilterRankingTask = nil
+        }
 
         let isOperational = isCameraReady || isDualCameraActive || cameraService.isAnySessionRunning
         guard isOperational, recordingState == .idle else { return }
@@ -3910,6 +3924,18 @@ public final class CameraViewModel: ObservableObject {
         isZoomRampPhase = false
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
+        let hadActiveLocalWork = localAnalysisTask != nil || localAnalysisCancellation != nil
+        localAnalysisCancellation?.cancel()
+        localAnalysisTask?.cancel()
+        localAnalysisTask = nil
+        localAnalysisCancellation = nil
+        aiFilterRankingTask?.cancel()
+        aiFilterRankingTask = nil
+        if hadActiveLocalWork {
+            Task.detached(priority: .utility) {
+                NeuralSubjectIntelligenceEngine.shared.releaseAllModelCaches()
+            }
+        }
         visionEngine.stopTrackingObject()
         SpatialTrackingEngine.shared.stopTracking()
         haptics.triggerSelectionChange()
@@ -3972,6 +3998,18 @@ public final class CameraViewModel: ObservableObject {
         isZoomRampPhase = false
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
+        let hadActiveLocalWork = localAnalysisTask != nil || localAnalysisCancellation != nil
+        localAnalysisCancellation?.cancel()
+        localAnalysisTask?.cancel()
+        localAnalysisTask = nil
+        localAnalysisCancellation = nil
+        aiFilterRankingTask?.cancel()
+        aiFilterRankingTask = nil
+        if hadActiveLocalWork {
+            Task.detached(priority: .utility) {
+                NeuralSubjectIntelligenceEngine.shared.releaseAllModelCaches()
+            }
+        }
         visionEngine.stopTrackingObject()
         visionEngine.captureNextFrameForGemini = false
         visionEngine.onFrameCapturedForAI = nil
@@ -4526,9 +4564,9 @@ public final class CameraViewModel: ObservableObject {
             isColorAppliedByAI = true
             currentAIColorParams = output.detectedScene.aiFullColorParameters
         }
-        // iOS 18+ Apple Vision Aesthetic AI Filter Ranking (chạy ngầm sau khi đã chốt target -> 0ms trễ, tự rơi về localPreset ở iOS 17)
+        // iOS 18+ Apple Vision Aesthetic AI Filter Ranking (chỉ chạy khi người dùng bật Tự động cân màu AI để không tranh chấp GPU/ANE với 60fps tracking)
         aiFilterRankingTask?.cancel()
-        if let framedPreview = analysis.choices.first?.preview {
+        if isAIFullColorEnabled, let framedPreview = analysis.choices.first?.preview {
             let previewBox = SendableCGImage(value: framedPreview)
             let rankingScene = output.detectedScene
             let rankingGeneration = aiSessionGeneration
@@ -4754,7 +4792,7 @@ public final class CameraViewModel: ObservableObject {
             horizonY: visionEngine.latestSceneEvidence?.detectedHorizonY,
             activeRule: nil,
             sceneEvidence: visionEngine.latestSceneEvidence,
-            pixelBuffer: frameProcessor.latestPixelBufferSnapshot(),
+            pixelBuffer: isSmartExposureEnabled ? source.buffer : nil,
             iso: cameraService.currentISO,
             exposureDuration: cameraService.currentExposureDuration,
             aperture: cameraService.currentAperture
@@ -4765,7 +4803,7 @@ public final class CameraViewModel: ObservableObject {
 
         // Phản biện 3 & 4: Hợp nhất 1 đường ống quyết định duy nhất (Single Source of Truth).
         // Tin tưởng tuyệt đối tọa độ Aim 3D (aimWorldRay) và mức Zoom ngữ cảnh từ bộ lập kế hoạch + SAMP-Net + DINOv2 (Charm).
-        let sourceAimPoint = plan.aimPointInSource
+        var sourceAimPoint = plan.aimPointInSource
         let planDistFromCenter = hypot(sourceAimPoint.x - 0.5, sourceAimPoint.y - 0.5)
 
         var effectiveZoom = plan.zoom
@@ -4794,6 +4832,32 @@ public final class CameraViewModel: ObservableObject {
         // Triệt tiêu micro-zoom vô nghĩa (< 0.11x) gây mờ nội suy kỹ thuật số mà không thay đổi bố cục
         if abs(effectiveZoom - displayZoom) < 0.11 {
             effectiveZoom = displayZoom
+        }
+
+        // Nếu effectiveZoom bị điều chỉnh đáng kể so với plan.zoom (ví dụ lùi góc rộng hoặc gán lại theo ống kính vật lý),
+        // tái chuẩn hóa tia ngắm 3D theo đúng tiêu cự thực thi để tâm ngắm và mức zoom luôn khớp quang học 100%.
+        var reconciledGuideRay = plan.aimWorldRay
+        let baseFrameZoom = max(0.5, CGFloat(source.frame.displayZoom))
+        if abs(effectiveZoom - plan.zoom) >= 0.14, source.frame.calibration.isValid {
+            let kSrc = source.frame.calibration
+            let planRel = max(0.35, Double(plan.zoom / baseFrameZoom))
+            let effRel = max(0.35, Double(effectiveZoom / baseFrameZoom))
+            let planCalib = TrackingCalibration(fx: kSrc.fx * planRel, fy: kSrc.fy * planRel, cx: kSrc.cx, cy: kSrc.cy, aspect: kSrc.aspect, isMeasured: kSrc.isMeasured)
+            let effCalib = TrackingCalibration(fx: kSrc.fx * effRel, fy: kSrc.fy * effRel, cx: kSrc.cx, cy: kSrc.cy, aspect: kSrc.aspect, isMeasured: kSrc.isMeasured)
+            let planAimRot = simd_quatd(from: SIMD3<Double>(0, 0, -1), to: kSrc.deviceRay(at: plan.aimPointInSource))
+            let plannedDestProj = planCalib.project(deviceRay: planAimRot.inverse.act(kSrc.deviceRay(at: plan.subjectPoint)))
+            if plannedDestProj.isInFront && plannedDestProj.point.x.isFinite && plannedDestProj.point.y.isFinite {
+                let newRot = simd_quatd(from: effCalib.deviceRay(at: plannedDestProj.point), to: kSrc.deviceRay(at: plan.subjectPoint))
+                let newAimProj = kSrc.project(deviceRay: newRot.act(SIMD3<Double>(0, 0, -1)))
+                if newAimProj.isInFront && newAimProj.point.x.isFinite && newAimProj.point.y.isFinite {
+                    let clampedAim = CGPoint(
+                        x: min(0.84, max(0.16, newAimProj.point.x)),
+                        y: min(0.84, max(0.16, newAimProj.point.y))
+                    )
+                    sourceAimPoint = clampedAim
+                    reconciledGuideRay = source.pose.act(kSrc.deviceRay(at: clampedAim))
+                }
+            }
         }
 
         if let explicitRule = plan.compositionRule {
@@ -4858,7 +4922,7 @@ public final class CameraViewModel: ObservableObject {
         self.latestScanResp = ScanResp(code: 200, msg: "success", data: scanData)
 
         // Cập nhật tia dẫn hướng 3D (aimWorldRay) và tọa độ liveAimPoint
-        let effectiveGuideRay = plan.aimWorldRay
+        let effectiveGuideRay = reconciledGuideRay
         var finalLiveAim = sourceAimPoint
         if let currentFrame = frameProcessor.latestTrackingFrameSnapshot()?.1,
            let currentPose = SpatialTrackingEngine.shared.pose(at: currentFrame.timestamp)

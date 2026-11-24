@@ -1088,6 +1088,100 @@ enum CompositionPlanningRegression {
             )
             try require(floraRes.role == .flower && floraRes.heroLabel == "flower",
                         "plant-confusable COCO banana hijacked yellow flower: got \(floraRes.role) / \(floraRes.heroLabel)")
+
+            // 14. Close-up face-only selfie guard (must NOT over-zoom 2.5x into nostrils)
+            let selfieFace = DirectorDetection(
+                label: "human face", localizedLabel: "Khuôn mặt",
+                boundingBox: CGRect(x: 0.39, y: 0.26, width: 0.22, height: 0.26),
+                anchor: CGPoint(x: 0.50, y: 0.36), confidence: 0.94, domain: .face,
+                faceBounds: [CGRect(x: 0.39, y: 0.26, width: 0.22, height: 0.26)]
+            )
+            let selfieRes = CameraFramingDirector.direct(
+                detections: [selfieFace], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["portrait_closeup": 0.10, "person": 0.09], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(selfieRes.role == .portrait && selfieRes.recommendedZoom <= 1.25,
+                        "close-up face-only detection over-zoomed to \(selfieRes.recommendedZoom)x")
+
+            // 15. Distant full-body person on ordinary street -> classified as .portrait & zooms in cleanly (>=1.5x)
+            let distantStreetPerson = DirectorDetection(
+                label: "person", localizedLabel: "Người",
+                boundingBox: CGRect(x: 0.43, y: 0.32, width: 0.14, height: 0.40),
+                anchor: CGPoint(x: 0.50, y: 0.38), confidence: 0.89, domain: .human,
+                faceBounds: [CGRect(x: 0.47, y: 0.33, width: 0.06, height: 0.07)]
+            )
+            let streetPortraitRes = CameraFramingDirector.direct(
+                detections: [distantStreetPerson], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["street": 0.08, "person": 0.06], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(streetPortraitRes.role == .portrait && streetPortraitRes.recommendedZoom >= 1.45,
+                        "distant person on street failed to zoom in: role=\(streetPortraitRes.role) zoom=\(streetPortraitRes.recommendedZoom)x")
+
+            // 16. Bi-directional Zoom-OUT from 2.0x -> 1.0x on sky landscape & cramped portrait
+            let k2x = TrackingCalibration.fallback(zoom: 2.0)
+            let zoomedSkyRes = CameraFramingDirector.direct(
+                detections: [skyDet], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["dramatic_clouds": 0.11, "sky": 0.09], neuralProposals: [],
+                calibration: k2x, pose: identityPose, currentZoom: 2.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(abs(zoomedSkyRes.recommendedZoom - 1.0) < 0.06,
+                        "sky landscape at 2.0x failed to zoom out to 1.0x: got \(zoomedSkyRes.recommendedZoom)x")
+
+            let oversizedAt2x = DirectorDetection(
+                label: "person", localizedLabel: "Người",
+                boundingBox: CGRect(x: 0.14, y: 0.06, width: 0.72, height: 0.88),
+                anchor: CGPoint(x: 0.50, y: 0.22), confidence: 0.93, domain: .human,
+                faceBounds: [CGRect(x: 0.36, y: 0.08, width: 0.28, height: 0.28)]
+            )
+            let zoomOutPortraitRes = CameraFramingDirector.direct(
+                detections: [oversizedAt2x], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["person": 0.09], neuralProposals: [],
+                calibration: k2x, pose: identityPose, currentZoom: 2.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(zoomOutPortraitRes.recommendedZoom <= 1.55,
+                        "oversized portrait at 2.0x failed to zoom out: got \(zoomOutPortraitRes.recommendedZoom)x")
+
+            // 17. Exact physical actualDest consistency under extreme edge subject + gaze
+            let edgeGazePerson = DirectorDetection(
+                label: "person", localizedLabel: "Người",
+                boundingBox: CGRect(x: 0.66, y: 0.22, width: 0.26, height: 0.56),
+                anchor: CGPoint(x: 0.78, y: 0.34), confidence: 0.91, domain: .human, gazeX: 0.48,
+                faceBounds: [CGRect(x: 0.72, y: 0.24, width: 0.12, height: 0.14)]
+            )
+            let edgeGazeRes = CameraFramingDirector.direct(
+                detections: [edgeGazePerson], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["person": 0.09], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            let relEdgeZ = Double(edgeGazeRes.recommendedZoom)
+            let futureEdgeK = TrackingCalibration(fx: k.fx * relEdgeZ, fy: k.fy * relEdgeZ, cx: k.cx, cy: k.cy, aspect: k.aspect)
+            let landed = futureEdgeK.project(deviceRay: edgeGazeRes.rotation.inverse.act(k.deviceRay(at: edgeGazeRes.heroAnchor)))
+            try require(landed.isInFront &&
+                        hypot(Double(landed.point.x - edgeGazeRes.destinationPoint.x),
+                              Double(landed.point.y - edgeGazeRes.destinationPoint.y)) < 1e-3,
+                        "destinationPoint lied about clamped post-pan subject position: dest=\(edgeGazeRes.destinationPoint) actual=\(landed.point)")
+
+            // 18. Uniform overcast bright sky must NOT pull camera sideways toward a corner pixel
+            let overcastSide = 24
+            let overcastLuma = (0..<(overcastSide * overcastSide)).map { idx -> Double in
+                let py = (Double(idx / overcastSide) + 0.5) / Double(overcastSide)
+                return py < 0.45 ? 0.96 : 0.32
+            }
+            let overcastRaster = CompositionRaster(
+                side: overcastSide, luminance: overcastLuma,
+                attention: Array(repeating: 0.1, count: overcastSide * overcastSide),
+                edges: Array(repeating: 0.04, count: overcastSide * overcastSide),
+                hasAttention: true
+            )
+            let overcastRes = CameraFramingDirector.direct(
+                detections: [skyDet], raster: overcastRaster, sceneHints: .neutral,
+                semanticAffinities: ["sky": 0.10], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(abs(Double(overcastRes.aimPointInSource.x) - 0.50) < 0.03,
+                        "overcast white sky caused false horizontal pan to \(overcastRes.aimPointInSource)")
         }
         print("Composition regressions: \(passed) passed")
     }

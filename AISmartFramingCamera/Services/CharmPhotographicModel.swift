@@ -50,7 +50,7 @@ final class CharmPhotographicModel {
         }
 
         func getOrLoad(url: URL, positionURL: URL) -> CharmPhotographicModel? {
-            let keepCached = ProcessInfo.processInfo.physicalMemory >= 7_500_000_000
+            let keepCached = ProcessInfo.processInfo.physicalMemory >= 16_000_000_000
             return lock.withLock {
                 if keepCached, cachedURL == url, cachedPositionURL == positionURL,
                    let existing = cachedInstance {

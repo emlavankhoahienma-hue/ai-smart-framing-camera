@@ -99,7 +99,7 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
         guard !cancellation.isCancelled, !cancellation.isSoftDeadlineReached else { return [] }
         let results = ConcurrentResults()
         let group = DispatchGroup()
-        let canRunConcurrently = !preferSequential && ProcessInfo.processInfo.physicalMemory >= 7_500_000_000
+        let canRunConcurrently = !preferSequential && ProcessInfo.processInfo.physicalMemory >= 16_000_000_000
 
         if canRunConcurrently {
             let bufferBox = SendablePixelBuffer(value: pixelBuffer)
@@ -192,7 +192,7 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
             return []
         }
 
-        let keepCached = allowCache && ProcessInfo.processInfo.physicalMemory >= 7_500_000_000
+        let keepCached = allowCache && ProcessInfo.processInfo.physicalMemory >= 16_000_000_000
         return autoreleasepool {
             guard !cancellation.isCancelled else { return [] }
             let model: MLModel? = lock.withLock {
