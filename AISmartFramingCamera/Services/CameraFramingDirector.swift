@@ -616,11 +616,6 @@ enum CameraFramingDirector {
         let bw = Double(heroBox.width)
         let bh = Double(heroBox.height)
         let bArea = bw * bh
-        let edgeTouches =
-            (heroBox.minX <= 0.014 ? 1 : 0) +
-            (heroBox.maxX >= 0.986 ? 1 : 0) +
-            (heroBox.minY <= 0.014 ? 1 : 0) +
-            (heroBox.maxY >= 0.986 ? 1 : 0)
 
         // Close-up / waist-up / knee-up portraits at 1.0x with a cleanly framed face (headroom >= 3.6%, head <= 40% height)
         // are already properly scaled — never distort faces with 0.5x Ultra-Wide just because shoulders/elbows touch a border!
