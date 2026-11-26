@@ -112,9 +112,9 @@ def main() -> None:
 
     depth_manifest_path = bundle / "DepthAnythingManifest.json"
     depth_manifest = json.loads(depth_manifest_path.read_text(encoding="utf-8"))
-    if depth_manifest.get("weightsSHA256") != "a8b775b4f0f1f843d6d7252eb4487ad2ebbcbcf7e35f3ddab3d98f030b9cbeb5":
-        raise RuntimeError("Invalid DepthAnythingV2SmallF16INT8 provenance")
-    depth_compiled = tree_hash(bundle / "DepthAnythingV2SmallF16INT8.mlmodelc")
+    if depth_manifest.get("weightsSHA256") != "fa60d9b6a155734f59029ebb882fd54e549bfaee3539c1a9cbd2cbbab64a0fed":
+        raise RuntimeError("Invalid DepthAnythingV2SmallF16 provenance")
+    depth_compiled = tree_hash(bundle / "DepthAnythingV2SmallF16.mlmodelc")
     depth_manifest["compiledSHA256"] = depth_compiled
     depth_manifest_path.write_text(json.dumps(depth_manifest, indent=2), encoding="utf-8")
 
@@ -123,7 +123,7 @@ def main() -> None:
     print(f"SAMP-Net compiled SHA256: {composition}")
     print(f"GAIC compiled SHA256: {gaic_compiled}")
     print(f"OpenWorldPhotoYOLOE compiled SHA256: {ow_compiled}")
-    print(f"DepthAnythingV2SmallF16INT8 compiled SHA256: {depth_compiled}")
+    print(f"DepthAnythingV2SmallF16 compiled SHA256: {depth_compiled}")
 
 
 if __name__ == "__main__":

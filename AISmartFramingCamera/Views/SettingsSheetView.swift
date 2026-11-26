@@ -2482,7 +2482,13 @@ public struct PreviousSessionLogSheetView: View {
     }
 
     private func reloadLogs() {
-        previousLogText = CameraLogger.readPreviousSessionLogTail(maxLines: 300)
-        currentLogText = CameraLogger.readCurrentSessionLogTail(maxLines: 260)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let prev = CameraLogger.readPreviousSessionLogTail(maxLines: 300)
+            let curr = CameraLogger.readCurrentSessionLogTail(maxLines: 260)
+            DispatchQueue.main.async {
+                previousLogText = prev
+                currentLogText = curr
+            }
+        }
     }
 }

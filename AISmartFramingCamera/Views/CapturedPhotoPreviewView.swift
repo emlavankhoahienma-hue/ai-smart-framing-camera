@@ -200,15 +200,26 @@ public struct CapturedPhotoPreviewView: View {
         self.item = item
         self.viewModel = viewModel
         _currentProcessedImage = State(initialValue: item.processedImage)
-        let initSpan = CameraLogger.beginTrace(
-            "PREVIEW_INIT_DOWNSAMPLE",
-            detail: "src=\(item.processedImage.width)x\(item.processedImage.height)",
-            category: .capture
-        )
-        let initialDisplayUI = Self.downsampleForFastDisplay(item.processedImage, maxSide: 1600)
-        let initialOriginalUI = Self.downsampleForFastDisplay(item.originalImage, maxSide: 1600)
-        let initialMiniUI = Self.downsampleForFastDisplay(item.processedImage, maxSide: 220)
-        CameraLogger.endTrace(initSpan, detail: "disp=\(Int(initialDisplayUI.size.width))x\(Int(initialDisplayUI.size.height))")
+        let initialDisplayUI: UIImage
+        let initialOriginalUI: UIImage
+        let initialMiniUI: UIImage
+        if let preDisplay = item.predecodedDisplayImage {
+            initialDisplayUI = preDisplay
+            initialOriginalUI = item.predecodedOriginalDisplayImage ?? preDisplay
+            initialMiniUI = item.predecodedMiniMapImage ?? preDisplay
+        } else {
+            let initSpan = CameraLogger.beginTrace(
+                "PREVIEW_INIT_DOWNSAMPLE_FALLBACK",
+                detail: "src=\(item.processedImage.width)x\(item.processedImage.height)",
+                category: .capture
+            )
+            initialDisplayUI = Self.downsampleForFastDisplay(item.processedImage, maxSide: 1600)
+            initialOriginalUI = (item.originalImage === item.processedImage)
+                ? initialDisplayUI
+                : Self.downsampleForFastDisplay(item.originalImage, maxSide: 1600)
+            initialMiniUI = Self.downsampleForFastDisplay(item.processedImage, maxSide: 220)
+            CameraLogger.endTrace(initSpan, detail: "disp=\(Int(initialDisplayUI.size.width))x\(Int(initialDisplayUI.size.height))")
+        }
         _cachedFullResUIImage = State(initialValue: initialDisplayUI)
         _cachedDisplayUIImage = State(initialValue: initialDisplayUI)
         _cachedOriginalDisplayUIImage = State(initialValue: initialOriginalUI)

@@ -116,7 +116,7 @@ enum RealPhotoPipelineBenchmark {
             ("OpenWorldPhotoClasses", "json"),
             ("SigLIPBaseImage", "mlmodelc"),
             ("SigLIPPrompts", "json"),
-            ("DepthAnythingV2SmallF16INT8", "mlmodelc"),
+            ("DepthAnythingV2SmallF16", "mlmodelc"),
             ("SAMPComposition", "mlmodelc"),
             ("CharmAesthetics", "mlmodelc"),
             ("CharmPositionEmbedding", "bin"),

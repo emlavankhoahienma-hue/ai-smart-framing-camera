@@ -302,6 +302,7 @@ public final class CameraViewModel: ObservableObject {
         let pose: simd_quatd
         let subjectRect: CGRect?
         let faceRects: [CGRect]
+        var capturedDisplayZoom: CGFloat? = nil
     }
 
     private var cloudTrackingSource: AITrackingSource?
@@ -3443,6 +3444,7 @@ public final class CameraViewModel: ObservableObject {
         simulatedUltraWideFactor = zoom
         liveZoomFactorForReveal = zoom
         displayZoom = zoom
+        SpatialTrackingEngine.shared.updateZoomFactor(zoom)
         zoomVerified = true
         zoomAwaitingVerification = false
         isZoomRampPhase = false
@@ -4649,7 +4651,7 @@ public final class CameraViewModel: ObservableObject {
         localAnalysisCompletedAt = nil
         localAnalysisCancellation?.cancel()
         localAnalysisTask?.cancel()
-        let cancellation = CompositionAnalysisCancellation(softTimeoutSeconds: 5.5)
+        let cancellation = CompositionAnalysisCancellation(softTimeoutSeconds: 12.0)
         localAnalysisCancellation = cancellation
         localSelectionMessage = nil
         localAnalysisExpired = false
@@ -4659,6 +4661,7 @@ public final class CameraViewModel: ObservableObject {
         let requestID = localAnalysisRequestID
         let zooms = cameraService.availableDisplayZoomOptions
         let livePhotoLowMemoryBudget = isLivePhotoEnabled
+        let startDisplayZoom = self.displayZoom
         // Detach from AVCaptureVideoDataOutput's tiny pool in a standalone task so `source.buffer`
         // is NOT captured by `localAnalysisTask` for the entire 2-5s AI run (returns to pool in <1.5ms).
         let detachTask = Task.detached(priority: .userInitiated) { () -> AITrackingSource in
@@ -4667,7 +4670,8 @@ public final class CameraViewModel: ObservableObject {
             CameraLogger.endTrace(cloneSpan, detail: "cloned=\(detachedBuffer !== source.buffer ? 1 : 0)")
             return AITrackingSource(
                 buffer: detachedBuffer, frame: source.frame, pose: source.pose,
-                subjectRect: source.subjectRect, faceRects: source.faceRects
+                subjectRect: source.subjectRect, faceRects: source.faceRects,
+                capturedDisplayZoom: startDisplayZoom
             )
         }
         CameraLogger.endTrace(beginSpan, detail: "taskSpawned")
@@ -4728,8 +4732,14 @@ public final class CameraViewModel: ObservableObject {
         localAnalysisCompletedAt = CACurrentMediaTime()
         localAnalysisFinished = true
         geminiError = nil
-        guard source.frame.displayZoom.isFinite, source.frame.displayZoom > 0,
-              abs(displayZoom - CGFloat(source.frame.displayZoom)) <= 0.35 else {
+        let expectedZoom = source.capturedDisplayZoom ?? CGFloat(source.frame.displayZoom)
+        guard expectedZoom.isFinite, expectedZoom > 0,
+              abs(displayZoom - expectedZoom) <= 0.35 else {
+            CameraLogger.checkpoint(
+                "VM.finishLocalAnalysis_ZOOM_CHANGED",
+                detail: String(format: "now=%.2fx captured=%.2fx", Double(displayZoom), Double(expectedZoom)),
+                category: .ai
+            )
             localTrackingSource = nil
             localSelectionMessage = nil
             cancelAISession()
@@ -5948,6 +5958,7 @@ public final class CameraViewModel: ObservableObject {
             self.simulatedUltraWideFactor = displayZoomVal
             self.displayZoom = displayZoomVal
             self.selectedZoomPreset = 0.5
+            SpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
         } else if displayZoomVal >= 0.99 {
             self.isSimulatedUltraWideActive = false
             self.simulatedUltraWideFactor = 1.0
@@ -7361,6 +7372,20 @@ extension CameraViewModel: CameraServiceDelegate {
                 localRawURL = Self.saveRawFileToAppSandbox(data: rawData, filename: rawFilename)
             }
 
+            // Tiền giải mã đúng 1 lần trên background để CapturedPhotoPreviewView.init mở tức thì 0ms
+            // (tránh SwiftUI gọi lại init 7 lần trên Main Thread gây đơ 2.7 giây!).
+            let previewPrepSpan = CameraLogger.beginTrace("VM.predecodePreview", detail: "src=\(processedImageResult.width)x\(processedImageResult.height)", category: .capture)
+            let preDisplayUI: UIImage = autoreleasepool {
+                CapturedPhotoItem.makeDownsampledDisplayImage(processedImageResult, maxSide: 1600)
+            }
+            let preOriginalUI: UIImage = (effectiveSourcePhoto === processedImageResult)
+                ? preDisplayUI
+                : autoreleasepool { CapturedPhotoItem.makeDownsampledDisplayImage(effectiveSourcePhoto, maxSide: 1600) }
+            let preMiniUI: UIImage = autoreleasepool {
+                CapturedPhotoItem.makeDownsampledDisplayImage(processedImageResult, maxSide: 220)
+            }
+            CameraLogger.endTrace(previewPrepSpan, detail: "disp=\(Int(preDisplayUI.size.width))x\(Int(preDisplayUI.size.height))")
+
             let item = CapturedPhotoItem(
                 originalImage: effectiveSourcePhoto,
                 processedImage: processedImageResult,
@@ -7376,7 +7401,10 @@ extension CameraViewModel: CameraServiceDelegate {
                 alignmentScore: score,
                 iso: iso,
                 shutterSpeed: shutterSpeed,
-                aiColorParameters: finalColorParams
+                aiColorParameters: finalColorParams,
+                predecodedDisplayImage: preDisplayUI,
+                predecodedOriginalDisplayImage: preOriginalUI,
+                predecodedMiniMapImage: preMiniUI
             )
 
             // Mở khóa nút chụp và cập nhật UI ngay lập tức trước khi ghi đĩa nền để triệt tiêu độ trễ Live Photo
@@ -7537,7 +7565,7 @@ extension CameraViewModel: CameraServiceDelegate {
                     let pose = SpatialTrackingEngine.shared.pose(at: snap.1.timestamp)
                         ?? SpatialTrackingEngine.shared.latestPose()
                         ?? simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
-                    let cancel = CompositionAnalysisCancellation(softTimeoutSeconds: 4.5)
+                    let cancel = CompositionAnalysisCancellation(softTimeoutSeconds: 9.0)
                     let reqID = UUID()
                     let zooms = self.cameraService.availableDisplayZoomOptions
                     let lowMem = self.isLivePhotoEnabled

@@ -57,7 +57,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "d73560a142ceb588e0cdf99847aa7ae955149f6547b28f8cc62d1c199e5676bb"
+      "sha256": "126775d12b0fb0b4d1eaa39110991c4e2f2ef6ce2c8bcf16b1211d84d7ea63c6"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",

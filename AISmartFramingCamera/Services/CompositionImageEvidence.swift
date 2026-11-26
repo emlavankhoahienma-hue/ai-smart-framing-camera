@@ -358,8 +358,8 @@ final class CompositionImageRenderer: @unchecked Sendable {
               ProcessInfo.processInfo.thermalState != .critical,
               !ProcessInfo.processInfo.isLowPowerModeEnabled else { return nil }
         let candidateNames = [
-            "DepthAnythingV2SmallF16INT8",
             "DepthAnythingV2SmallF16",
+            "DepthAnythingV2SmallF16INT8",
             "DepthAnythingV2Small",
             "DepthAnythingV2",
             "DepthAnything",
@@ -386,9 +386,18 @@ final class CompositionImageRenderer: @unchecked Sendable {
                     CompositionMemoryBudget.emitTrace("DepthV2.SKIP_LOW_RAM", "need=\(CompositionMemoryBudget.depthLoadHeadroomBytes / 1_000_000)MB avail=\(CompositionMemoryBudget.availableMB())MB")
                     return nil
                 }
-                CompositionMemoryBudget.emitTrace("DepthV2.LOAD_BEGIN", url.lastPathComponent)
+                // DepthAnythingV2Small uses a DINOv2-small ViT (518x392, 1036 tokens).
+                // On 4GB/A12-A13 iPhones (<5.5GB RAM), forcing `.cpuAndNeuralEngine` triggers a
+                // +1.77 GB iOS 18 E5/ANE-to-BNNS compiler spike and 5.8s CPU fallback (verified in
+                // real iPhone XS log). Routing `<5.5GB` devices to `.cpuAndGPU` (Metal MPSGraph,
+                // identical to Charm DINOv2) bypasses the ANE compiler completely; >=5.5GB devices
+                // use `.all` for full ANE + GPU acceleration.
+                let useMetalGPUOnly = ProcessInfo.processInfo.physicalMemory < 5_500_000_000
+                let computeTag = useMetalGPUOnly ? "Metal-GPU" : "All-ANE+GPU"
+                CompositionMemoryBudget.emitTrace("DepthV2.LOAD_BEGIN", "\(url.lastPathComponent) [\(computeTag)]")
                 let config = MLModelConfiguration()
-                config.computeUnits = .cpuAndNeuralEngine
+                config.computeUnits = useMetalGPUOnly ? .cpuAndGPU : .all
+                config.allowLowPrecisionAccumulationOnGPU = true
                 let loaded: MLModel
                 do {
                     loaded = try MLModel(contentsOf: url, configuration: config)
@@ -396,7 +405,7 @@ final class CompositionImageRenderer: @unchecked Sendable {
                     CompositionMemoryBudget.emitTrace("DepthV2.LOAD_FAIL", "\(error)")
                     return nil
                 }
-                CompositionMemoryBudget.emitLifecycle("MODEL_LOAD", "DepthAnythingV2 (ANE)")
+                CompositionMemoryBudget.emitLifecycle("MODEL_LOAD", "DepthAnythingV2 (\(computeTag))")
                 if CompositionMemoryBudget.shouldRetainModelCache(
                     minimumAvailableBytes: CompositionMemoryBudget.depthRetainThresholdBytes
                 ) {

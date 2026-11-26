@@ -1721,9 +1721,34 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
     public let iso: Float
     public let shutterSpeed: Double
     public let aiColorParameters: AIColorParameters?
+    /// Pre-downsampled UIImage previews computed ONCE on a background thread so
+    /// `CapturedPhotoPreviewView.init` never blocks the Main Thread across SwiftUI re-renders.
+    public let predecodedDisplayImage: UIImage?
+    public let predecodedOriginalDisplayImage: UIImage?
+    public let predecodedMiniMapImage: UIImage?
 
     public var isLivePhoto: Bool {
         return livePhotoMovieURL != nil
+    }
+
+    public static func makeDownsampledDisplayImage(_ cgImage: CGImage, maxSide: CGFloat) -> UIImage {
+        let w = CGFloat(cgImage.width)
+        let h = CGFloat(cgImage.height)
+        let longest = max(w, h)
+        guard longest > maxSide, w > 0, h > 0 else {
+            let ui = UIImage(cgImage: cgImage)
+            return ui.preparingForDisplay() ?? ui
+        }
+        let scale = maxSide / longest
+        let targetSize = CGSize(width: round(w * scale), height: round(h * scale))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1.0
+        format.opaque = true
+        let downsampled = UIGraphicsImageRenderer(size: targetSize, format: format).image { ctx in
+            ctx.cgContext.interpolationQuality = .high
+            UIImage(cgImage: cgImage).draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+        return downsampled.preparingForDisplay() ?? downsampled
     }
 
     public init(
@@ -1742,7 +1767,10 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
         timestamp: Date = Date(),
         iso: Float = 100,
         shutterSpeed: Double = 0.016,
-        aiColorParameters: AIColorParameters? = nil
+        aiColorParameters: AIColorParameters? = nil,
+        predecodedDisplayImage: UIImage? = nil,
+        predecodedOriginalDisplayImage: UIImage? = nil,
+        predecodedMiniMapImage: UIImage? = nil
     ) {
         self.originalImage = originalImage
         self.processedImage = processedImage
@@ -1760,6 +1788,9 @@ public struct CapturedPhotoItem: Identifiable, @unchecked Sendable {
         self.iso = iso
         self.shutterSpeed = shutterSpeed
         self.aiColorParameters = aiColorParameters
+        self.predecodedDisplayImage = predecodedDisplayImage
+        self.predecodedOriginalDisplayImage = predecodedOriginalDisplayImage
+        self.predecodedMiniMapImage = predecodedMiniMapImage
     }
 }
 

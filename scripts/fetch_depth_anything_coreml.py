@@ -1,7 +1,9 @@
-"""Fetch and verify Apple's official Core ML DepthAnythingV2SmallF16INT8 model.
+"""Fetch and verify Apple's official Core ML DepthAnythingV2SmallF16 (pure FP16) model.
 
 Pinned to Hugging Face revision cfef6f6f2a70783dedc0bfae40cecbc2052285d3 and
 verified against weight.bin SHA-256 before compiling with xcrun coremlc.
+Pure FP16 avoids INT8 weight-decompression MIL ops that cause +1.77 GB compiler
+memory spikes on A12/4GB iOS 18 devices while providing higher numeric precision.
 """
 from __future__ import annotations
 
@@ -16,8 +18,8 @@ from huggingface_hub import snapshot_download
 
 REPO = "apple/coreml-depth-anything-v2-small"
 REVISION = "cfef6f6f2a70783dedc0bfae40cecbc2052285d3"
-PACKAGE_NAME = "DepthAnythingV2SmallF16INT8.mlpackage"
-WEIGHT_BIN_SHA256 = "a8b775b4f0f1f843d6d7252eb4487ad2ebbcbcf7e35f3ddab3d98f030b9cbeb5"
+PACKAGE_NAME = "DepthAnythingV2SmallF16.mlpackage"
+WEIGHT_BIN_SHA256 = "fa60d9b6a155734f59029ebb882fd54e549bfaee3539c1a9cbd2cbbab64a0fed"
 
 
 def main() -> None:

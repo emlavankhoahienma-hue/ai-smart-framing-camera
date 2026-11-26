@@ -200,11 +200,11 @@ jobs:
           python scripts/export_openworld_yoloe_coreml.py --parity-image "$PARITY_IMG"
           xcrun coremlc compile OpenWorldPhotoYOLOE.mlpackage .
           python scripts/fetch_depth_anything_coreml.py
-          xcrun coremlc compile DepthAnythingV2SmallF16INT8.mlpackage .
+          xcrun coremlc compile DepthAnythingV2SmallF16.mlpackage .
           test -d OpenWorldPhotoYOLOE.mlmodelc
           test -s OpenWorldPhotoClasses.json
           test -s OpenWorldPhotoManifest.json
-          test -d DepthAnythingV2SmallF16INT8.mlmodelc
+          test -d DepthAnythingV2SmallF16.mlmodelc
           test -s DepthAnythingManifest.json
           python scripts/export_composition_coreml.py --photos validation/photos
           xcrun coremlc compile SAMPComposition.mlpackage .
@@ -313,8 +313,8 @@ jobs:
           test -d OpenWorldPhotoYOLOE.mlmodelc
           cp -r OpenWorldPhotoYOLOE.mlmodelc Payload/AISmartFramingCamera.app/
           cp OpenWorldPhotoClasses.json OpenWorldPhotoManifest.json Payload/AISmartFramingCamera.app/
-          test -d DepthAnythingV2SmallF16INT8.mlmodelc
-          cp -r DepthAnythingV2SmallF16INT8.mlmodelc Payload/AISmartFramingCamera.app/
+          test -d DepthAnythingV2SmallF16.mlmodelc
+          cp -r DepthAnythingV2SmallF16.mlmodelc Payload/AISmartFramingCamera.app/
           cp DepthAnythingManifest.json Payload/AISmartFramingCamera.app/
           if [ -s AISmartFramingCamera/Resources/LocalAutoselectThresholds.json ]; then
             cp AISmartFramingCamera/Resources/LocalAutoselectThresholds.json Payload/AISmartFramingCamera.app/

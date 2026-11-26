@@ -105,7 +105,11 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
         cancellation: CompositionAnalysisCancellation,
         preferSequential: Bool = false
     ) -> [DirectorDetection] {
-        guard !cancellation.isCancelled, !cancellation.isSoftDeadlineReached else { return [] }
+        guard !cancellation.isCancelled else { return [] }
+        if cancellation.isSoftDeadlineReached {
+            CameraLogger.checkpoint("S2.OpenWorld_SKIP", detail: "reason=softDeadlineReached", category: .ai)
+            return []
+        }
         let results = ConcurrentResults()
         let group = DispatchGroup()
         let canRunConcurrently = !preferSequential && ProcessInfo.processInfo.physicalMemory >= 16_000_000_000
