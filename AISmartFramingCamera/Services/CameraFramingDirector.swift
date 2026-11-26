@@ -1797,19 +1797,20 @@ enum CameraFramingDirector {
                 : 0.0
 
             // 2) Clutter, Edge-Obstacle & Incidental Distraction Avoidance
-            let trimL = min(1.0, Double(crop.minX) / 0.16)
-            let trimR = min(1.0, Double(1.0 - crop.maxX) / 0.16)
-            let trimT = min(1.0, Double(crop.minY) / 0.16)
-            let trimB = min(1.0, Double(1.0 - crop.maxY) / 0.16)
-            let clutterCleared = (avoid.left * trimL + avoid.right * trimR + avoid.top * trimT + avoid.bottom * trimB) / max(1.0, clutterSum + 0.4)
+            // Spatial semantic zones span ~35-50% on each side, so evaluate crop clearance over 0.34 and strongly reward steering away from heavy edge clutter.
+            let trimL = min(1.0, Double(crop.minX) / 0.34)
+            let trimR = min(1.0, Double(1.0 - crop.maxX) / 0.34)
+            let trimT = min(1.0, Double(crop.minY) / 0.34)
+            let trimB = min(1.0, Double(1.0 - crop.maxY) / 0.34)
+            let clutterCleared = (avoid.left * trimL + avoid.right * trimR + avoid.top * trimT + avoid.bottom * trimB) / max(1.0, clutterSum + 0.35)
             let panAwayClutter = (avoid.left * max(0.0, Double(cand.aim.x) - 0.5) +
                                   avoid.right * max(0.0, 0.5 - Double(cand.aim.x)) +
                                   avoid.top * max(0.0, Double(cand.aim.y) - 0.5) +
-                                  avoid.bottom * max(0.0, 0.5 - Double(cand.aim.y))) * 1.4
+                                  avoid.bottom * max(0.0, 0.5 - Double(cand.aim.y))) * 3.2
             let panIntoClutter = (avoid.left * max(0.0, 0.5 - Double(cand.aim.x)) +
                                   avoid.right * max(0.0, Double(cand.aim.x) - 0.5) +
                                   avoid.top * max(0.0, 0.5 - Double(cand.aim.y)) +
-                                  avoid.bottom * max(0.0, Double(cand.aim.y) - 0.5)) * 1.6
+                                  avoid.bottom * max(0.0, Double(cand.aim.y) - 0.5)) * 3.6
             var incidentalCleared = 0.0
             if !incidentalBounds.isEmpty && relZ > 1.05 {
                 let clearedCount = incidentalBounds.filter { inc in
@@ -1821,7 +1822,7 @@ enum CameraFramingDirector {
                 }.count
                 incidentalCleared = min(0.22, Double(clearedCount) * 0.08)
             }
-            let clutterScore = min(1.0, max(-0.4, 0.45 + 0.55 * clutterCleared + 0.35 * panAwayClutter + incidentalCleared - panIntoClutter))
+            let clutterScore = min(1.35, max(-0.6, 0.40 + 0.65 * clutterCleared + 0.65 * panAwayClutter + incidentalCleared - panIntoClutter))
 
             // 3) Scale Fidelity to 3-State Zoom Engine & Optical Switchover Quality
             let zoomMatchErr = abs(log(max(0.4, Double(cand.zoom)) / max(0.4, Double(stabilizedZoom))))
