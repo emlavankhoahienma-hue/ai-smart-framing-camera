@@ -3,7 +3,7 @@
   "protected": [
     {
       "path": "AISmartFramingCamera/Services/VisionFramingEngine.swift",
-      "sha256": "3790184a61b8a0b6c63a448d01a360d56430f1295139e2d25f74918beaa96fe1"
+      "sha256": "f4535a8eec0115ec3213833fefd0b135e6b894c4a1d3d39056779274469de04a"
     },
     {
       "path": "AISmartFramingCamera/Services/SpatialTrackingEngine.swift",
@@ -39,13 +39,13 @@
     },
     {
       "path": "AISmartFramingCamera/Services/CameraService.swift",
-      "sha256": "5129140a6871d83aa392afffa39be78654c6abb5f28a7fd1eb5ea32b4f37ff4d"
+      "sha256": "59b019ea31bf77af672f11b954683340ef7b8be9d30e2ea2a81fe1a6f6d0c291"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,",
       "end": "    private func evaluateAlignment(at point: CGPoint) {",
-      "sha256": "9bf46272fe7e7b4d89a5116b16609a7f4ef758161454b72d9f609537ba7452c5"
+      "sha256": "f84c10e7d187344ae295d2343d93263ed2f14620020623f1f2242f0c7c450f3d"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -57,7 +57,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "30cbd267b735fefe5b00c9d107a3c2111355373709a1d88959f7ae7895d7ca21"
+      "sha256": "d73560a142ceb588e0cdf99847aa7ae955149f6547b28f8cc62d1c199e5676bb"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -69,7 +69,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    public func applyAISuggestedZoom(",
       "end": "    // AI Framing & Composition",
-      "sha256": "1096cb8d797b71c6292547333055135766e6089890467f7ca752d2e747564c58"
+      "sha256": "c0a4ded14d15d4cc9f1ef5f6fbfa1f08889ccd42b7e17fe8686d7c71708f2b06"
     },
     {
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
