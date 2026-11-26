@@ -2197,7 +2197,7 @@ enum LegacyCameraFramingDirector {
             return "Căn trọn khung nhìn tự nhiên theo bố cục khung trong khung\(zoomTag)"
         case .subtleBalance:
             return "Cân bằng \(subjectName) lệch nhẹ về \(side) gọn gàng, tránh rối viền\(zoomTag)"
-        case .ruleOfThirds:
+        case .ruleOfThirds, .goldenRatio:
             return "Đặt \(subjectName) tại điểm nhấn \(side) theo bố cục 1/3\(zoomTag)"
         case .neuralFreeform:
             return "AI tối ưu tự do vị trí \(subjectName) theo thẩm mỹ & độ thoáng nền\(zoomTag)"
