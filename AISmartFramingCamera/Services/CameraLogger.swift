@@ -113,6 +113,10 @@ public enum CameraLogger {
         #endif
     }
 
+    public static func currentAvailableMemoryMB() -> Int {
+        availableMemoryMB()
+    }
+
     public static func thermalStateName(_ state: ProcessInfo.ThermalState = ProcessInfo.processInfo.thermalState) -> String {
         switch state {
         case .nominal: return "nominal"
@@ -628,6 +632,28 @@ public enum CameraLogger {
         let fullText = header + prevSection + currSection
         try? fullText.data(using: .utf8)?.write(to: outURL, options: .atomic)
         return outURL
+    }
+
+    public static var hasPreviousSessionLog: Bool {
+        if let prev = previousSessionLogURL, FileManager.default.fileExists(atPath: prev.path) {
+            return true
+        }
+        return readRecentCrashReport() != nil
+    }
+
+    public static func readCurrentSessionLogTail(maxLines: Int = 180) -> String {
+        guard let url = currentSessionLogURL,
+              let text = try? String(contentsOf: url, encoding: .utf8),
+              !text.isEmpty else {
+            return "(Chưa có log nào được ghi trong phiên hiện tại)"
+        }
+        let lines = text.components(separatedBy: .newlines)
+        let tail = lines.suffix(max(20, maxLines)).joined(separator: "\n")
+        return "=== DÒNG CUỐI LOG PHIÊN HIỆN TẠI (\(min(lines.count, maxLines))/\(lines.count) dòng) ===\n" + tail
+    }
+
+    public static func clearLogs() {
+        clearAllLogs()
     }
 
     public static func clearAllLogs() {

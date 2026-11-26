@@ -1220,7 +1220,7 @@ enum CompositionPlanningRegression {
             // 20. Orientation-aware unpadLetterbox for rotated portrait (4:3 sensor rotated .right -> 3:4 upright)
             let squareBoxCenter = CGRect(x: 0.25, y: 0.25, width: 0.50, height: 0.50)
             let unpaddedPortrait = CompositionPureCalculations.unpadLetterbox(
-                squareBoxCenter, bufferWidth: 4032, bufferHeight: 3024, orientation: .right
+                normalizedRect: squareBoxCenter, sourceWidth: 4032, sourceHeight: 3024, orientation: .right
             )
             try require(abs(unpaddedPortrait.width - (0.50 / 0.75)) < 1e-4 && abs(unpaddedPortrait.height - 0.50) < 1e-4,
                         "oriented portrait unpadLetterbox inverted padX/padY: got \(unpaddedPortrait)")

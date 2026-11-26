@@ -169,8 +169,8 @@ enum RealPhotoPipelineBenchmark {
                 let frameCtx = TrackingFrameContext(
                     timestamp: Double(cycle),
                     calibration: calib,
-                    displayZoom: 1.0,
-                    orientation: .up
+                    orientation: .up,
+                    displayZoom: 1.0
                 )
                 let t0 = ProcessInfo.processInfo.systemUptime
                 CameraFramingDirector.resetTemporalState()
@@ -332,8 +332,8 @@ enum RealPhotoPipelineBenchmark {
                 let frameCtx = TrackingFrameContext(
                     timestamp: Double(1000 + idx),
                     calibration: calib,
-                    displayZoom: 1.0,
-                    orientation: .up
+                    orientation: .up,
+                    displayZoom: 1.0
                 )
 
                 CameraFramingDirector.resetTemporalState()
