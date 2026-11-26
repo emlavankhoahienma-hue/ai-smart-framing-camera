@@ -69,6 +69,8 @@ jobs:
             AISmartFramingCamera/Services/CameraLogger.swift \
             AISmartFramingCamera/Services/CompositionTuning.swift \
             AISmartFramingCamera/Services/CompositionPureCalculations.swift \
+            AISmartFramingCamera/Services/CompositionExperiments.swift \
+            AISmartFramingCamera/Services/SmartSceneExposureEngine.swift \
             AISmartFramingCamera/Services/TrackingGeometry.swift \
             AISmartFramingCamera/Services/CompositionPlanning.swift \
             AISmartFramingCamera/Services/CompositionImageEvidence.swift \
@@ -345,25 +347,6 @@ jobs:
         env:
           AI_COMPOSE_RESOURCE_DIR: ${{ github.workspace }}/Payload/AISmartFramingCamera.app
         run: |
-          xcrun swiftc -O -warnings-as-errors \
-            AISmartFramingCamera/Services/CameraLogger.swift \
-            AISmartFramingCamera/Services/CompositionTuning.swift \
-            AISmartFramingCamera/Services/CompositionPureCalculations.swift \
-            AISmartFramingCamera/Services/TrackingGeometry.swift \
-            AISmartFramingCamera/Services/CompositionPlanning.swift \
-            AISmartFramingCamera/Services/CompositionImageEvidence.swift \
-            AISmartFramingCamera/Services/PhotographicCompositionModel.swift \
-            AISmartFramingCamera/Services/GAICCompositionModel.swift \
-            AISmartFramingCamera/Services/CharmPhotographicModel.swift \
-            AISmartFramingCamera/Services/PortraitFramingEvidence.swift \
-            AISmartFramingCamera/Services/CompositionAestheticSearch.swift \
-            AISmartFramingCamera/Services/YOLODetectionEngine.swift \
-            AISmartFramingCamera/Services/OpenWorldSubjectDetector.swift \
-            AISmartFramingCamera/Services/CameraFramingDirector.swift \
-            AISmartFramingCamera/Services/NeuralSubjectIntelligenceEngine.swift \
-            tests/LegacyFramingSnapshot.swift \
-            tests/RealPhotoPipelineBenchmark.swift \
-            -o "$RUNNER_TEMP/real-photo-benchmark"
           "$RUNNER_TEMP/real-photo-benchmark" \
             --test-images "${{ github.workspace }}/test-images" \
             --out "${{ github.workspace }}/benchmark-output" \
