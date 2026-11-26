@@ -200,12 +200,13 @@ public struct CapturedPhotoPreviewView: View {
         self.item = item
         self.viewModel = viewModel
         _currentProcessedImage = State(initialValue: item.processedImage)
-        let initialProcessedUI = UIImage(cgImage: item.processedImage)
-        let initialOriginalUI = UIImage(cgImage: item.originalImage)
-        _cachedFullResUIImage = State(initialValue: initialProcessedUI)
-        _cachedDisplayUIImage = State(initialValue: initialProcessedUI)
+        let initialDisplayUI = Self.downsampleForFastDisplay(item.processedImage, maxSide: 1600)
+        let initialOriginalUI = Self.downsampleForFastDisplay(item.originalImage, maxSide: 1600)
+        let initialMiniUI = Self.downsampleForFastDisplay(item.processedImage, maxSide: 220)
+        _cachedFullResUIImage = State(initialValue: initialDisplayUI)
+        _cachedDisplayUIImage = State(initialValue: initialDisplayUI)
         _cachedOriginalDisplayUIImage = State(initialValue: initialOriginalUI)
-        _cachedMiniMapUIImage = State(initialValue: initialProcessedUI)
+        _cachedMiniMapUIImage = State(initialValue: initialMiniUI)
         _activePreset = State(initialValue: item.appliedPreset)
         _selectedCategory = State(initialValue: item.appliedPreset.category)
         if let vm = viewModel {
@@ -259,7 +260,18 @@ public struct CapturedPhotoPreviewView: View {
                 }
             }
             .onAppear {
+                CameraLogger.lifecycle("VIEW_APPEAR", detail: "CapturedPhotoPreviewView \(item.processedImage.width)x\(item.processedImage.height)", category: .photoKit)
                 rebuildDisplayCachesAsync(processed: currentProcessedImage, original: item.originalImage)
+            }
+            .onDisappear {
+                CameraLogger.lifecycle("VIEW_DISAPPEAR", detail: "CapturedPhotoPreviewView", category: .photoKit)
+            }
+            .onChangeCompatible(of: zoomScale > 2.2) { needsFullRes in
+                if needsFullRes {
+                    cachedFullResUIImage = UIImage(cgImage: currentProcessedImage)
+                } else {
+                    cachedFullResUIImage = cachedDisplayUIImage
+                }
             }
         }
     }

@@ -525,11 +525,94 @@ public struct CameraMainView: View {
                     CameraFunctionDrawerView(viewModel: viewModel)
                         .zIndex(601)
                 }
+
+                // Abnormal Exit Crash Log Banner (auto-surfaces last lines of previous session log after any crash/OOM)
+                if viewModel.showAbnormalExitBanner && !Self.isUISnapshotMode {
+                    VStack {
+                        HStack(spacing: 10) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundColor(.orange)
+
+                            Button {
+                                viewModel.showAbnormalExitBanner = false
+                                viewModel.isShowingCrashDiagnosticsSheet = true
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Phiên trước thoát bất thường")
+                                        .font(.system(size: 12.5, weight: .bold))
+                                        .foregroundColor(.white)
+                                    Text("Bấm xem & chia sẻ những dòng log cuối cùng")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(AlignTheme.studioAccent)
+                                }
+                            }
+
+                            Spacer(minLength: 4)
+
+                            Button {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    viewModel.showAbnormalExitBanner = false
+                                }
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(Color.white.opacity(0.6))
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color.black.opacity(0.86))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(Color.orange.opacity(0.55), lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .padding(.horizontal, 14)
+                        .padding(.top, max(8, geometry.safeAreaInsets.top + 6))
+
+                        Spacer()
+                    }
+                    .zIndex(750)
+                }
+
+                // Live Stress Test HUD Pill (>= 30 cycles memory telemetry)
+                if viewModel.isRunningStressTest {
+                    VStack {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                                .tint(AlignTheme.studioAccent)
+                                .scaleEffect(0.85)
+                            Text(viewModel.stressTestStatusText)
+                                .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.white)
+                                .lineLimit(2)
+                            Spacer(minLength: 4)
+                            Button("Dừng") {
+                                viewModel.cancelLifecycleStressTest()
+                            }
+                            .font(.system(size: 11.5, weight: .bold))
+                            .foregroundColor(.red)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(Color.black.opacity(0.86))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .padding(.horizontal, 14)
+                        .padding(.top, max(8, geometry.safeAreaInsets.top + 6))
+
+                        Spacer()
+                    }
+                    .zIndex(760)
+                }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .sheet(isPresented: $viewModel.isShowingSettings) {
             SettingsSheetView(viewModel: viewModel, initialTab: Self.snapshotSettingsTab)
+        }
+        .sheet(isPresented: $viewModel.isShowingCrashDiagnosticsSheet) {
+            PreviousSessionLogSheetView(viewModel: viewModel)
         }
         .sheet(isPresented: $viewModel.isShowingMasterWatermarkConfig) {
             MasterWatermarkConfigSheet(viewModel: viewModel)
@@ -560,11 +643,15 @@ public struct CameraMainView: View {
             }
         }
         .onAppear {
+            CameraLogger.lifecycle("VIEW_APPEAR", detail: "CameraMainView", category: .general)
             if Self.isUISnapshotMode {
                 viewModel.applyUISnapshotState(screen: Self.snapshotScreen)
             } else {
                 viewModel.requestPermissionsAndStart()
             }
+        }
+        .onDisappear {
+            CameraLogger.lifecycle("VIEW_DISAPPEAR", detail: "CameraMainView", category: .general)
         }
         .onChangeCompatible(of: viewModel.isRecordingVideo) { isRecording in
             if isRecording {

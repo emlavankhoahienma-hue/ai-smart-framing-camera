@@ -15,7 +15,6 @@ import json
 from pathlib import Path
 
 import coremltools as ct
-import coremltools.optimize.coreml as cto
 import numpy as np
 import torch
 from PIL import Image
@@ -133,7 +132,7 @@ def main() -> None:
         if not np.isfinite(trace_err) or trace_err > 1e-4:
             raise RuntimeError(f"TorchScript trace parity mismatch: max_err={trace_err}")
 
-    fp16_converted = ct.convert(
+    converted = ct.convert(
         traced,
         convert_to="mlprogram",
         minimum_deployment_target=ct.target.iOS17,
@@ -157,71 +156,23 @@ def main() -> None:
     arr = np.asarray(parity_img, dtype=np.float32) / 255.0
     ten = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)
     with torch.no_grad():
-        pt_out = wrapper(ten).numpy()[0]  # [4 + nc, anchors]
+        pt_out = wrapper(ten).numpy()[0]  # [4 + nc, 8400]
+
+    cm_raw = converted.predict({"image": parity_img})["detections"]
+    cm_out = np.asarray(cm_raw, dtype=np.float32)[0]
+    if cm_out.shape != pt_out.shape:
+        raise RuntimeError(f"Core ML shape mismatch: {cm_out.shape} != {pt_out.shape}")
+
     pt_scores = pt_out[4:, :].max(axis=0)
+    cm_scores = cm_out[4:, :].max(axis=0)
+    score_max_diff = float(np.abs(pt_scores - cm_scores).max())
+    score_corr = float(np.corrcoef(pt_scores, cm_scores)[0, 1]) if float(pt_scores.std()) > 1e-6 else 1.0
     top_idx = int(np.argmax(pt_scores))
-
-    def measure_parity(candidate_model: ct.models.MLModel) -> tuple[float, float, float]:
-        cm_raw = candidate_model.predict({"image": parity_img})["detections"]
-        cm_out = np.asarray(cm_raw, dtype=np.float32)[0]
-        if cm_out.shape != pt_out.shape:
-            raise RuntimeError(f"Core ML shape mismatch: {cm_out.shape} != {pt_out.shape}")
-        cm_scores = cm_out[4:, :].max(axis=0)
-        s_diff = float(np.abs(pt_scores - cm_scores).max())
-        s_corr = float(np.corrcoef(pt_scores, cm_scores)[0, 1]) if float(pt_scores.std()) > 1e-6 else 1.0
-        b_diff = float(np.abs(pt_out[:4, top_idx] - cm_out[:4, top_idx]).max())
-        return s_diff, s_corr, b_diff
-
-    converted = fp16_converted
-    selected_precision = "FP16"
-    score_max_diff, score_corr, box_diff = float("nan"), float("nan"), float("nan")
-    candidates = [
-        (
-            "W8A16-palettized8",
-            lambda m: cto.palettize_weights(
-                m,
-                config=cto.OptimizationConfig(
-                    global_config=cto.OpPalettizerConfig(
-                        nbits=8,
-                        mode="kmeans",
-                        granularity="per_tensor",
-                        weight_threshold=2048,
-                    )
-                ),
-            ),
-        ),
-        (
-            "W8A16-symmetric",
-            lambda m: cto.linear_quantize_weights(
-                m,
-                config=cto.OptimizationConfig(
-                    global_config=cto.OpLinearQuantizerConfig(
-                        mode="linear_symmetric",
-                        dtype="int8",
-                        granularity="per_channel",
-                        weight_threshold=512,
-                    )
-                ),
-            ),
-        ),
-    ]
-    for label, compress_fn in candidates:
-        candidate = compress_fn(fp16_converted)
-        s_diff, s_corr, b_diff = measure_parity(candidate)
-        if np.isfinite(s_diff) and s_diff <= 0.06 and s_corr >= 0.99:
-            converted = candidate
-            selected_precision = label
-            score_max_diff, score_corr, box_diff = s_diff, s_corr, b_diff
-            print(f"OpenWorldPhotoYOLOE {label} passed parity (diff={s_diff:.4f}, corr={s_corr:.5f}, box={b_diff:.2f}px)")
-            break
-        print(f"OpenWorldPhotoYOLOE {label} drifted (diff={s_diff:.4f}, corr={s_corr:.5f}), trying fallback")
-
-    if selected_precision == "FP16":
-        score_max_diff, score_corr, box_diff = measure_parity(converted)
-        if not np.isfinite(score_max_diff) or score_max_diff > 0.06 or score_corr < 0.99:
-            raise RuntimeError(
-                f"Core ML parity failed: score_max_diff={score_max_diff:.4f}, corr={score_corr:.4f}, box_diff={box_diff:.2f}"
-            )
+    box_diff = float(np.abs(pt_out[:4, top_idx] - cm_out[:4, top_idx]).max())
+    if not np.isfinite(score_max_diff) or score_max_diff > 0.06 or score_corr < 0.99:
+        raise RuntimeError(
+            f"Core ML parity failed: score_max_diff={score_max_diff:.4f}, corr={score_corr:.4f}, box_diff={box_diff:.2f}"
+        )
 
     converted.save(args.output)
     Path(args.classes_out).write_text(
@@ -232,7 +183,6 @@ def main() -> None:
             {
                 "model": MODEL_NAME,
                 "weightsSHA256": WEIGHTS_SHA256,
-                "precision": selected_precision,
                 "inputSize": INPUT_SIZE,
                 "classCount": nc,
                 "outputShape": [1, 4 + nc, EXPECTED_ANCHORS],
@@ -249,7 +199,7 @@ def main() -> None:
         encoding="utf-8",
     )
     print(
-        f"OpenWorldPhotoYOLOE exported cleanly ({selected_precision}, {nc} classes, "
+        f"OpenWorldPhotoYOLOE exported cleanly ({nc} classes, "
         f"score_max_diff={score_max_diff:.4f}, corr={score_corr:.5f}, box_diff={box_diff:.2f}px)"
     )
 

@@ -853,22 +853,42 @@ enum CompositionPlanningRegression {
             try require(projAim.isInFront && hypot(Double(projAim.point.x - portraitRes.aimPointInSource.x), Double(projAim.point.y - portraitRes.aimPointInSource.y)) < 1e-4,
                         "aimWorldRay diverged from aimPointInSource")
 
-            // 2. Distant small animal -> Smart Optical Zoom-In >= 2.0x + safe zoomed pan bounds
-            let smallDog = DirectorDetection(
+            // 2a. Distant small animal (within center-zoomable zone) -> Smart Optical Zoom-In >= 2.0x + center-crop safe
+            let smallDogCentered = DirectorDetection(
                 label: "dog", localizedLabel: "Chú chó",
-                boundingBox: CGRect(x: 0.62, y: 0.50, width: 0.14, height: 0.14),
+                boundingBox: CGRect(x: 0.48, y: 0.46, width: 0.14, height: 0.14),
                 anchor: nil, confidence: 0.86, domain: .animal
             )
             let dogRes = CameraFramingDirector.direct(
-                detections: [smallDog], raster: baseRaster, sceneHints: .neutral,
+                detections: [smallDogCentered], raster: baseRaster, sceneHints: .neutral,
                 semanticAffinities: ["animal": 0.09], neuralProposals: [],
                 calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
             )
-            try require(dogRes.role == .animal, "expected animal role")
+            try require(dogRes.role == .animal && dogRes.zoomState == .zoomIn, "expected animal ZOOM_IN")
             try require(dogRes.recommendedZoom >= 2.0, "distant animal failed to zoom in: \(dogRes.recommendedZoom)x")
+            try require(dogRes.centerCropVisibleFrame.contains(smallDogCentered.boundingBox),
+                        "post-zoom center crop \(dogRes.centerCropVisibleFrame) clipped subject \(smallDogCentered.boundingBox)")
             let halfSpan = 0.5 / Double(dogRes.recommendedZoom)
             try require(Double(dogRes.aimPointInSource.x) >= halfSpan - 0.001 && Double(dogRes.aimPointInSource.x) <= 1.0 - halfSpan + 0.001,
                         "zoomed aim drifted outside sensor bounds: \(dogRes.aimPointInSource)")
+
+            // 2b. Off-center distant small animal -> Center-crop geometric cap + explicit "dịch máy rồi mới zoom" guidance
+            let smallDogOffCenter = DirectorDetection(
+                label: "dog", localizedLabel: "Chú chó",
+                boundingBox: CGRect(x: 0.68, y: 0.50, width: 0.14, height: 0.14),
+                anchor: nil, confidence: 0.86, domain: .animal
+            )
+            let offDogRes = CameraFramingDirector.direct(
+                detections: [smallDogOffCenter], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["animal": 0.09], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(offDogRes.requiresPanBeforeZoom && offDogRes.idealZoomAfterPan >= 2.0,
+                        "off-center small animal should require pan before full zoom: \(offDogRes)")
+            try require(offDogRes.centerCropVisibleFrame.contains(smallDogOffCenter.boundingBox),
+                        "off-center immediate zoom \(offDogRes.recommendedZoom)x clipped dog \(smallDogOffCenter.boundingBox) outside \(offDogRes.centerCropVisibleFrame)")
+            try require(offDogRes.explanation.contains("dịch máy rồi mới zoom"),
+                        "missing pan-before-zoom guidance in explanation: \(offDogRes.explanation)")
 
             // 3. Dramatic sky + clouds horizon -> 1.0x wide view, tilts UP to place horizon on lower third 0.667
             let skyDet = DirectorDetection(
@@ -1182,6 +1202,44 @@ enum CompositionPlanningRegression {
             )
             try require(abs(Double(overcastRes.aimPointInSource.x) - 0.50) < 0.03,
                         "overcast white sky caused false horizontal pan to \(overcastRes.aimPointInSource)")
+
+            // 19. Very distant full-body person (< 1% area, 16% height) -> NOT dropped by 0.012 area gate, zooms >= 2.5x!
+            let tinyDistantPerson = DirectorDetection(
+                label: "person", localizedLabel: "Người",
+                boundingBox: CGRect(x: 0.47, y: 0.40, width: 0.055, height: 0.16),
+                anchor: CGPoint(x: 0.497, y: 0.43), confidence: 0.84, domain: .human
+            )
+            let tinyPersonRes = CameraFramingDirector.direct(
+                detections: [tinyDistantPerson], raster: baseRaster, sceneHints: .neutral,
+                semanticAffinities: ["person": 0.06], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(tinyPersonRes.role == .portrait && tinyPersonRes.recommendedZoom >= 2.5,
+                        "distant 16%-height person failed to select & zoom: role=\(tinyPersonRes.role) zoom=\(tinyPersonRes.recommendedZoom)x")
+
+            // 20. Orientation-aware unpadLetterbox for rotated portrait (4:3 sensor rotated .right -> 3:4 upright)
+            let squareBoxCenter = CGRect(x: 0.25, y: 0.25, width: 0.50, height: 0.50)
+            let unpaddedPortrait = CompositionPureCalculations.unpadLetterbox(
+                squareBoxCenter, bufferWidth: 4032, bufferHeight: 3024, orientation: .right
+            )
+            try require(abs(unpaddedPortrait.width - (0.50 / 0.75)) < 1e-4 && abs(unpaddedPortrait.height - 0.50) < 1e-4,
+                        "oriented portrait unpadLetterbox inverted padX/padY: got \(unpaddedPortrait)")
+
+            // 21. No-clear-subject ambient texture -> preservesOriginalFrame, NO false zoom
+            let flatRaster = CompositionRaster(
+                side: 16,
+                luminance: Array(repeating: 0.44, count: 256),
+                attention: Array(repeating: 0.08, count: 256),
+                edges: Array(repeating: 0.03, count: 256),
+                hasAttention: false
+            )
+            let emptyRes = CameraFramingDirector.direct(
+                detections: [], raster: flatRaster, sceneHints: .neutral,
+                semanticAffinities: [:], neuralProposals: [],
+                calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
+            )
+            try require(emptyRes.role == .scene && emptyRes.zoomState == .noZoomNeeded && emptyRes.preservesOriginalFrame,
+                        "no-clear-subject scene hallucinated crop/zoom: \(emptyRes)")
         }
         print("Composition regressions: \(passed) passed")
     }

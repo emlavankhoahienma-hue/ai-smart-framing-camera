@@ -2,7 +2,9 @@ import Foundation
 import Vision
 import CoreGraphics
 import CoreImage
+#if canImport(UIKit)
 import UIKit
+#endif
 import CoreML
 import simd
 
@@ -107,12 +109,16 @@ private final class SemanticCropRanker: @unchecked Sendable {
     /// preserving `activeSessionDepth` balance.
     @discardableResult
     func releaseModelNow() -> Bool {
-        lock.withLock {
+        let evicted = lock.withLock { () -> Bool in
             let hadModel = (model != nil)
             model = nil
             attemptedLoad = false
             return hadModel
         }
+        if evicted {
+            CameraLogger.lifecycle("MODEL_UNLOAD", detail: "SigLIPBaseImage", category: .ai)
+        }
+        return evicted
     }
 
     private func loadAndSnapshot() -> (model: VNCoreMLModel?, prompts: [String: [Double]]) {
@@ -139,13 +145,13 @@ private final class SemanticCropRanker: @unchecked Sendable {
                   minimumBytes: CompositionMemoryBudget.siglipLoadHeadroomBytes,
                   excluding: "SigLIP"
               ),
-              let url = Bundle.main.url(forResource: "SigLIPBaseImage", withExtension: "mlmodelc") else {
+              let url = CompositionResourceLocator.url(forResource: "SigLIPBaseImage", withExtension: "mlmodelc") else {
             return (nil, [:])
         }
         let vectors: [String: [Double]]
         if !cachedPrompts.isEmpty {
             vectors = cachedPrompts
-        } else if let promptURL = Bundle.main.url(forResource: "SigLIPPrompts", withExtension: "json"),
+        } else if let promptURL = CompositionResourceLocator.url(forResource: "SigLIPPrompts", withExtension: "json"),
                   let data = try? Data(contentsOf: promptURL),
                   let decoded = try? JSONDecoder().decode([String: [Double]].self, from: data),
                   !decoded.isEmpty {
@@ -160,6 +166,7 @@ private final class SemanticCropRanker: @unchecked Sendable {
             config.computeUnits = .cpuAndNeuralEngine
             config.allowLowPrecisionAccumulationOnGPU = true
             let loadedModel = try VNCoreMLModel(for: MLModel(contentsOf: url, configuration: config))
+            CameraLogger.lifecycle("MODEL_LOAD", detail: "SigLIPBaseImage (FP16 ANE)", category: .ai)
             lock.lock()
             // Guard against a concurrent release occurring while MLModel compiled
             if attemptedLoad {
@@ -765,8 +772,22 @@ struct LocalCompositionAnalysis: Sendable {
 /// Expensive interpretation runs only on the serialized one-shot worker.
 /// No camera-pool buffer is cached and none of this state enters the target tracker.
 public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
+    public struct DetailedCompositionDiagnostic: Sendable {
+        let directorDecision: DirectorDecision
+        let directorDetections: [DirectorDetection]
+        let raster: CompositionRaster
+        let sceneHints: CompositionSceneHints
+        let semanticAffinities: [String: Double]
+        let evaluatedProposals: [CompositionProposal]
+        let gaicProposals: [CompositionProposal]
+        let incidentalBounds: [CGRect]
+        let portraitBounds: CGRect?
+        let poseProfile: AnatomicalPoseProfile?
+    }
+
     public static let shared = NeuralSubjectIntelligenceEngine()
     private let analysisLock = NSRecursiveLock()
+    private var lastDiagnosticSnapshot: DetailedCompositionDiagnostic?
     /// Dedicated serial worker queue with `.workItem` autorelease draining so CoreML/Vision ObjC
     /// allocations never linger on the worker thread between runs and Swift Concurrency never blocks on `analysisLock`.
     private let analysisQueue = DispatchQueue(
@@ -775,7 +796,18 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         autoreleaseFrequency: .workItem
     )
     private let renderer = CompositionImageRenderer()
+
+    func consumeLastDiagnostic() -> DetailedCompositionDiagnostic? {
+        analysisLock.lock()
+        defer { analysisLock.unlock() }
+        let snap = lastDiagnosticSnapshot
+        lastDiagnosticSnapshot = nil
+        return snap
+    }
     public init() {
+        CompositionMemoryBudget.setLifecycleObserver { event, detail in
+            CameraLogger.lifecycle(event, detail: detail, category: .ai)
+        }
         #if canImport(UIKit)
         _ = NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification,
@@ -888,13 +920,17 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         SemanticCropRanker.shared.beginAnalysis()
         defer {
             SemanticCropRanker.shared.finishSession(lowMemoryBudget: lowMemoryBudget)
-            renderer.clearCaches()
-            let evicted = CompositionMemoryBudget.trimForReserve(minimumBytes: postRunReserveBytes)
-            if !evicted.isEmpty {
-                CameraLogger.info(
-                    "LocalAI post-run trim: evicted=\(evicted.joined(separator: ",")) availMB=\(CompositionMemoryBudget.availableMB())",
-                    category: .ai
-                )
+            if !CompositionMemoryBudget.shouldRetainModelCache(minimumAvailableBytes: postRunReserveBytes) {
+                releaseAllModelCachesLocked()
+            } else {
+                renderer.clearCaches()
+                let evicted = CompositionMemoryBudget.trimForReserve(minimumBytes: postRunReserveBytes)
+                if !evicted.isEmpty {
+                    CameraLogger.info(
+                        "LocalAI post-run trim: evicted=\(evicted.joined(separator: ",")) availMB=\(CompositionMemoryBudget.availableMB())",
+                        category: .ai
+                    )
+                }
             }
             analysisLock.unlock()
         }
@@ -1172,7 +1208,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             }
             return combined
         }
-        let sampModelURL = Bundle.main.url(forResource: "SAMPComposition", withExtension: "mlmodelc")
+        let sampModelURL = CompositionResourceLocator.url(forResource: "SAMPComposition", withExtension: "mlmodelc")
         let gaicModelURL = GAICCompositionModel.defaultModelURL(near: sampModelURL)
         let isFallbackScenery = builtPlan.isFallbackScenery
         var initialProposals = proposals()
@@ -1245,8 +1281,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 raster: raster,
                 modelURL: sampModelURL,
                 gaicModelURL: gaicModelURL,
-                aestheticModelURL: constrained ? nil : Bundle.main.url(forResource: "CharmAesthetics", withExtension: "mlmodelc"),
-                positionURL: constrained ? nil : Bundle.main.url(forResource: "CharmPositionEmbedding", withExtension: "bin"),
+                aestheticModelURL: constrained ? nil : CompositionResourceLocator.url(forResource: "CharmAesthetics", withExtension: "mlmodelc"),
+                positionURL: constrained ? nil : CompositionResourceLocator.url(forResource: "CharmPositionEmbedding", withExtension: "bin"),
                 requiresModernModel: false,
                 sceneHints: sceneHints,
                 lowMemoryBudget: lowMem,
@@ -1261,18 +1297,32 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         // Solve true 3D physical camera pan/tilt + smart optical zoom using Free-Form Neural-Guided Director:
         // fuses OpenWorld YOLOE + DepthAnythingV2 + iOS 17 Foreground Mask + SigLIP clutter avoidance +
         // ALL 256 GAIC boxes + SAMP/Charm aesthetic consensus (no Golden-Ratio straitjacket).
+        let semanticAffinities = spatialProfile.fullScores.isEmpty ? output.semanticAffinities : spatialProfile.fullScores
+        let evaluatedProposalList = result.allEvaluatedViews.map(\.proposal)
         let directorDecision = CameraFramingDirector.direct(
             detections: directorDetections,
             raster: raster,
             sceneHints: sceneHints,
-            semanticAffinities: spatialProfile.fullScores.isEmpty ? output.semanticAffinities : spatialProfile.fullScores,
-            neuralProposals: result.allEvaluatedViews.map(\.proposal),
+            semanticAffinities: semanticAffinities,
+            neuralProposals: evaluatedProposalList,
             gaicProposals: result.allGAICProposals,
             incidentalBounds: arbitratedIncidentals,
             calibration: frame.calibration,
             pose: pose,
             currentZoom: CGFloat(frame.displayZoom),
             allowedZooms: allowedZooms,
+            portraitBounds: portraitBounds,
+            poseProfile: poseProfile
+        )
+        lastDiagnosticSnapshot = DetailedCompositionDiagnostic(
+            directorDecision: directorDecision,
+            directorDetections: directorDetections,
+            raster: raster,
+            sceneHints: sceneHints,
+            semanticAffinities: semanticAffinities,
+            evaluatedProposals: evaluatedProposalList,
+            gaicProposals: result.allGAICProposals,
+            incidentalBounds: arbitratedIncidentals,
             portraitBounds: portraitBounds,
             poseProfile: poseProfile
         )
@@ -1379,6 +1429,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     return .frameInFrame
                 case .ruleOfThirds, .lowHorizonSky, .highHorizonGround:
                     return .ruleOfThirds
+                case .goldenRatio:
+                    return .goldenRatio
                 case .keepNatural, .neuralFreeform, .subtleBalance, .ultraWide:
                     return .dynamicAI
                 }
@@ -1405,7 +1457,10 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 usesCenter: directorDecision.usesCenter,
                 preferenceKey: "director|\(directorDecision.role.rawValue)|\(Int((directorDecision.recommendedZoom * 10).rounded()))",
                 recommendedEVBias: result.views.first?.proposal.recommendedEVBias ?? 0.0,
-                compositionRule: mappedRule
+                compositionRule: mappedRule,
+                requiresPanBeforeZoom: directorDecision.requiresPanBeforeZoom,
+                postPanZoom: directorDecision.requiresPanBeforeZoom ? directorDecision.idealZoomAfterPan : nil,
+                zoomStateRaw: directorDecision.zoomState.rawValue
             )
             choices.append(LocalCompositionChoice(
                 candidate: directedHero,
@@ -1525,7 +1580,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             if c.confidence < minConf { continue }
             let box = c.boundingBox
             let area = c.areaRatio
-            if area < 0.002 || box.width > 0.95 || box.height > 0.95 { continue }
+            if area < 0.0008 || box.width > 0.998 || box.height > 0.998 { continue }
             let lower = c.label.lowercased()
             let isHumanOrPet = (c.category == .human || c.category == .face || c.category == .animal)
 
@@ -1540,8 +1595,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 incidentalSlivers.append(box)
                 continue
             }
-            if c.category == .human && area < 0.012 &&
-               (role == .streetLeading || role == .architecture || role == .landscapeSky || role == .foliageGarden) {
+            let touchesSide = box.minX <= 0.03 || box.maxX >= 0.97
+            if c.category == .human && area < 0.0025 && touchesSide && c.confidence < 0.48 &&
+               (role == .architecture || role == .landscapeSky || role == .foliageGarden) {
                 incidentalSlivers.append(box)
                 continue
             }
@@ -1594,11 +1650,11 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             return baseScore * aimFactor * depthFactor * clutterFactor * borderFactor * categoryFactor
         }
 
-        // Case A: Clear Human / Face / Animal hero
+        // Case A: Clear Human / Face / Animal hero (including distant full-body subjects down to 0.18% area)
         let humanAnimal = validYolo.filter {
             ($0.category == .human || $0.category == .face || $0.category == .animal) &&
-            ($0.areaRatio >= 0.012 || ($0.category == .face && $0.confidence >= 0.54 && $0.areaRatio >= 0.004)) &&
-            !($0.boundingBox.maxY >= 0.96 && $0.boundingBox.height < 0.24)
+            ($0.areaRatio >= 0.0018 || ($0.category == .face && $0.confidence >= 0.42 && $0.areaRatio >= 0.0010)) &&
+            !($0.boundingBox.maxY >= 0.985 && $0.boundingBox.height < 0.16 && $0.faceBounds.isEmpty)
         }.sorted { heroSelectionScore($0) > heroSelectionScore($1) }
         if let topHA = humanAnimal.first {
             let runnerUpHA = humanAnimal.dropFirst().first

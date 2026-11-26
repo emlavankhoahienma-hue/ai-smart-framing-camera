@@ -89,6 +89,9 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
         renderLock.withLock {
             CompositionImageRenderer.clearSharedCaches()
         }
+        if evicted {
+            CameraLogger.lifecycle("MODEL_UNLOAD", detail: "OpenWorldPhotoYOLOE", category: .ai)
+        }
         return evicted
     }
 
@@ -136,24 +139,18 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
             _ = group.wait(timeout: .now() + waitSeconds)
             return results.combined()
         } else {
-            // Sequential execution prevents concurrent activation peaks while preserving the warm
-            // OpenWorldPhotoYOLOE singleton across taps whenever real-time Jetsam headroom is healthy.
+            // Sequential execution prevents concurrent activation peaks and guarantees OpenWorldPhotoYOLOE
+            // is unloaded inside autoreleasepool BEFORE full-resolution ForegroundInstanceMask executes.
             group.enter()
             let yoloDets = autoreleasepool {
                 self.detectOpenWorldYOLOE(
                     pixelBuffer: pixelBuffer,
                     orientation: orientation,
                     cancellation: cancellation,
-                    allowCache: true
+                    allowCache: false
                 )
             }
-            if !CompositionMemoryBudget.shouldRetainModelCache(
-                minimumAvailableBytes: CompositionMemoryBudget.openWorldRetainThresholdBytes
-            ) {
-                _ = releaseCachedModel()
-            } else {
-                CompositionImageRenderer.clearSharedCaches()
-            }
+            _ = autoreleasepool { releaseCachedModel() }
             results.setYOLOE(yoloDets)
             if !cancellation.isCancelled, !cancellation.isSoftDeadlineReached {
                 let maskDets = autoreleasepool {
@@ -177,7 +174,7 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         if let existing = cachedClasses { return existing }
-        guard let url = Bundle.main.url(forResource: "OpenWorldPhotoClasses", withExtension: "json"),
+        guard let url = CompositionResourceLocator.url(forResource: "OpenWorldPhotoClasses", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let parsed = try? JSONDecoder().decode([String].self, from: data),
               !parsed.isEmpty else {
@@ -201,7 +198,7 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
         }
         let classes = loadClassesIfNeeded()
         guard !classes.isEmpty,
-              let modelURL = Bundle.main.url(forResource: "OpenWorldPhotoYOLOE", withExtension: "mlmodelc") else {
+              let modelURL = CompositionResourceLocator.url(forResource: "OpenWorldPhotoYOLOE", withExtension: "mlmodelc") else {
             return []
         }
 
@@ -223,6 +220,7 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
                 config.computeUnits = .cpuAndNeuralEngine
                 config.allowLowPrecisionAccumulationOnGPU = true
                 guard let loaded = try? MLModel(contentsOf: modelURL, configuration: config) else { return nil }
+                CameraLogger.lifecycle("MODEL_LOAD", detail: "OpenWorldPhotoYOLOE (FP16 ANE)", category: .ai)
                 if allowCache && CompositionMemoryBudget.shouldRetainModelCache(
                     minimumAvailableBytes: CompositionMemoryBudget.openWorldRetainThresholdBytes
                 ) {
@@ -512,53 +510,7 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
         return kept
     }
 
-    // MARK: - 2. iOS 17+ Apple Vision Foreground Instance Mask (Class-Agnostic Subject Lifter)
-
-    /// Downscales the input frame to an upright max-512px buffer before invoking Apple Vision's
-    /// foreground instance matting model. Because bounding-box extraction subsamples the output
-    /// mask on a ~160px grid, 512px preserves 100% normalized box accuracy while slashing Vision
-    /// matting peak RAM by ~4-6x (~200MB saved) and cutting matting latency ~3x.
-    private func makeForegroundMaskInputBuffer(
-        from pixelBuffer: CVPixelBuffer,
-        orientation: CGImagePropertyOrientation,
-        maxSide: Int = 512
-    ) -> (buffer: CVPixelBuffer, orientation: CGImagePropertyOrientation)? {
-        let srcW = CVPixelBufferGetWidth(pixelBuffer)
-        let srcH = CVPixelBufferGetHeight(pixelBuffer)
-        guard srcW > 4, srcH > 4 else { return nil }
-        if orientation == .up && max(srcW, srcH) <= maxSide {
-            return (pixelBuffer, .up)
-        }
-        let oriented = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
-        let extent = oriented.extent
-        guard !extent.isEmpty, extent.width > 4, extent.height > 4 else { return nil }
-        let longEdge = max(Double(extent.width), Double(extent.height))
-        let scale = min(1.0, Double(maxSide) / longEdge)
-        let dstW = max(32, Int((Double(extent.width) * scale).rounded()) & ~1)
-        let dstH = max(32, Int((Double(extent.height) * scale).rounded()) & ~1)
-        var outBuffer: CVPixelBuffer?
-        let attrs = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
-        guard CVPixelBufferCreate(
-            kCFAllocatorDefault, dstW, dstH,
-            kCVPixelFormatType_32BGRA, attrs, &outBuffer
-        ) == kCVReturnSuccess, let buffer = outBuffer else {
-            return nil
-        }
-        let translated = oriented.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
-        let scaled = translated.transformed(by: CGAffineTransform(
-            scaleX: CGFloat(dstW) / extent.width,
-            y: CGFloat(dstH) / extent.height
-        ))
-        renderLock.withLock {
-            CompositionImageRenderer.renderShared(
-                scaled,
-                to: buffer,
-                bounds: CGRect(x: 0, y: 0, width: dstW, height: dstH),
-                colorSpace: CGColorSpaceCreateDeviceRGB()
-            )
-        }
-        return (buffer, .up)
-    }
+    // MARK: - 2. iOS 17+ Apple Vision Foreground Instance Mask (Full Native Resolution)
 
     private func detectForegroundInstances(
         pixelBuffer: CVPixelBuffer,
@@ -574,17 +526,17 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
         }
         guard #available(iOS 17.0, macOS 14.0, *) else { return [] }
         return autoreleasepool {
-            guard let prepared = makeForegroundMaskInputBuffer(
-                from: pixelBuffer,
-                orientation: orientation,
-                maxSide: 512
-            ) else {
-                return []
+            let srcW = CVPixelBufferGetWidth(pixelBuffer)
+            let srcH = CVPixelBufferGetHeight(pixelBuffer)
+            guard srcW > 4, srcH > 4 else { return [] }
+            CameraLogger.lifecycle("VISION_MASK_START", detail: "ForegroundInstanceMask \(srcW)x\(srcH)", category: .ai)
+            defer {
+                CameraLogger.lifecycle("VISION_MASK_END", detail: "ForegroundInstanceMask", category: .ai)
             }
             let request = VNGenerateForegroundInstanceMaskRequest()
             let handler = VNImageRequestHandler(
-                cvPixelBuffer: prepared.buffer,
-                orientation: prepared.orientation,
+                cvPixelBuffer: pixelBuffer,
+                orientation: orientation,
                 options: [:]
             )
             guard (try? cancellation.perform(request, with: handler)) != nil,

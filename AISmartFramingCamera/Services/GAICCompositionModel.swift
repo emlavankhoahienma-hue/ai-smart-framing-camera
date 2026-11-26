@@ -44,6 +44,9 @@ final class GAICCompositionModel {
                 return had
             }
             CompositionImageRenderer.clearSharedCaches()
+            if evicted {
+                CompositionMemoryBudget.emitLifecycle("MODEL_UNLOAD", "GAICCompositionScorer")
+            }
             return evicted
         }
 
@@ -58,6 +61,7 @@ final class GAICCompositionModel {
                 return nil
             }
             guard let loaded = try? GAICCompositionModel(url: url) else { return nil }
+            CompositionMemoryBudget.emitLifecycle("MODEL_LOAD", "GAICCompositionScorer (FP16 ANE)")
             if CompositionMemoryBudget.shouldRetainModelCache(
                 minimumAvailableBytes: CompositionMemoryBudget.gaicRetainThresholdBytes
             ) {
@@ -103,7 +107,7 @@ final class GAICCompositionModel {
            FileManager.default.fileExists(atPath: sibling.path) {
             return sibling
         }
-        return Bundle.main.url(forResource: bundleModelName, withExtension: "mlmodelc")
+        return CompositionResourceLocator.url(forResource: bundleModelName, withExtension: "mlmodelc")
     }
 
     /// Converts 4 upright normalized source corners into an axis-aligned [0, 1] box.

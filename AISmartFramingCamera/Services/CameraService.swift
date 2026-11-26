@@ -710,8 +710,12 @@ public final class CameraService: NSObject {
                     }
 
                     if self.photoOutput.isLivePhotoCaptureSupported {
-                        self.photoOutput.isLivePhotoCaptureEnabled = true
-                        CameraLogger.info("CameraService: Thiết bị hỗ trợ Live Photo -> isLivePhotoCaptureEnabled = true", category: .capture)
+                        self.photoOutput.isLivePhotoCaptureEnabled = self.isLivePhotoMode
+                        CameraLogger.lifecycle(
+                            "PHOTO_OUTPUT_LIVEPHOTO_CONFIG",
+                            detail: "supported=true enabled=\(self.photoOutput.isLivePhotoCaptureEnabled)",
+                            category: .capture
+                        )
                     } else {
                         CameraLogger.warning("CameraService: isLivePhotoCaptureSupported = false", category: .capture)
                     }
@@ -885,7 +889,9 @@ public final class CameraService: NSObject {
                 self.removeAudioInputAndOutputInternal()
             }
             if self.videoDeviceInput != nil && !self.captureSession.isRunning && !self.captureSession.isInterrupted {
+                CameraLogger.lifecycle("SESSION_START_BEGIN", detail: "pos=\(self.currentCameraPosition == .front ? "front" : "back") mode=\(self.currentCaptureMode.rawValue)", category: .capture)
                 self.captureSession.startRunning()
+                CameraLogger.lifecycle("SESSION_START_END", detail: "running=\(self.captureSession.isRunning)", category: .capture)
             }
             let running = self.captureSession.isRunning && !self.captureSession.isInterrupted
             self.publishSessionRunning(running)
@@ -901,7 +907,12 @@ public final class CameraService: NSObject {
             if self.isDualCameraActive {
                 self.stopDualCamera()
             }
-            if self.captureSession.isRunning { self.captureSession.stopRunning() }
+            if self.captureSession.isRunning {
+                CameraLogger.lifecycle("SESSION_STOP_BEGIN", category: .capture)
+                self.captureSession.stopRunning()
+                CameraLogger.lifecycle("SESSION_STOP_END", detail: "running=\(self.captureSession.isRunning)", category: .capture)
+            }
+            UnifiedMetalColorEngine.shared.flushCaches()
             self.publishSessionRunning(false)
         }
     }

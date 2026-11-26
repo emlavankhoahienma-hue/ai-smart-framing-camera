@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import ImageIO
 import simd
 
 /// Cac phep tinh toan hoc thuan tuy (Pure Functions) cho he thong bo cuc AI va bám bắt mục tiêu.
@@ -103,9 +104,34 @@ public enum CompositionPureCalculations {
     }
 
     // MARK: - 3. Letterbox Coordinates Unpadding (Vision .scaleFit)
-    /// Hoan nguyen toa do chuan hoa bi them vien den khi tien xu ly .scaleFit
-    /// - sourceAspect: Ty le anh goc (vi du 3.0 / 4.0 = 0.75 cho anh doc)
-    /// - modelAspect: Ty le input cua model (vi du 1.0 cho 640x640)
+    /// Hoan nguyen toa do chuan hoa bi them vien khi tien xu ly .scaleFit tren anh khong vuong (3:4, 9:16, 4:3, 16:9).
+    /// Tinh chinh xac chieu rong/cao sau xoay theo `CGImagePropertyOrientation` de khong bao gio dao nguoc padX/padY.
+    public static func unpadLetterbox(
+        normalizedRect: CGRect,
+        sourceWidth: Double,
+        sourceHeight: Double,
+        modelSize: Double = 640.0,
+        orientation: CGImagePropertyOrientation
+    ) -> CGRect {
+        guard sourceWidth > 0, sourceHeight > 0, modelSize > 0 else { return normalizedRect }
+        let swapsAxes: Bool
+        switch orientation {
+        case .left, .right, .leftMirrored, .rightMirrored:
+            swapsAxes = true
+        default:
+            swapsAxes = false
+        }
+        let orientedW = swapsAxes ? sourceHeight : sourceWidth
+        let orientedH = swapsAxes ? sourceWidth : sourceHeight
+        return unpadOrientedLetterbox(
+            normalizedRect: normalizedRect,
+            orientedWidth: orientedW,
+            orientedHeight: orientedH,
+            modelWidth: modelSize,
+            modelHeight: modelSize
+        )
+    }
+
     public static func unpadLetterbox(
         normalizedRect: CGRect,
         sourceWidth: Double,
@@ -114,30 +140,46 @@ public enum CompositionPureCalculations {
         isPortraitOrientation: Bool = true
     ) -> CGRect {
         guard sourceWidth > 0, sourceHeight > 0, modelSize > 0 else { return normalizedRect }
-        let orientedW = isPortraitOrientation ? min(sourceWidth, sourceHeight) : sourceWidth
-        let orientedH = isPortraitOrientation ? max(sourceWidth, sourceHeight) : sourceHeight
+        let orientedW = isPortraitOrientation ? min(sourceWidth, sourceHeight) : max(sourceWidth, sourceHeight)
+        let orientedH = isPortraitOrientation ? max(sourceWidth, sourceHeight) : min(sourceWidth, sourceHeight)
+        return unpadOrientedLetterbox(
+            normalizedRect: normalizedRect,
+            orientedWidth: orientedW,
+            orientedHeight: orientedH,
+            modelWidth: modelSize,
+            modelHeight: modelSize
+        )
+    }
 
-        let scale = min(modelSize / orientedW, modelSize / orientedH)
-        let validW = orientedW * scale
-        let validH = orientedH * scale
-        let padX = (modelSize - validW) / 2.0
-        let padY = (modelSize - validH) / 2.0
+    public static func unpadOrientedLetterbox(
+        normalizedRect: CGRect,
+        orientedWidth: Double,
+        orientedHeight: Double,
+        modelWidth: Double,
+        modelHeight: Double
+    ) -> CGRect {
+        guard orientedWidth > 0, orientedHeight > 0, modelWidth > 0, modelHeight > 0 else { return normalizedRect }
+        let scale = min(modelWidth / orientedWidth, modelHeight / orientedHeight)
+        let validW = orientedWidth * scale
+        let validH = orientedHeight * scale
+        let padX = (modelWidth - validW) * 0.5
+        let padY = (modelHeight - validH) * 0.5
 
-        let pixelX = Double(normalizedRect.minX) * modelSize
-        let pixelY = Double(normalizedRect.minY) * modelSize
-        let pixelW = Double(normalizedRect.width) * modelSize
-        let pixelH = Double(normalizedRect.height) * modelSize
+        let pixelX = Double(normalizedRect.minX) * modelWidth
+        let pixelY = Double(normalizedRect.minY) * modelHeight
+        let pixelW = Double(normalizedRect.width) * modelWidth
+        let pixelH = Double(normalizedRect.height) * modelHeight
 
-        let unpaddedX = (pixelX - padX) / validW
-        let unpaddedY = (pixelY - padY) / validH
-        let unpaddedW = pixelW / validW
-        let unpaddedH = pixelH / validH
+        let x1 = max(0.0, min(1.0, (pixelX - padX) / validW))
+        let y1 = max(0.0, min(1.0, (pixelY - padY) / validH))
+        let x2 = max(0.0, min(1.0, (pixelX + pixelW - padX) / validW))
+        let y2 = max(0.0, min(1.0, (pixelY + pixelH - padY) / validH))
 
         return CGRect(
-            x: max(0.0, min(1.0, unpaddedX)),
-            y: max(0.0, min(1.0, unpaddedY)),
-            width: max(0.0, min(1.0, unpaddedW)),
-            height: max(0.0, min(1.0, unpaddedH))
+            x: x1,
+            y: y1,
+            width: max(0.0, x2 - x1),
+            height: max(0.0, y2 - y1)
         )
     }
 
@@ -315,5 +357,29 @@ struct AutoFocusCapturePolicy {
         let elapsed = now - requestedAt
         guard elapsed >= Self.minimumDwell else { return false }
         return lensSettled || elapsed >= Self.timeout
+    }
+}
+
+/// Resolves bundled AI models and JSON/BIN resources from `Bundle.main` on iOS/macOS app bundles,
+/// falling back to `AI_COMPOSE_RESOURCE_DIR` when executing inside standalone macOS CLI benchmark binaries.
+public enum CompositionResourceLocator {
+    public static func url(forResource name: String, withExtension ext: String?) -> URL? {
+        if let bundled = Bundle.main.url(forResource: name, withExtension: ext) {
+            return bundled
+        }
+        if let overrideDir = ProcessInfo.processInfo.environment["AI_COMPOSE_RESOURCE_DIR"],
+           !overrideDir.isEmpty {
+            let fileName: String
+            if let ext, !ext.isEmpty {
+                fileName = "\(name).\(ext)"
+            } else {
+                fileName = name
+            }
+            let candidate = URL(fileURLWithPath: overrideDir).appendingPathComponent(fileName)
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        return nil
     }
 }

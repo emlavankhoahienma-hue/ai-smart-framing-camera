@@ -350,7 +350,7 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         vm = source("ViewModels/CameraViewModel.swift")
         self.assertIn("public let horizonLevelerService = HorizonLevelerService.shared", vm)
         self.assertIn("public func syncHorizonLevelerLifecycle()", vm)
-        self.assertIn("horizonMotionManager.stopDeviceMotionUpdates()", vm)
+        self.assertNotIn("private let horizonMotionManager = CMMotionManager()", vm)
 
         pro_photo = source("Services/ProPhotoManualControlsService.swift")
         self.assertIn("private var pendingAWBLockWorkItem: DispatchWorkItem?", pro_photo)
@@ -1542,21 +1542,18 @@ class ProCameraUpgradesContracts(unittest.TestCase):
             "GalleryThumbnailButton must render 160px thumbnail instead of 48MB full-res CGImage",
         )
 
-    def test_29_w8a16_quantization_adaptive_singleton_and_512px_foreground_mask(self):
-        # 1. All 5 FP16 Core ML exporters apply parity-verified W8A16 (INT8 weights / FP16 activations)
+    def test_29_pure_fp16_fullres_mask_crash_logger_and_center_crop_zoom(self):
+        # 1. Pure FP16 Core ML exporters (zero weight quantization or resolution downgrade)
         for rel in [
             "scripts/export_siglip_coreml.py",
             "scripts/export_openworld_yoloe_coreml.py",
             "scripts/export_composition_coreml.py",
             "scripts/export_charm_coreml.py",
-            "models/gaic-cropper/export_coreml.py",
         ]:
             py_src = (ROOT.parent / rel).read_text(encoding="utf-8")
-            self.assertIn("linear_quantize_weights", py_src, f"Missing W8A16 quantization in {rel}")
-            self.assertIn("OpLinearQuantizerConfig", py_src, f"Missing OpLinearQuantizerConfig in {rel}")
-            self.assertIn('dtype="int8"', py_src, f"Missing int8 weight dtype in {rel}")
+            self.assertNotIn("linear_quantize_weights", py_src, f"Unexpected weight quantization in {rel}")
 
-        # 2. Priority-ordered evictor registry keeps Charm MPSGraph warm (priority 90) and evicts SigLIP first (priority 10)
+        # 2. Priority-ordered evictor registry + sequential single-model residency on iOS
         evidence = source("Services/CompositionImageEvidence.swift")
         for tok in [
             "final class CompositionImageRenderer: @unchecked Sendable",
@@ -1568,32 +1565,33 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         ]:
             self.assertIn(tok, evidence)
 
-        self.assertIn('registerCacheEvictor(id: "SigLIP", priority: 10)',
-                      source("Services/NeuralSubjectIntelligenceEngine.swift"))
-        self.assertIn('registerCacheEvictor(id: "OpenWorldYOLOE", priority: 20)',
-                      source("Services/OpenWorldSubjectDetector.swift"))
-        self.assertIn('registerCacheEvictor(id: "SAMP", priority: 40)',
-                      source("Services/PhotographicCompositionModel.swift"))
-        self.assertIn('registerCacheEvictor(id: "GAIC", priority: 50)',
-                      source("Services/GAICCompositionModel.swift"))
-        self.assertIn('registerCacheEvictor(id: "Charm", priority: 90)',
-                      source("Services/CharmPhotographicModel.swift"))
-
-        # 3. Vision Foreground Instance Mask downsamples to <=512px upright buffer (cuts ~200MB matting peak)
+        # 3. Full-resolution Foreground Instance Mask + Crash Logger + 3-State Center-Crop Zoom
         ow = source("Services/OpenWorldSubjectDetector.swift")
-        for tok in [
-            "private func makeForegroundMaskInputBuffer(",
-            "maxSide: Int = 512",
-            "CompositionMemoryBudget.ensureHeadroom(",
-            "allowCache: true",
-        ]:
-            self.assertIn(tok, ow)
+        self.assertNotIn("makeForegroundMaskInputBuffer", ow)
+        self.assertIn("VNGenerateForegroundInstanceMaskRequest()", ow)
 
-        # 4. CameraViewModel detaches camera pool CVPixelBuffer in standalone task & uses pressure-only trim on cancel
+        logger = source("Services/CameraLogger.swift")
+        for tok in [
+            "didPreviousSessionExitUncleanly",
+            "readPreviousSessionLogTail",
+            "NSSetUncaughtExceptionHandler",
+            "MXMetricManagerSubscriber",
+            "fsync(",
+        ]:
+            self.assertIn(tok, logger)
+
+        director = source("Services/CameraFramingDirector.swift")
+        for tok in [
+            "enum DirectorZoomState",
+            "computeCenterCropMaxZoom(",
+            "requiresPanBeforeZoom",
+            "dịch máy rồi mới zoom",
+        ]:
+            self.assertIn(tok, director)
+
         vm = source("ViewModels/CameraViewModel.swift")
-        self.assertIn("let detachTask = Task.detached(priority: .userInitiated)", vm)
-        self.assertIn("let ownedSource = await detachTask.value", vm)
-        self.assertIn("NeuralSubjectIntelligenceEngine.shared.scheduleTrimCachesUnderPressure()", vm)
+        self.assertIn("public func runLifecycleStressTest(", vm)
+        self.assertIn("PreviousSessionLogSheetView", source("Views/SettingsSheetView.swift"))
 
 
 if __name__ == "__main__":

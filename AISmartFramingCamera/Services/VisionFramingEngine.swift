@@ -82,7 +82,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private let visionQueue = DispatchQueue(label: "com.alignai.vision", qos: .userInitiated,
                                             autoreleaseFrequency: .workItem)
     private let ingressLock = NSLock()
-    private let context = CIContext(options: [.useSoftwareRenderer: false])
+    private let context = CIContext(options: [.useSoftwareRenderer: false, .cacheIntermediates: false])
     private var busy = false
     private var generation: UInt64 = 0
     private var active = false
@@ -210,6 +210,25 @@ public final class VisionFramingEngine: @unchecked Sendable {
     private var inertialRecovery: (count: Int, timestamp: TimeInterval)?
 
     public init() {}
+
+    /// Giải phóng ngay mọi `CVPixelBuffer` / `CGImage` đang giữ từ camera pool khi ngủ đông hoặc dừng session.
+    public func clearHeldBuffers() {
+        ingressLock.withLock {
+            pendingDetectionDelivery = nil
+            pendingTargetDelivery = nil
+            detectionDeliveryScheduled = false
+            targetDeliveryScheduled = false
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.capturedGeminiFrame = nil
+        }
+        visionQueue.async { [weak self] in
+            guard let self else { return }
+            self.latestBuffer = nil
+            self.seedBuffer = nil
+            self.context.clearCaches()
+        }
+    }
 
     public func refineAnchorBox(around point: CGPoint, in buffer: CVPixelBuffer,
                                 orientation: CGImagePropertyOrientation = .up) -> CGRect? {
@@ -1375,11 +1394,11 @@ public final class VisionFramingEngine: @unchecked Sendable {
         }
 
         if (try? handler.perform(visionRequests)) != nil {
-            // (a) Khuôn mặt
+            // (a) Khuôn mặt (cho phép khuôn mặt nhỏ ở xa từ 1.8% khung để kích hoạt zoom chân dung xa)
             if let faces = faceRequest.results {
-                for face in faces where face.confidence >= 0.45 {
+                for face in faces where face.confidence >= 0.35 {
                     let rect = CompositionPureCalculations.visionToUprightRect(face.boundingBox)
-                    guard rect.width >= 0.035, rect.height >= 0.035, rect.width <= 0.95, rect.height <= 0.95 else { continue }
+                    guard rect.width >= 0.018, rect.height >= 0.018, rect.width <= 0.95, rect.height <= 0.95 else { continue }
                     candidates.append(LiveDetectedEntity(
                         rect: rect,
                         label: "Khuôn mặt",
@@ -1390,21 +1409,22 @@ public final class VisionFramingEngine: @unchecked Sendable {
             }
             result.faceRectangles = candidates.filter { $0.category == .face }.map { $0.rect }
 
-            // (b) Thân người
+            // (b) Thân người (giữ cả người quay lưng / đứng xa chưa lộ rõ mặt khi độ tin cậy thân người >= 0.52)
             let detectedFaces = candidates.filter { $0.category == .face }
             if let humans = humanRequest.results {
-                for obs in humans where obs.confidence >= 0.50 {
+                for obs in humans where obs.confidence >= 0.42 {
                     let rect = CompositionPureCalculations.visionToUprightRect(obs.boundingBox)
-                    guard rect.width >= 0.05, rect.height >= 0.05, rect.width <= 0.95, rect.height <= 0.95 else { continue }
+                    guard rect.width >= 0.035, rect.height >= 0.045, rect.width <= 0.96, rect.height <= 0.96 else { continue }
                     let hasMatchingFace = detectedFaces.contains { face in
                         rect.contains(CGPoint(x: face.rect.midX, y: face.rect.midY)) ||
-                        (abs(face.rect.midX - rect.midX) < rect.width * 0.45 && face.rect.minY <= rect.minY + rect.height * 0.45)
+                        (abs(face.rect.midX - rect.midX) < rect.width * 0.48 && face.rect.minY <= rect.minY + rect.height * 0.48)
                     }
-                    guard hasMatchingFace else { continue }
+                    guard hasMatchingFace || obs.confidence >= 0.52 else { continue }
+                    let boostedConf = hasMatchingFace ? min(0.99, obs.confidence + 0.08) : obs.confidence
                     candidates.append(LiveDetectedEntity(
                         rect: rect,
                         label: "Người",
-                        confidence: obs.confidence,
+                        confidence: boostedConf,
                         category: .human
                     ))
                 }

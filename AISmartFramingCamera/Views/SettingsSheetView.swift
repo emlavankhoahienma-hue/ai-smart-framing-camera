@@ -1923,11 +1923,70 @@ struct AdvancedSettingsSection: View {
     @ObservedObject var viewModel: CameraViewModel
     @Binding var showResetSessionConfirmation: Bool
     @Binding var toastMessage: String?
+    @State private var showPreviousLogSheet: Bool = false
 
     var body: some View {
         VStack(spacing: 16) {
+            crashDiagnosticsAndStressCard
             systemMotionCard
             supportInfoCard
+        }
+        .sheet(isPresented: $showPreviousLogSheet) {
+            PreviousSessionLogSheetView(viewModel: viewModel)
+        }
+    }
+
+    // Card 0: Chẩn đoán Crash, Log phiên trước & Stress Test (>= 30 vòng)
+    private var crashDiagnosticsAndStressCard: some View {
+        SettingsSectionCard(title: "Chẩn đoán Crash & Stress Test", icon: "waveform.path.ecg.rectangle.fill") {
+            VStack(spacing: 0) {
+                SettingsActionRow(
+                    title: "Xem & Chia sẻ Log phiên trước",
+                    subtitle: CameraLogger.didPreviousSessionExitUncleanly
+                        ? "Phát hiện phiên trước thoát bất thường — bấm xem các dòng log cuối"
+                        : "Xem vòng đời Session/Model/Metal, RAM mỗi giây & MetricKit",
+                    icon: "doc.text.magnifyingglass"
+                ) {
+                    showPreviousLogSheet = true
+                }
+
+                dividerLine
+
+                SettingsActionRow(
+                    title: viewModel.isRunningStressTest ? "Đang chạy Stress Test…" : "Chạy Stress Test (32 vòng)",
+                    subtitle: "Tự động vào/ra Camera + chạy Local AI 32 vòng liên tiếp và đo RAM mỗi vòng",
+                    icon: "bolt.heart.fill"
+                ) {
+                    viewModel.runLifecycleStressTest(cycles: 32)
+                }
+
+                if !viewModel.stressTestReportText.isEmpty {
+                    dividerLine
+                    Text(viewModel.stressTestReportText)
+                        .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                        .foregroundColor(AlignTheme.studioAccent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 8)
+                }
+
+                dividerLine
+
+                VStack(spacing: 6) {
+                    infoRow(
+                        label: "RAM hiện tại",
+                        value: String(
+                            format: "%.1f MB · Trống %d MB",
+                            CameraLogger.currentMemoryFootprintMB(),
+                            CameraLogger.currentAvailableMemoryMB()
+                        )
+                    )
+                    infoRow(
+                        label: "Phiên trước",
+                        value: CameraLogger.didPreviousSessionExitUncleanly ? "Thoát bất thường (Unclean)" : "Đóng sạch (Clean)"
+                    )
+                }
+                .padding(.vertical, 8)
+            }
         }
     }
 
@@ -2244,4 +2303,168 @@ struct ActivityShareView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - PREVIOUS SESSION & CRASH DIAGNOSTICS LOG VIEWER
+public struct PreviousSessionLogSheetView: View {
+    @ObservedObject var viewModel: CameraViewModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedLogTab: Int = CameraLogger.hasPreviousSessionLog ? 0 : 1
+    @State private var previousLogText: String = ""
+    @State private var currentLogText: String = ""
+    @State private var shareFileURL: URL? = nil
+    @State private var isSharingFile: Bool = false
+    @State private var copyFeedback: String? = nil
+
+    public init(viewModel: CameraViewModel) {
+        self.viewModel = viewModel
+    }
+
+    public var body: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                statusHeader
+
+                Picker("Nguồn log", selection: $selectedLogTab) {
+                    Text("Log phiên trước").tag(0)
+                    Text("Log phiên hiện tại").tag(1)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+
+                ScrollView {
+                    Text(selectedLogTab == 0 ? previousLogText : currentLogText)
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundColor(Color(white: 0.92))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(12)
+                }
+                .background(Color.white.opacity(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(.horizontal, 16)
+
+                actionToolbar
+            }
+            .padding(.vertical, 10)
+            .background(AlignTheme.studioCanvas.ignoresSafeArea())
+            .navigationTitle("Chẩn đoán & Log")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Đóng") {
+                        dismiss()
+                    }
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(AlignTheme.studioAccent)
+                }
+            }
+            .onAppear {
+                CameraLogger.lifecycle("VIEW_APPEAR", detail: "PreviousSessionLogSheetView", category: .general)
+                reloadLogs()
+            }
+            .onDisappear {
+                CameraLogger.lifecycle("VIEW_DISAPPEAR", detail: "PreviousSessionLogSheetView", category: .general)
+            }
+            .sheet(isPresented: $isSharingFile) {
+                if let url = shareFileURL {
+                    ActivityShareView(activityItems: [url])
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var statusHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: CameraLogger.didPreviousSessionExitUncleanly ? "exclamationmark.triangle.fill" : "checkmark.shield.fill")
+                    .foregroundColor(CameraLogger.didPreviousSessionExitUncleanly ? .orange : .green)
+                Text(
+                    CameraLogger.didPreviousSessionExitUncleanly
+                        ? "Phiên trước thoát bất thường (Crash / Jetsam OOM)"
+                        : "Phiên trước đóng bình thường"
+                )
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white)
+                Spacer()
+            }
+            if !viewModel.stressTestReportText.isEmpty {
+                Text(viewModel.stressTestReportText)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundColor(AlignTheme.studioAccent)
+            }
+            if let feedback = copyFeedback {
+                Text(feedback)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.green)
+            }
+        }
+        .padding(12)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 16)
+    }
+
+    private var actionToolbar: some View {
+        HStack(spacing: 10) {
+            Button {
+                if let url = CameraLogger.exportCombinedDiagnosticsFileURL() {
+                    shareFileURL = url
+                    isSharingFile = true
+                }
+            } label: {
+                Label("Chia sẻ Log", systemImage: "square.and.arrow.up")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(AlignTheme.studioAccent)
+                    .foregroundColor(.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
+            Button {
+                UIPasteboard.general.string = (selectedLogTab == 0 ? previousLogText : currentLogText)
+                copyFeedback = "Đã sao chép log vào bộ nhớ tạm"
+            } label: {
+                Label("Sao chép", systemImage: "doc.on.doc")
+                    .font(.system(size: 13, weight: .medium))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.white.opacity(0.10))
+                    .foregroundColor(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
+            Button {
+                reloadLogs()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 14, weight: .semibold))
+                    .padding(10)
+                    .background(Color.white.opacity(0.10))
+                    .foregroundColor(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
+            Button {
+                CameraLogger.clearLogs()
+                reloadLogs()
+                copyFeedback = "Đã xóa log cũ"
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 14, weight: .semibold))
+                    .padding(10)
+                    .background(Color.red.opacity(0.22))
+                    .foregroundColor(.red)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        }
+        .padding(.horizontal, 16)
+    }
+
+    private func reloadLogs() {
+        previousLogText = CameraLogger.readPreviousSessionLogTail(maxLines: 200)
+        currentLogText = CameraLogger.readCurrentSessionLogTail(maxLines: 200)
+    }
 }

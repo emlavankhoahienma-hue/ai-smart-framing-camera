@@ -3,7 +3,7 @@
   "protected": [
     {
       "path": "AISmartFramingCamera/Services/VisionFramingEngine.swift",
-      "sha256": "d895c7cb4a448e6336ccd6a5c3b5442efa300cfff012c48c882bf0803b632fbb"
+      "sha256": "3790184a61b8a0b6c63a448d01a360d56430f1295139e2d25f74918beaa96fe1"
     },
     {
       "path": "AISmartFramingCamera/Services/SpatialTrackingEngine.swift",
@@ -31,7 +31,7 @@
     },
     {
       "path": "AISmartFramingCamera/Services/DeviceMotionService.swift",
-      "sha256": "fdf7fb7c930e2d271bb458ed33d3ce63a1b1b423ceca8ce9d48abdefd80ef4aa"
+      "sha256": "dac0cbe4bda412e241e986ccb4479f7623fd95ea446089cb2ad9baa545a6c0d9"
     },
     {
       "path": "AISmartFramingCamera/Services/VisualOdometryEngine.swift",
@@ -39,13 +39,13 @@
     },
     {
       "path": "AISmartFramingCamera/Services/CameraService.swift",
-      "sha256": "60658294f89e42f871719704b7ad9a934d739cc4d5fc5843a11848395c94ebd6"
+      "sha256": "5129140a6871d83aa392afffa39be78654c6abb5f28a7fd1eb5ea32b4f37ff4d"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,",
       "end": "    private func evaluateAlignment(at point: CGPoint) {",
-      "sha256": "9459b7de3a210ea80a73cd8f56368294fa33207952f706666db377ed17590c36"
+      "sha256": "9bf46272fe7e7b4d89a5116b16609a7f4ef758161454b72d9f609537ba7452c5"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
@@ -57,7 +57,7 @@
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "82d463ab2892c085c117b03bb77a22009cf47decc8fbf1bdc1ae0eae29380473"
+      "sha256": "8c452ff28358557b5658991b71ffbe356cbcdfc6d836836254c0a90532f855cf"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",

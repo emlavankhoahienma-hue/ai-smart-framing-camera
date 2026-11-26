@@ -1,0 +1,492 @@
+[
+  {
+    "index": 1,
+    "file": "01_single_person_9x16_117744.jpg",
+    "category": "single_person",
+    "coco_id": 117744,
+    "width": 359,
+    "height": 640,
+    "aspect_tag": "9x16",
+    "aspect_ratio": 0.5609
+  },
+  {
+    "index": 2,
+    "file": "02_single_person_16x9_051712.jpg",
+    "category": "single_person",
+    "coco_id": 51712,
+    "width": 640,
+    "height": 368,
+    "aspect_tag": "16x9",
+    "aspect_ratio": 1.7391
+  },
+  {
+    "index": 3,
+    "file": "03_single_person_3x4_017905.jpg",
+    "category": "single_person",
+    "coco_id": 17905,
+    "width": 480,
+    "height": 640,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.75
+  },
+  {
+    "index": 4,
+    "file": "04_single_person_4x3_029187.jpg",
+    "category": "single_person",
+    "coco_id": 29187,
+    "width": 640,
+    "height": 491,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3035
+  },
+  {
+    "index": 5,
+    "file": "05_multi_person_9x16_536038.jpg",
+    "category": "multi_person",
+    "coco_id": 536038,
+    "width": 358,
+    "height": 640,
+    "aspect_tag": "9x16",
+    "aspect_ratio": 0.5594
+  },
+  {
+    "index": 6,
+    "file": "06_multi_person_16x9_047740.jpg",
+    "category": "multi_person",
+    "coco_id": 47740,
+    "width": 640,
+    "height": 359,
+    "aspect_tag": "16x9",
+    "aspect_ratio": 1.7827
+  },
+  {
+    "index": 7,
+    "file": "07_multi_person_3x4_006763.jpg",
+    "category": "multi_person",
+    "coco_id": 6763,
+    "width": 375,
+    "height": 500,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.75
+  },
+  {
+    "index": 8,
+    "file": "08_multi_person_4x3_002153.jpg",
+    "category": "multi_person",
+    "coco_id": 2153,
+    "width": 640,
+    "height": 480,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 9,
+    "file": "09_closeup_portrait_3x4_152214.jpg",
+    "category": "closeup_portrait",
+    "coco_id": 152214,
+    "width": 480,
+    "height": 640,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.75
+  },
+  {
+    "index": 10,
+    "file": "10_closeup_portrait_16x9_553788.jpg",
+    "category": "closeup_portrait",
+    "coco_id": 553788,
+    "width": 640,
+    "height": 363,
+    "aspect_tag": "16x9",
+    "aspect_ratio": 1.7631
+  },
+  {
+    "index": 11,
+    "file": "11_closeup_portrait_4x3_130599.jpg",
+    "category": "closeup_portrait",
+    "coco_id": 130599,
+    "width": 640,
+    "height": 480,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 12,
+    "file": "12_closeup_portrait_3x4_257896.jpg",
+    "category": "closeup_portrait",
+    "coco_id": 257896,
+    "width": 480,
+    "height": 640,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.75
+  },
+  {
+    "index": 13,
+    "file": "13_distant_fullbody_16x9_074457.jpg",
+    "category": "distant_fullbody",
+    "coco_id": 74457,
+    "width": 640,
+    "height": 364,
+    "aspect_tag": "16x9",
+    "aspect_ratio": 1.7582
+  },
+  {
+    "index": 14,
+    "file": "14_distant_fullbody_3x4_252507.jpg",
+    "category": "distant_fullbody",
+    "coco_id": 252507,
+    "width": 375,
+    "height": 500,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.75
+  },
+  {
+    "index": 15,
+    "file": "15_distant_fullbody_4x3_013774.jpg",
+    "category": "distant_fullbody",
+    "coco_id": 13774,
+    "width": 640,
+    "height": 480,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 16,
+    "file": "16_distant_fullbody_4x3_034452.jpg",
+    "category": "distant_fullbody",
+    "coco_id": 34452,
+    "width": 640,
+    "height": 480,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 17,
+    "file": "17_small_distant_object_3x4_032811.jpg",
+    "category": "small_distant_object",
+    "coco_id": 32811,
+    "width": 375,
+    "height": 500,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.75
+  },
+  {
+    "index": 18,
+    "file": "18_small_distant_object_4x3_011122.jpg",
+    "category": "small_distant_object",
+    "coco_id": 11122,
+    "width": 640,
+    "height": 480,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 19,
+    "file": "19_small_distant_object_3x4_360943.jpg",
+    "category": "small_distant_object",
+    "coco_id": 360943,
+    "width": 501,
+    "height": 640,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.7828
+  },
+  {
+    "index": 20,
+    "file": "20_small_distant_object_3x4_427649.jpg",
+    "category": "small_distant_object",
+    "coco_id": 427649,
+    "width": 480,
+    "height": 640,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.75
+  },
+  {
+    "index": 21,
+    "file": "21_animal_16x9_046378.jpg",
+    "category": "animal",
+    "coco_id": 46378,
+    "width": 640,
+    "height": 360,
+    "aspect_tag": "16x9",
+    "aspect_ratio": 1.7778
+  },
+  {
+    "index": 22,
+    "file": "22_animal_3x4_016502.jpg",
+    "category": "animal",
+    "coco_id": 16502,
+    "width": 375,
+    "height": 500,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.75
+  },
+  {
+    "index": 23,
+    "file": "23_animal_4x3_022589.jpg",
+    "category": "animal",
+    "coco_id": 22589,
+    "width": 640,
+    "height": 480,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 24,
+    "file": "24_animal_16x9_122927.jpg",
+    "category": "animal",
+    "coco_id": 122927,
+    "width": 640,
+    "height": 361,
+    "aspect_tag": "16x9",
+    "aspect_ratio": 1.7729
+  },
+  {
+    "index": 25,
+    "file": "25_food_9x16_348708.jpg",
+    "category": "food",
+    "coco_id": 348708,
+    "width": 383,
+    "height": 640,
+    "aspect_tag": "9x16",
+    "aspect_ratio": 0.5984
+  },
+  {
+    "index": 26,
+    "file": "26_food_16x9_005600.jpg",
+    "category": "food",
+    "coco_id": 5600,
+    "width": 640,
+    "height": 361,
+    "aspect_tag": "16x9",
+    "aspect_ratio": 1.7729
+  },
+  {
+    "index": 27,
+    "file": "27_food_3x4_029675.jpg",
+    "category": "food",
+    "coco_id": 29675,
+    "width": 478,
+    "height": 640,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.7469
+  },
+  {
+    "index": 28,
+    "file": "28_food_9x16_084431.jpg",
+    "category": "food",
+    "coco_id": 84431,
+    "width": 361,
+    "height": 640,
+    "aspect_tag": "9x16",
+    "aspect_ratio": 0.5641
+  },
+  {
+    "index": 29,
+    "file": "29_landscape_4x3_023230.jpg",
+    "category": "landscape",
+    "coco_id": 23230,
+    "width": 640,
+    "height": 480,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 30,
+    "file": "30_landscape_landscape_157847.jpg",
+    "category": "landscape",
+    "coco_id": 157847,
+    "width": 640,
+    "height": 385,
+    "aspect_tag": "landscape",
+    "aspect_ratio": 1.6623
+  },
+  {
+    "index": 31,
+    "file": "31_landscape_4x3_500663.jpg",
+    "category": "landscape",
+    "coco_id": 500663,
+    "width": 640,
+    "height": 480,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 32,
+    "file": "32_landscape_4x3_548267.jpg",
+    "category": "landscape",
+    "coco_id": 548267,
+    "width": 640,
+    "height": 480,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 33,
+    "file": "33_edge_subject_9x16_466339.jpg",
+    "category": "edge_subject",
+    "coco_id": 466339,
+    "width": 359,
+    "height": 640,
+    "aspect_tag": "9x16",
+    "aspect_ratio": 0.5609
+  },
+  {
+    "index": 34,
+    "file": "34_edge_subject_16x9_417085.jpg",
+    "category": "edge_subject",
+    "coco_id": 417085,
+    "width": 640,
+    "height": 360,
+    "aspect_tag": "16x9",
+    "aspect_ratio": 1.7778
+  },
+  {
+    "index": 35,
+    "file": "35_edge_subject_4x3_226883.jpg",
+    "category": "edge_subject",
+    "coco_id": 226883,
+    "width": 640,
+    "height": 480,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 36,
+    "file": "36_edge_subject_4x3_022969.jpg",
+    "category": "edge_subject",
+    "coco_id": 22969,
+    "width": 500,
+    "height": 375,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 37,
+    "file": "37_clipped_subject_9x16_505573.jpg",
+    "category": "clipped_subject",
+    "coco_id": 505573,
+    "width": 359,
+    "height": 640,
+    "aspect_tag": "9x16",
+    "aspect_ratio": 0.5609
+  },
+  {
+    "index": 38,
+    "file": "38_clipped_subject_16x9_065485.jpg",
+    "category": "clipped_subject",
+    "coco_id": 65485,
+    "width": 640,
+    "height": 364,
+    "aspect_tag": "16x9",
+    "aspect_ratio": 1.7582
+  },
+  {
+    "index": 39,
+    "file": "39_clipped_subject_3x4_131273.jpg",
+    "category": "clipped_subject",
+    "coco_id": 131273,
+    "width": 480,
+    "height": 640,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.75
+  },
+  {
+    "index": 40,
+    "file": "40_clipped_subject_4x3_001675.jpg",
+    "category": "clipped_subject",
+    "coco_id": 1675,
+    "width": 640,
+    "height": 480,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 41,
+    "file": "41_cluttered_objects_16x9_172595.jpg",
+    "category": "cluttered_objects",
+    "coco_id": 172595,
+    "width": 640,
+    "height": 360,
+    "aspect_tag": "16x9",
+    "aspect_ratio": 1.7778
+  },
+  {
+    "index": 42,
+    "file": "42_cluttered_objects_3x4_177935.jpg",
+    "category": "cluttered_objects",
+    "coco_id": 177935,
+    "width": 480,
+    "height": 640,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.75
+  },
+  {
+    "index": 43,
+    "file": "43_cluttered_objects_3x4_097585.jpg",
+    "category": "cluttered_objects",
+    "coco_id": 97585,
+    "width": 480,
+    "height": 640,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.75
+  },
+  {
+    "index": 44,
+    "file": "44_dark_low_light_4x3_153343.jpg",
+    "category": "dark_low_light",
+    "coco_id": 153343,
+    "width": 640,
+    "height": 480,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 45,
+    "file": "45_dark_low_light_4x3_396518.jpg",
+    "category": "dark_low_light",
+    "coco_id": 396518,
+    "width": 500,
+    "height": 375,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 46,
+    "file": "46_dark_low_light_4x3_530099.jpg",
+    "category": "dark_low_light",
+    "coco_id": 530099,
+    "width": 500,
+    "height": 375,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 47,
+    "file": "47_no_clear_subject_3x4_17195809.jpg",
+    "category": "no_clear_subject",
+    "coco_id": 17195809,
+    "width": 960,
+    "height": 1280,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.75
+  },
+  {
+    "index": 48,
+    "file": "48_no_clear_subject_landscape_195188620.jpg",
+    "category": "no_clear_subject",
+    "coco_id": 195188620,
+    "width": 960,
+    "height": 652,
+    "aspect_tag": "landscape",
+    "aspect_ratio": 1.4724
+  },
+  {
+    "index": 49,
+    "file": "49_no_clear_subject_landscape_113567306.jpg",
+    "category": "no_clear_subject",
+    "coco_id": 113567306,
+    "width": 960,
+    "height": 640,
+    "aspect_tag": "landscape",
+    "aspect_ratio": 1.5
+  }
+]

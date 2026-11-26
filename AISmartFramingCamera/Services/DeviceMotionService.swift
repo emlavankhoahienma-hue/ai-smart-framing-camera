@@ -104,7 +104,10 @@ public final class DeviceMotionService: @unchecked Sendable {
     private func stopIfUnused() {
         if subscribers.isEmpty && !legacyActive && !isHorizonTrackingActive {
             streamGeneration &+= 1
-            manager.stopDeviceMotionUpdates()
+            if manager.isDeviceMotionActive {
+                manager.stopDeviceMotionUpdates()
+                CameraLogger.lifecycle("MOTION_STOP", detail: "200Hz CoreMotion idle", category: .motion)
+            }
         }
     }
 
@@ -113,6 +116,7 @@ public final class DeviceMotionService: @unchecked Sendable {
         streamGeneration &+= 1
         let epoch = streamGeneration
         manager.deviceMotionUpdateInterval = 1.0 / 200.0
+        CameraLogger.lifecycle("MOTION_START", detail: "200Hz xArbitraryZVertical subscribers=\(subscribers.count)", category: .motion)
         manager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: queue) { [weak self] motion, _ in
             guard let self, let motion else { return }
 

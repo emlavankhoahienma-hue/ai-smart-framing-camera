@@ -55,6 +55,9 @@ final class CharmPhotographicModel {
             if includingPositions {
                 SharedPositionCache.shared.clear()
             }
+            if evicted {
+                CompositionMemoryBudget.emitLifecycle("MODEL_UNLOAD", "CharmAesthetics")
+            }
             return evicted
         }
 
@@ -73,6 +76,7 @@ final class CharmPhotographicModel {
             guard let loaded = try? CharmPhotographicModel(url: url, positionURL: positionURL) else {
                 return nil
             }
+            CompositionMemoryBudget.emitLifecycle("MODEL_LOAD", "CharmAesthetics (FP16 MPSGraph)")
             if CompositionMemoryBudget.shouldRetainModelCache(
                 minimumAvailableBytes: CompositionMemoryBudget.charmRetainThresholdBytes
             ) {

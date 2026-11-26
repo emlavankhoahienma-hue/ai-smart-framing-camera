@@ -12,6 +12,9 @@ import CoreImage
 public final class YOLODetectionEngine: @unchecked Sendable {
     public static let shared = YOLODetectionEngine()
     private let modelLock = NSLock()
+    /// Serializes CoreML/ANE prediction and Metal `CIContext` rendering across `visionQueue` and `analysisQueue`
+    /// so two background queues never invoke or release the same `VNCoreMLModel`/`MLModel` concurrently on Run #2+.
+    private let inferenceLock = NSRecursiveLock()
     private var yoloCoreMLModel: VNCoreMLModel?
     private var yoloNativeMLModel: MLModel?
     private var secondaryDedicatedModel: MLModel?
@@ -19,7 +22,12 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     private var isDedicatedYOLO26ANE: Bool = false
     private var loadedModelName: String?
     private var hasLoggedExperimentC: Bool = false
-    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+    private let ciContext = CIContext(options: [
+        .useSoftwareRenderer: false,
+        .cacheIntermediates: false,
+        .priorityRequestLow: true
+    ])
+    private static let letterboxGrayPad = CIImage(color: CIColor(red: 114.0 / 255.0, green: 114.0 / 255.0, blue: 114.0 / 255.0, alpha: 1.0))
     private var bufferPool: CVPixelBufferPool?
     private var bufferPoolSize: (w: Int, h: Int) = (0, 0)
     private let poolLock = NSLock()
@@ -45,7 +53,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     }
 
     private func makeModel(named name: String, computeUnits: MLComputeUnits) -> (vnModel: VNCoreMLModel?, mlModel: MLModel?, isDedicated: Bool)? {
-        guard let url = Bundle.main.url(forResource: name, withExtension: "mlmodelc") else { return nil }
+        guard let url = CompositionResourceLocator.url(forResource: name, withExtension: "mlmodelc") else { return nil }
         do {
             let config = MLModelConfiguration()
             config.computeUnits = computeUnits
@@ -53,6 +61,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             let mlModel = try MLModel(contentsOf: url, configuration: config)
             let isDedicated = name.hasPrefix("yolov26") || name.hasPrefix("yolo26")
             let vnModel = isDedicated ? nil : try? VNCoreMLModel(for: mlModel)
+            CameraLogger.lifecycle("MODEL_LOAD", detail: "YOLO \(name) (dedicated=\(isDedicated))", category: .ai)
             return (vnModel, mlModel, isDedicated)
         } catch {
             CameraLogger.warning("Không nạp được \(name): \(error)", category: .ai)
@@ -63,10 +72,47 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     public var hasYOLOModel: Bool { modelLock.withLock { yoloCoreMLModel != nil || yoloNativeMLModel != nil || loadedModelName != nil } }
     public var activeModelName: String { modelLock.withLock { loadedModelName ?? "Apple Vision" } }
 
+    /// Releases secondary model weights, Metal CIContext intermediates, and excess CVPixelBufferPool surfaces on hibernate/background.
+    public func releaseTransientCaches(unloadPrimaryToo: Bool = false) {
+        inferenceLock.lock()
+        defer { inferenceLock.unlock() }
+        var unloaded: [String] = []
+        modelLock.withLock {
+            if let secName = secondaryDedicatedModelName, secondaryDedicatedModel != nil {
+                unloaded.append(secName)
+            }
+            secondaryDedicatedModel = nil
+            secondaryDedicatedModelName = nil
+            if unloadPrimaryToo {
+                if let prim = loadedModelName, (yoloCoreMLModel != nil || yoloNativeMLModel != nil) {
+                    unloaded.append(prim)
+                }
+                yoloCoreMLModel = nil
+                yoloNativeMLModel = nil
+            }
+        }
+        poolLock.withLock {
+            if let pool = bufferPool {
+                CVPixelBufferPoolFlush(pool, .excessBuffers)
+            }
+            if unloadPrimaryToo {
+                bufferPool = nil
+                bufferPoolSize = (0, 0)
+            }
+        }
+        ciContext.clearCaches()
+        if !unloaded.isEmpty {
+            CameraLogger.lifecycle("MODEL_UNLOAD", detail: "YOLO [\(unloaded.joined(separator: ","))]", category: .ai)
+        }
+    }
+
     func detectObjects(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation = .up,
                        cancellation: CompositionAnalysisCancellation) -> [NeuralSubjectCandidate] {
         guard !cancellation.isCancelled, CVPixelBufferGetWidth(pixelBuffer) > 32,
               CVPixelBufferGetHeight(pixelBuffer) > 32 else { return [] }
+        inferenceLock.lock()
+        defer { inferenceLock.unlock() }
+        guard !cancellation.isCancelled else { return [] }
         var (vnModel, nativeModel, isDedicated, savedName) = modelLock.withLock {
             (yoloCoreMLModel, yoloNativeMLModel, isDedicatedYOLO26ANE, loadedModelName)
         }
@@ -99,6 +145,12 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     func detectPhotographicObjects(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation,
                                    depthGrid: [Double]? = nil, depthSide: Int = 0,
                                    cancellation: CompositionAnalysisCancellation) -> [NeuralSubjectCandidate] {
+        guard !cancellation.isCancelled else { return [] }
+        inferenceLock.lock()
+        defer {
+            ciContext.clearCaches()
+            inferenceLock.unlock()
+        }
         guard !cancellation.isCancelled else { return [] }
         let process = ProcessInfo.processInfo
         if process.thermalState == .serious || process.thermalState == .critical || process.isLowPowerModeEnabled {
@@ -167,7 +219,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         let primaryName = modelLock.withLock { loadedModelName }
         let secondaryOrder = isHighMemory ? ["yolov26_ane", "yolov26_416_fp16"] : ["yolov26_416_fp16", "yolov26_ane"]
         guard let secondaryName = secondaryOrder.first(where: {
-            $0 != primaryName && Bundle.main.url(forResource: $0, withExtension: "mlmodelc") != nil
+            $0 != primaryName && CompositionResourceLocator.url(forResource: $0, withExtension: "mlmodelc") != nil
         }) else {
             return Self.fuseDetectionsWithDepthNMS(primaryCandidates, depthGrid: depthGrid, depthSide: depthSide)
         }
@@ -307,17 +359,23 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         return (640, 640)
     }
 
+    private struct DedicatedLetterboxFrame {
+        let buffer: CVPixelBuffer
+        let orientedWidth: Double
+        let orientedHeight: Double
+    }
+
     private func getResizedPixelBuffer(
         from sourceBuffer: CVPixelBuffer,
         targetWidth: Int,
         targetHeight: Int,
         orientation: CGImagePropertyOrientation = .up
-    ) -> CVPixelBuffer? {
+    ) -> DedicatedLetterboxFrame? {
         guard targetWidth > 0, targetHeight > 0 else { return nil }
         let srcW = CVPixelBufferGetWidth(sourceBuffer)
         let srcH = CVPixelBufferGetHeight(sourceBuffer)
         if srcW == targetWidth && srcH == targetHeight && orientation == .up {
-            return sourceBuffer
+            return DedicatedLetterboxFrame(buffer: sourceBuffer, orientedWidth: Double(srcW), orientedHeight: Double(srcH))
         }
 
         var destinationBuffer: CVPixelBuffer?
@@ -369,11 +427,20 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         let extent = ciImage.extent
         guard extent.width > 0, extent.height > 0 else { return nil }
         let normalizedOrigin = ciImage.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
-        let scaleX = CGFloat(targetWidth) / extent.width
-        let scaleY = CGFloat(targetHeight) / extent.height
-        let scaled = normalizedOrigin.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-        ciContext.render(scaled, to: dest)
-        return dest
+        // Aspect-preserving YOLO letterbox (gray 114/255) instead of distorting non-square 3:4 / 9:16 / 4:3 / 16:9 frames
+        let scale = min(CGFloat(targetWidth) / extent.width, CGFloat(targetHeight) / extent.height)
+        let validW = extent.width * scale
+        let validH = extent.height * scale
+        let padX = (CGFloat(targetWidth) - validW) * 0.5
+        let padY = (CGFloat(targetHeight) - validH) * 0.5
+        let targetBounds = CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight)
+        let scaled = normalizedOrigin
+            .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            .transformed(by: CGAffineTransform(translationX: padX, y: padY))
+            .composited(over: Self.letterboxGrayPad.cropped(to: targetBounds))
+            .cropped(to: targetBounds)
+        ciContext.render(scaled, to: dest, bounds: targetBounds, colorSpace: CGColorSpaceCreateDeviceRGB())
+        return DedicatedLetterboxFrame(buffer: dest, orientedWidth: Double(extent.width), orientedHeight: Double(extent.height))
     }
 
     private func detectWithDedicatedANE(
@@ -386,12 +453,13 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         guard !cancellation.isCancelled else { return [] }
         let targetSize = inputSize(for: model, modelName: modelName)
         guard targetSize.width > 0, targetSize.height > 0 else { return [] }
-        guard let bufferToFeed = getResizedPixelBuffer(
+        guard let letterboxed = getResizedPixelBuffer(
             from: pixelBuffer,
             targetWidth: targetSize.width,
             targetHeight: targetSize.height,
             orientation: orientation
         ) else { return [] }
+        let bufferToFeed = letterboxed.buffer
         let feedW = CVPixelBufferGetWidth(bufferToFeed)
         let feedH = CVPixelBufferGetHeight(bufferToFeed)
         guard feedW == targetSize.width, feedH == targetSize.height else {
@@ -409,7 +477,16 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             }
             let isLowLight = SmartSceneExposureEngine.estimateSceneLuminance(from: pixelBuffer) < 0.35
             let dynamicThreshold = isLowLight ? CompositionTuning.yoloLowLightConfidenceThreshold : CompositionTuning.yoloConfidenceThreshold
-            return parseDedicatedANETensors(coords: coordsArray, conf: confArray, threshold: dynamicThreshold, cancellation: cancellation)
+            return parseDedicatedANETensors(
+                coords: coordsArray,
+                conf: confArray,
+                threshold: dynamicThreshold,
+                orientedWidth: letterboxed.orientedWidth,
+                orientedHeight: letterboxed.orientedHeight,
+                modelWidth: Double(targetSize.width),
+                modelHeight: Double(targetSize.height),
+                cancellation: cancellation
+            )
         } catch {
             if cancellation.isCancelled { return [] }
             CameraLogger.error("Lỗi suy luận YOLOv26 ANE Dedicated Model", error: error, category: .ai)
@@ -421,6 +498,10 @@ public final class YOLODetectionEngine: @unchecked Sendable {
         coords: MLMultiArray,
         conf: MLMultiArray,
         threshold: Float = CompositionTuning.yoloConfidenceThreshold,
+        orientedWidth: Double,
+        orientedHeight: Double,
+        modelWidth: Double,
+        modelHeight: Double,
         cancellation: CompositionAnalysisCancellation
     ) -> [NeuralSubjectCandidate] {
         if !hasLoggedExperimentC {
@@ -487,10 +568,17 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                 let cy = CGFloat(Float(coordsPtr[coordBoxBase + 1 * coordElemStride]))
                 let w = CGFloat(Float(coordsPtr[coordBoxBase + 2 * coordElemStride]))
                 let h = CGFloat(Float(coordsPtr[coordBoxBase + 3 * coordElemStride]))
-                let rawRect = CompositionPureCalculations.decodeYOLORawBox(cx: cx, cy: cy, w: w, h: h)
+                let rawLetterboxRect = CompositionPureCalculations.decodeYOLORawBox(cx: cx, cy: cy, w: w, h: h)
+                let rawRect = CompositionPureCalculations.unpadOrientedLetterbox(
+                    normalizedRect: rawLetterboxRect,
+                    orientedWidth: orientedWidth,
+                    orientedHeight: orientedHeight,
+                    modelWidth: modelWidth,
+                    modelHeight: modelHeight
+                )
                 guard let uiRect = clippedValidBox(rawRect) else { continue }
                 let area = uiRect.width * uiRect.height
-                guard area >= 0.006 && area <= 0.95 else { continue }
+                guard area >= 0.0020 && area <= 0.96 else { continue }
                 let category = mapDedicatedClassIdToCategory(maxClassId)
                 let label = localizeDedicatedClassId(maxClassId)
                 let prominence = calculateYOLOProminenceScore(rect: uiRect, confidence: maxScore, category: category, rawLabel: label)
@@ -518,10 +606,17 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                 let cy = CGFloat(coordsPtr[coordBoxBase + 1 * coordElemStride])
                 let w = CGFloat(coordsPtr[coordBoxBase + 2 * coordElemStride])
                 let h = CGFloat(coordsPtr[coordBoxBase + 3 * coordElemStride])
-                let rawRect = CompositionPureCalculations.decodeYOLORawBox(cx: cx, cy: cy, w: w, h: h)
+                let rawLetterboxRect = CompositionPureCalculations.decodeYOLORawBox(cx: cx, cy: cy, w: w, h: h)
+                let rawRect = CompositionPureCalculations.unpadOrientedLetterbox(
+                    normalizedRect: rawLetterboxRect,
+                    orientedWidth: orientedWidth,
+                    orientedHeight: orientedHeight,
+                    modelWidth: modelWidth,
+                    modelHeight: modelHeight
+                )
                 guard let uiRect = clippedValidBox(rawRect) else { continue }
                 let area = uiRect.width * uiRect.height
-                guard area >= 0.006 && area <= 0.95 else { continue }
+                guard area >= 0.0020 && area <= 0.96 else { continue }
                 let category = mapDedicatedClassIdToCategory(maxClassId)
                 let label = localizeDedicatedClassId(maxClassId)
                 let prominence = calculateYOLOProminenceScore(rect: uiRect, confidence: maxScore, category: category, rawLabel: label)
@@ -576,13 +671,14 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     ) -> [NeuralSubjectCandidate] {
         let bufferW = Double(CVPixelBufferGetWidth(pixelBuffer))
         let bufferH = Double(CVPixelBufferGetHeight(pixelBuffer))
+        let modelSide = Double(modelLock.withLock { yoloNativeMLModel }.map { inputSize(for: $0).width } ?? 640)
 
         if photographic {
             CompositionExperiments.logExperimentD(
                 bufferWidth: Int(bufferW),
                 bufferHeight: Int(bufferH),
-                modelInputWidth: 640,
-                modelInputHeight: 640,
+                modelInputWidth: Int(modelSide),
+                modelInputHeight: Int(modelSide),
                 cropAndScaleOption: "scaleFit"
             )
         }
@@ -607,25 +703,20 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                     // Chuyen doi he toa do Vision (Goc duoi-trai) sang UI Camera (Goc tren-trai)
                     let visionRect = CompositionPureCalculations.visionToUprightRect(obs.boundingBox)
                     
-                    // Hoan nguyen vien den letterbox khi dung .scaleFit
-                    let rawRect: CGRect
-                    if photographic {
-                        let isPortrait = (orientation == .right || orientation == .left || orientation == .rightMirrored || orientation == .leftMirrored) || (bufferH > bufferW)
-                        rawRect = CompositionPureCalculations.unpadLetterbox(
-                            normalizedRect: visionRect,
-                            sourceWidth: bufferW,
-                            sourceHeight: bufferH,
-                            modelSize: 640.0,
-                            isPortraitOrientation: isPortrait
-                        )
-                    } else {
-                        rawRect = visionRect
-                    }
+                    // Luon hoan nguyen vien letterbox (.scaleFit) theo dung orientation thuc te cua buffer,
+                    // bao toan ty le khong meo hinh tren moi anh 3:4, 9:16, 4:3, 16:9!
+                    let rawRect = CompositionPureCalculations.unpadLetterbox(
+                        normalizedRect: visionRect,
+                        sourceWidth: bufferW,
+                        sourceHeight: bufferH,
+                        modelSize: modelSide,
+                        orientation: orientation
+                    )
                     
                     guard let uiRect = self.clippedValidBox(rawRect) else { continue }
-                    guard uiRect.width >= 0.022, uiRect.height >= 0.022, uiRect.width <= 0.95, uiRect.height <= 0.95 else { continue }
+                    guard uiRect.width >= 0.014, uiRect.height >= 0.014, uiRect.width <= 1.0, uiRect.height <= 1.0 else { continue }
                     let aspectRatio = uiRect.width / max(0.001, uiRect.height)
-                    guard aspectRatio >= 0.15 && aspectRatio <= 6.5 else { continue }
+                    guard aspectRatio >= 0.10 && aspectRatio <= 8.0 else { continue }
                     
                     let score = self.calculateYOLOProminenceScore(rect: uiRect, confidence: confidence, category: category, rawLabel: topLabel.identifier)
                     
@@ -640,7 +731,8 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             }
         }
         
-        request.imageCropAndScaleOption = photographic ? .scaleFit : .scaleFill
+        // Luon dung .scaleFit de bao toan ty le vat the tren anh khong vuong (khong bao gio .scaleFill keo meo!)
+        request.imageCropAndScaleOption = .scaleFit
         
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         do {
@@ -843,6 +935,13 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     }
     
     private func clippedValidBox(_ rect: CGRect) -> CGRect? {
-        return CompositionPureCalculations.validateAndClipBox(rawRect: rect)
+        return CompositionPureCalculations.validateAndClipBox(
+            rawRect: rect,
+            minDimension: 0.014,
+            maxDimension: 1.0,
+            minAspect: 0.10,
+            maxAspect: 8.0,
+            minVisibleFraction: 0.32
+        )
     }
 }

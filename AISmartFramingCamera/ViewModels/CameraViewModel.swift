@@ -1001,6 +1001,8 @@ public final class CameraViewModel: ObservableObject {
         ensurePhotoboothSlotArraySize()
         let idx = max(0, min(photoboothStripConfig.layout.slotCount - 1, photoboothActiveSlotIndex))
         photoboothSlots[idx] = PhotoboothSlotPhoto(image: item.processedImage, isMirrored: false)
+        // Release full-res rawImage + processedImage holder so Photobooth does not retain duplicate 12MP/48MP CGImages
+        latestCapturedPhoto = nil
 
         if let nextEmpty = photoboothSlots.firstIndex(where: { $0 == nil }) {
             photoboothActiveSlotIndex = nextEmpty
@@ -1785,16 +1787,19 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isShowingGyroCalibration: Bool = false {
         didSet { updateCameraHibernationState() }
     }
-    private let horizonMotionManager = CMMotionManager()
+    @Published public var isShowingCrashDiagnosticsSheet: Bool = false {
+        didSet { updateCameraHibernationState() }
+    }
+    @Published public var showAbnormalExitBanner: Bool = false
+    @Published public var isRunningStressTest: Bool = false
+    @Published public var stressTestStatusText: String = ""
+    @Published public var stressTestReportText: String = ""
+    private var stressTestTask: Task<Void, Never>? = nil
     private var hasTriggeredLevelHaptic: Bool = false
     private var lastLevelHapticTime: TimeInterval = -.infinity
 
     /// Đồng bộ vòng đời Thước Cân Bằng qua duy nhất `DeviceMotionService.shared` (1 CMMotionManager toàn app).
     public func syncHorizonLevelerLifecycle() {
-        // Dừng manager phụ cũ để tránh xung đột hai CMMotionManager song song theo khuyến nghị Apple CoreMotion.
-        if horizonMotionManager.isDeviceMotionActive {
-            horizonMotionManager.stopDeviceMotionUpdates()
-        }
         horizonLevelerService.isHapticsEnabled = isProximityHapticsEnabled && !isAISessionActive && !isShutterPressing
         horizonLevelerService.onLevelStateUpdated = { [weak self] roll, level in
             Task { @MainActor [weak self] in
@@ -2552,6 +2557,7 @@ public final class CameraViewModel: ObservableObject {
     public func updateCameraHibernationState() {
         let shouldHibernate = isShowingSettings
             || isShowingGyroCalibration
+            || isShowingCrashDiagnosticsSheet
             || isCompositionRuleSheetPresented
             || isShowingPhotoDetail
             || isShowingGallerySheet
@@ -2574,20 +2580,26 @@ public final class CameraViewModel: ObservableObject {
             if ultraSharpProgressString != nil {
                 cancelUltraSharpCapture()
             }
-            // 2. Giải phóng bộ nhớ đồ họa tạm
+            // 2. Giải phóng toàn bộ buffer camera pool, texture Metal và cache model CoreML đang giữ
             proPhotoService.setPollingPaused(true)
             horizonLevelerService.stop()
             frameProcessor.clearBuffers()
+            visionEngine.clearHeldBuffers()
+            previewContainerView?.setHibernating(true)
+            YOLODetectionEngine.shared.releaseTransientCaches()
+            CameraFramingDirector.resetTemporalState()
+            NeuralSubjectIntelligenceEngine.shared.scheduleReleaseAllModelCaches()
             updateFrameProcessingConfiguration()
-            CameraLogger.info("Camera chuyển sang chế độ ngủ đông (Standby: 0% CPU/AI)", category: .general)
+            CameraLogger.lifecycle("CAMERA_HIBERNATE_ENTER", detail: "Standby buffers & models flushed", category: .general)
         } else {
             // Waking up
+            previewContainerView?.setHibernating(false)
             if isProPhotoModeEnabled {
                 proPhotoService.setPollingPaused(false)
             }
             syncHorizonLevelerLifecycle()
             updateFrameProcessingConfiguration()
-            CameraLogger.info("Camera thức dậy, khôi phục pipeline 60fps tức thì", category: .general)
+            CameraLogger.lifecycle("CAMERA_HIBERNATE_EXIT", detail: "Viewfinder resumed", category: .general)
             Task { @MainActor [weak self] in
                 await Task.yield()
                 self?.presentPendingMediaPreviewIfPossible()
@@ -2612,6 +2624,15 @@ public final class CameraViewModel: ObservableObject {
     }
 
     public func handleScenePhaseChange(_ phase: ScenePhase) {
+        let phaseLabel: String = {
+            switch phase {
+            case .active: return "active"
+            case .inactive: return "inactive"
+            case .background: return "background"
+            @unknown default: return "unknown"
+            }
+        }()
+        CameraLogger.lifecycle("SCENE_PHASE", detail: phaseLabel, category: .general)
         let isBackground = (phase == .background)
         isAppInBackground = isBackground
         updateCameraHibernationState()
@@ -2626,6 +2647,10 @@ public final class CameraViewModel: ObservableObject {
                 cameraService.stopRecordingVideo()
             }
             suspendSpatialTracking()
+            frameProcessor.clearBuffers()
+            visionEngine.clearHeldBuffers()
+            YOLODetectionEngine.shared.releaseTransientCaches()
+            NeuralSubjectIntelligenceEngine.shared.scheduleReleaseAllModelCaches()
             cameraService.stop()
         } else if phase == .active {
             SpatialTrackingEngine.shared.prepare()
@@ -2947,8 +2972,19 @@ public final class CameraViewModel: ObservableObject {
 
         setupCallbacks()
         setupMotionCallbacks()
-        startHorizonLeveler()
         syncHorizonLevelerLifecycle()
+        self.showAbnormalExitBanner = CameraLogger.shouldShowAbnormalExitBanner()
+        CameraLogger.registerSessionStateProvider { [weak self] in
+            guard let self else { return "vm=nil" }
+            return String(
+                format: "session=%d hibernate=%d ai=%@ zoom=%.2fx livePhoto=%d",
+                self.cameraService.isSessionRunning ? 1 : 0,
+                self.isCameraHibernating ? 1 : 0,
+                String(describing: self.aiSessionState),
+                self.displayZoom,
+                self.isLivePhotoEnabled ? 1 : 0
+            )
+        }
     }
 
     private func updateFrameProcessingConfiguration() {
@@ -3250,6 +3286,12 @@ public final class CameraViewModel: ObservableObject {
 
     private func startCamera() {
         cameraService.delegate = self
+        // Idempotent re-entry guard: if session is already running (e.g. repeated CameraMainView.onAppear),
+        // do NOT reconfigure inputs/outputs or clobber active displayZoom.
+        if cameraService.isSessionRunning {
+            isCameraReady = true
+            return
+        }
         cameraService.setupSession { [weak self] success in
             guard let self = self else { return }
             guard success else {
@@ -3332,46 +3374,31 @@ public final class CameraViewModel: ObservableObject {
     }
 
     // MARK: - AVCaptureVideoPreviewLayer Coordinate Mapping
-    /// Chuyen doi bounding box chuan hoa [0...1] upright (goc tren-trai) sang toa do hien thi tren preview layer
+    /// Chuyen doi bounding box chuan hoa [0...1] upright (goc tren-trai, da mirror tren camera truoc) sang toa do hien thi tren preview layer.
+    /// Luu y: `videoDataOutput` da dat `isVideoMirrored = true` tren camera truoc (`CameraService.swift`), nen dung `previewLayer.layerRectConverted`
+    /// tren camera truoc se mirror X lan thu 2 lam lat nguoc box sang phia doi dien!
     public func convertMetadataRectToLayerRect(_ uprightRect: CGRect, in screenSize: CGSize) -> CGRect {
         guard !uprightRect.isEmpty, !uprightRect.isNull else { return .zero }
-        let metadataOutputRect = CompositionPureCalculations.uprightToMetadataOutputRect(uprightRect)
-
-        if let previewLayer = self.previewLayer, previewLayer.bounds.width > 0 && previewLayer.bounds.height > 0 {
+        if !isFrontCamera, let previewLayer = self.previewLayer, previewLayer.bounds.width > 0 && previewLayer.bounds.height > 0 {
+            let metadataOutputRect = CompositionPureCalculations.uprightToMetadataOutputRect(uprightRect)
             let converted = previewLayer.layerRectConverted(fromMetadataOutputRect: metadataOutputRect)
             if converted.width > 0 && converted.height > 0 && !converted.origin.x.isNaN && !converted.origin.y.isNaN {
                 return converted
             }
         }
-
-        // Fallback khi chua co previewLayer: su dung ty le aspect-fill cua camera buffer
-        let aspect = SpatialTrackingEngine.shared.currentBufferAspect
-        let scale = max(screenSize.width / aspect, screenSize.height)
-        let midX = screenSize.width / 2.0
-        let midY = screenSize.height / 2.0
-
-        let posX = (uprightRect.midX - 0.5) * scale * aspect + midX
-        let posY = (uprightRect.midY - 0.5) * scale + midY
-        let boxW = uprightRect.width * scale * aspect
-        let boxH = uprightRect.height * scale
-
-        return CGRect(x: posX - boxW / 2.0,
-                      y: posY - boxH / 2.0,
-                      width: max(0, boxW),
-                      height: max(0, boxH))
+        return ARFramingOverlayView.convertBufferRectToScreen(uprightRect, in: screenSize)
     }
 
-    /// Chuyen doi diem Upright sang toa do man hinh Preview Layer (dung layerPointConverted hoac fallback)
+    /// Chuyen doi diem Upright sang toa do man hinh Preview Layer (tranh double-mirror tren camera truoc)
     public func convertUprightPointToLayerPoint(_ uprightPoint: CGPoint, in screenSize: CGSize) -> CGPoint {
-        if let previewLayer = self.previewLayer, previewLayer.bounds.width > 0 && previewLayer.bounds.height > 0 {
+        if !isFrontCamera, let previewLayer = self.previewLayer, previewLayer.bounds.width > 0 && previewLayer.bounds.height > 0 {
             let devPt = CompositionPureCalculations.uprightToCaptureDevicePoint(uprightPoint)
             let layerPt = previewLayer.layerPointConverted(fromCaptureDevicePoint: devPt)
             if layerPt.x.isFinite && layerPt.y.isFinite {
                 return layerPt
             }
         }
-        let aspect = SpatialTrackingEngine.shared.currentBufferAspect
-        return TrackingGeometry.screenPoint(uprightPoint, size: screenSize, aspect: aspect)
+        return ARFramingOverlayView.convertBufferPointToScreen(uprightPoint, in: screenSize)
     }
 
     public func cancelAIZoomForGesture() {
@@ -4012,10 +4039,14 @@ public final class CameraViewModel: ObservableObject {
         localAnalysisCancellation = nil
         aiFilterRankingTask?.cancel()
         aiFilterRankingTask = nil
+        CameraFramingDirector.resetTemporalState()
         if hadActiveLocalWork && !restarting {
             NeuralSubjectIntelligenceEngine.shared.scheduleTrimCachesUnderPressure()
         }
         visionEngine.stopTrackingObject()
+        if !restarting {
+            visionEngine.clearHeldBuffers()
+        }
         SpatialTrackingEngine.shared.stopTracking()
         if !restarting {
             haptics.triggerSelectionChange()
@@ -4091,10 +4122,13 @@ public final class CameraViewModel: ObservableObject {
         localAnalysisCancellation = nil
         aiFilterRankingTask?.cancel()
         aiFilterRankingTask = nil
-        if hadActiveLocalWork {
-            NeuralSubjectIntelligenceEngine.shared.scheduleReleaseAllModelCaches()
-        }
+        CameraFramingDirector.resetTemporalState()
+        // Always release held specialist models & Vision buffers on suspend regardless of hadActiveLocalWork
+        _ = hadActiveLocalWork
+        NeuralSubjectIntelligenceEngine.shared.scheduleReleaseAllModelCaches()
+        YOLODetectionEngine.shared.releaseTransientCaches()
         visionEngine.stopTrackingObject()
+        visionEngine.clearHeldBuffers()
         visionEngine.captureNextFrameForGemini = false
         visionEngine.onFrameCapturedForAI = nil
         visionEngine.onFrameCapturedForAIWithSource = nil
@@ -4906,7 +4940,16 @@ public final class CameraViewModel: ObservableObject {
         var sourceAimPoint = plan.aimPointInSource
         let planDistFromCenter = hypot(sourceAimPoint.x - 0.5, sourceAimPoint.y - 0.5)
 
-        var effectiveZoom = plan.zoom
+        // When off-center subject caps immediate center-crop zoom (`requiresPanBeforeZoom`), `plan.postPanZoom`
+        // holds the full post-pan zoom to ramp to AFTER the user aligns the reticle (`lockHardTarget()`).
+        let plannedTargetZoom: CGFloat = {
+            if plan.requiresPanBeforeZoom, let postPan = plan.postPanZoom, postPan > plan.zoom + 0.10 {
+                return postPan
+            }
+            return plan.zoom
+        }()
+
+        var effectiveZoom = plannedTargetZoom
         // Smart Zoom-Out: Khi chủ thể quá sát/tràn viền ở tiêu cự hiện tại (ví dụ đang ở 2x/3x hoặc sát rìa 1x), cho phép lùi về 1x hoặc 0.5x
         let subRect = plan.subjectRect
         let crampedArea = subRect.width * subRect.height
@@ -5068,8 +5111,14 @@ public final class CameraViewModel: ObservableObject {
         if let seed = pinTrackingBox {
             setSubjectCropBounds(plan.cropProtectionRect, seedBox: seed)
         }
-        // Không zoom trước khi người dùng đưa tâm trắng vào khớp tâm mục tiêu.
-        // Khi người dùng di chuyển máy khớp tâm, lockHardTarget() sẽ kích hoạt triggerZoomRevealAnimation() + applyPlannedEVBiasIfNeeded().
+        // Nếu cần Zoom-OUT (mở rộng góc 0.5x/1.0x khi chủ thể quá lớn hoặc bị cắt), thực thi ngay lập tức
+        // vì zoom-out không bao giờ cắt mất chủ thể và giúp người dùng thấy trọn khung hình ngay!
+        if isAutoZoomEnabled && effectiveZoom < displayZoom - 0.10 {
+            applyAISuggestedZoom(effectiveZoom, force: true)
+            hasExecutedAutoZoomForSession = true
+        }
+        // Với Zoom-IN: chờ người dùng đưa tâm trắng vào khớp tâm mục tiêu (tránh cắt mất chủ thể lệch tâm quanh (0.5, 0.5)),
+        // khi khớp tâm `lockHardTarget()` sẽ kích hoạt `triggerZoomRevealAnimation()` mượt mà tới `effectiveZoom`.
         localCompositionAim = nil
         localCompositionAimPoint = nil
         localTrackingSource = nil
@@ -5338,7 +5387,8 @@ public final class CameraViewModel: ObservableObject {
         snapshot: (CVPixelBuffer, TrackingFrameContext), knownSubject: CGRect?, pinGeneration: UInt64) {
         isPreparingPinZoom = true
         let sourceFrame = snapshot.1
-        let held = FaceVerificationFrame(buffer: snapshot.0)
+        let clonedBuffer = Self.clonePixelBuffer(snapshot.0) ?? snapshot.0
+        let held = FaceVerificationFrame(buffer: clonedBuffer)
         let scene = detectedScene
         let companions = detectedFaceRects
         let zoom = displayZoom
@@ -5699,9 +5749,10 @@ public final class CameraViewModel: ObservableObject {
         guard postZoomFaceCount > 0 else { return true }
         guard let snapshot = frameProcessor.latestTrackingFrameSnapshot(),
               snapshot.1.timestamp > max(minimumTimestamp - 0.25, latestOpticalFrameTimestamp - 0.5) else {
-            return false
+            return hasFreshOpticalLock
         }
-        let frame = FaceVerificationFrame(buffer: snapshot.0)
+        let clonedBuffer = Self.clonePixelBuffer(snapshot.0) ?? snapshot.0
+        let frame = FaceVerificationFrame(buffer: clonedBuffer)
         let cancellation = CompositionAnalysisCancellation()
         let timeout = Task {
             do { try await Task.sleep(nanoseconds: 750_000_000) } catch { return }
@@ -5715,21 +5766,29 @@ public final class CameraViewModel: ObservableObject {
                                                     orientation: .up, options: [:])
                 if (try? cancellation.perform(request, with: handler)) != nil,
                    let results = request.results, !results.isEmpty {
-                    return results.filter { $0.confidence >= 0.35 }.map(\.boundingBox)
+                    return results.filter { $0.confidence >= 0.30 }.map(\.boundingBox)
                 }
                 let rightHandler = VNImageRequestHandler(cvPixelBuffer: frame.buffer,
                                                          orientation: .right, options: [:])
                 guard (try? cancellation.perform(request, with: rightHandler)) != nil,
                       let results = request.results else { return nil }
-                return results.filter { $0.confidence >= 0.35 }.map(\.boundingBox)
+                return results.filter { $0.confidence >= 0.30 }.map(\.boundingBox)
             }.value
         } onCancel: { cancellation.cancel() }
-        guard !Task.isCancelled, let faces = rectangles,
-              CACurrentMediaTime() - snapshot.1.timestamp <= 0.50 else { return false }
-        return faces.contains { r in
-            r.minX >= 0.01 && r.maxX <= 0.99 &&
-            r.minY >= 0.01 && r.maxY <= 0.99
+        guard !Task.isCancelled else { return false }
+        if let faces = rectangles, !faces.isEmpty, CACurrentMediaTime() - snapshot.1.timestamp <= 0.65 {
+            return faces.contains { r in
+                r.minX >= 0.01 && r.maxX <= 0.99 &&
+                r.minY >= 0.01 && r.maxY <= 0.99
+            }
         }
+        // Do not revert valid telephoto portrait zooms when distant/profile faces miss VNDetectFaceRectanglesRequest
+        // while optical/spatial tracking still holds the subject safely inside the frame!
+        if hasFreshOpticalLock, let optPt = latestOpticalPoint,
+           (0.06...0.94).contains(optPt.x), (0.06...0.94).contains(optPt.y) {
+            return true
+        }
+        return false
     }
 
     private var currentSubjectCropBox: CGRect? {
@@ -6407,44 +6466,6 @@ public final class CameraViewModel: ObservableObject {
         let newBias = max(-2.0, min(2.0, activeSunExposureBias + delta))
         activeSunExposureBias = newBias
         setExposure(newBias)
-    }
-
-    // MARK: - Thước Cân Bằng Chân Trời (Virtual Horizon Leveler)
-    private func startHorizonLeveler() {
-        guard horizonMotionManager.isDeviceMotionAvailable else { return }
-        horizonMotionManager.deviceMotionUpdateInterval = 1.0 / 15.0
-        horizonMotionManager.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: OperationQueue.main) { [weak self] (motion: CMDeviceMotion?, error: Error?) in
-            // Auto capture needs current gravity even when its overlay is hidden.
-            guard let self = self, let motion = motion, !self.isCameraHibernating else { return }
-            let gx = Double(motion.gravity.x)
-            let gy = Double(motion.gravity.y)
-            let rawRoll = atan2(gx, -gy) * 180.0 / .pi
-            let calibratedRoll = rawRoll - self.gyroRollOffsetDegrees
-
-            // Separate entry/exit angles prevent repeated feedback at 0.8 degrees.
-            let level = abs(calibratedRoll) <= (self.isDeviceLevel ? 1.3 : 0.8)
-
-            // Deadband filtering: only publish when roll change is significant (>= 0.20 deg)
-            // or when device level state transitions, eliminating continuous 30Hz SwiftUI invalidation.
-            if abs(calibratedRoll - self.currentRollDegrees) >= 0.20 || level != self.isDeviceLevel {
-                self.currentRollDegrees = calibratedRoll
-            }
-
-            let now = CACurrentMediaTime()
-            if level && !self.isDeviceLevel && !self.hasTriggeredLevelHaptic {
-                if self.isHorizonLevelerEnabled && self.isProximityHapticsEnabled && !self.isAISessionActive &&
-                   !self.isShutterPressing && now - self.lastLevelHapticTime >= 2 {
-                    self.haptics.triggerSelectionChange()
-                    self.lastLevelHapticTime = now
-                }
-                self.hasTriggeredLevelHaptic = true
-            } else if !level {
-                self.hasTriggeredLevelHaptic = false
-            }
-            if self.isDeviceLevel != level {
-                self.isDeviceLevel = level
-            }
-        }
     }
 
     // MARK: - Gyro Calibration API
@@ -7366,5 +7387,120 @@ extension CameraViewModel: CameraServiceDelegate {
         self.displayZoom = self.cameraService.convertDeviceZoomToDisplayZoom(zoom)
         SpatialTrackingEngine.shared.updateZoomFactor(self.displayZoom)
         finishManualZoomIfSettled(zoom)
+    }
+
+    // MARK: - Automated Re-Entry & Local AI Lifecycle Stress Test (>= 30 Cycles)
+    public func cancelLifecycleStressTest() {
+        stressTestTask?.cancel()
+        stressTestTask = nil
+        isRunningStressTest = false
+        stressTestStatusText = "Đã dừng Stress Test"
+        CameraLogger.lifecycle("STRESS_TEST_CANCELLED", detail: stressTestReportText, category: .general)
+    }
+
+    public func runLifecycleStressTest(cycles: Int = 32) {
+        guard !isRunningStressTest else { return }
+        let totalCycles = max(30, cycles)
+        isShowingSettings = false
+        isShowingCrashDiagnosticsSheet = false
+        updateCameraHibernationState()
+
+        isRunningStressTest = true
+        stressTestReportText = ""
+        stressTestStatusText = "Chuẩn bị chạy Stress Test \(totalCycles) vòng…"
+        let startFootprintMB = CameraLogger.currentMemoryFootprintMB()
+        let startAvailMB = CameraLogger.currentAvailableMemoryMB()
+        CameraLogger.lifecycle(
+            "STRESS_TEST_START",
+            detail: String(format: "cycles=%d startFootMB=%.1f availMB=%d", totalCycles, startFootprintMB, startAvailMB),
+            category: .general
+        )
+
+        stressTestTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var cycleFootprints: [Double] = []
+            cycleFootprints.reserveCapacity(totalCycles)
+
+            for cycle in 1...totalCycles {
+                guard !Task.isCancelled, self.isRunningStressTest else { break }
+
+                // 1) Simulate leaving camera screen (hibernate + model/buffer teardown + session stop/start every 5th cycle)
+                self.cancelAISession()
+                self.frameProcessor.clearBuffers()
+                self.visionEngine.clearHeldBuffers()
+                self.previewContainerView?.setHibernating(true)
+                YOLODetectionEngine.shared.releaseTransientCaches()
+                NeuralSubjectIntelligenceEngine.shared.releaseAllModelCaches()
+                if cycle % 5 == 0 {
+                    self.cameraService.stop()
+                    try? await Task.sleep(nanoseconds: 140_000_000)
+                    guard !Task.isCancelled else { break }
+                    self.cameraService.start { [weak self] running in
+                        self?.isCameraReady = running
+                    }
+                    try? await Task.sleep(nanoseconds: 220_000_000)
+                } else {
+                    try? await Task.sleep(nanoseconds: 80_000_000)
+                }
+
+                // 2) Re-enter camera screen & wake viewfinder
+                self.previewContainerView?.setHibernating(false)
+                self.updateFrameProcessingConfiguration()
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                guard !Task.isCancelled else { break }
+
+                // 3) Run full Local AI analysis on live detached frame (if camera frame available)
+                if let snap = self.frameProcessor.latestTrackingFrameSnapshot(),
+                   let detached = Self.clonePixelBuffer(snap.0) {
+                    let pose = SpatialTrackingEngine.shared.pose(at: snap.1.timestamp) ?? SpatialTrackingEngine.shared.latestPose()
+                    let cancel = CompositionAnalysisCancellation(softTimeoutSeconds: 4.5)
+                    let reqID = UUID()
+                    let zooms = self.cameraService.availableDisplayZoomOptions
+                    let lowMem = self.isLivePhotoEnabled
+                    _ = await NeuralSubjectIntelligenceEngine.shared.analyzeCompositionAsync(
+                        pixelBuffer: detached,
+                        frame: snap.1,
+                        pose: pose,
+                        allowedZooms: zooms,
+                        preferences: [:],
+                        requestID: reqID,
+                        lowMemoryBudget: lowMem,
+                        cancellation: cancel
+                    )
+                }
+                NeuralSubjectIntelligenceEngine.shared.releaseAllModelCaches()
+                YOLODetectionEngine.shared.releaseTransientCaches()
+                self.visionEngine.clearHeldBuffers()
+
+                let footMB = CameraLogger.currentMemoryFootprintMB()
+                let availMB = CameraLogger.currentAvailableMemoryMB()
+                cycleFootprints.append(footMB)
+                let deltaMB = footMB - startFootprintMB
+                self.stressTestStatusText = String(
+                    format: "Stress Test %d/%d · RAM %.1f MB (%+.1f MB) · Trống %d MB",
+                    cycle, totalCycles, footMB, deltaMB, availMB
+                )
+                CameraLogger.lifecycle(
+                    "STRESS_TEST_CYCLE",
+                    detail: String(format: "cycle=%d/%d footMB=%.1f deltaMB=%+.1f availMB=%d", cycle, totalCycles, footMB, deltaMB, availMB),
+                    category: .general
+                )
+            }
+
+            let endFootMB = cycleFootprints.last ?? CameraLogger.currentMemoryFootprintMB()
+            let peakFootMB = cycleFootprints.max() ?? endFootMB
+            let warmupFootMB = cycleFootprints.dropFirst(2).first ?? startFootprintMB
+            let postWarmupGrowthMB = endFootMB - warmupFootMB
+            let summary = String(
+                format: "Hoàn tất %d vòng · Đầu %.1f MB → Sau khởi động %.1f MB → Cuối %.1f MB (đỉnh %.1f MB, chênh sau warmup %+.1f MB)",
+                cycleFootprints.count, startFootprintMB, warmupFootMB, endFootMB, peakFootMB, postWarmupGrowthMB
+            )
+            self.stressTestReportText = summary
+            self.stressTestStatusText = summary
+            self.isRunningStressTest = false
+            self.stressTestTask = nil
+            CameraLogger.lifecycle("STRESS_TEST_DONE", detail: summary, category: .general)
+            self.isShowingCrashDiagnosticsSheet = true
+        }
     }
 }

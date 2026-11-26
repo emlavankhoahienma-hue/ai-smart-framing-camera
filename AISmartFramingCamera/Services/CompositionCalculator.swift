@@ -21,6 +21,9 @@ struct LocalFramingPlan: Sendable {
     let preferenceKey: String
     var recommendedEVBias: CGFloat = 0.0
     var compositionRule: CompositionRule? = nil
+    var requiresPanBeforeZoom: Bool = false
+    var postPanZoom: CGFloat? = nil
+    var zoomStateRaw: String = "NO_ZOOM"
 
     init(
         subjectPoint: CGPoint,
@@ -37,7 +40,10 @@ struct LocalFramingPlan: Sendable {
         usesCenter: Bool,
         preferenceKey: String,
         recommendedEVBias: CGFloat = 0.0,
-        compositionRule: CompositionRule? = nil
+        compositionRule: CompositionRule? = nil,
+        requiresPanBeforeZoom: Bool = false,
+        postPanZoom: CGFloat? = nil,
+        zoomStateRaw: String = "NO_ZOOM"
     ) {
         self.subjectPoint = subjectPoint
         self.subjectRect = subjectRect
@@ -54,13 +60,16 @@ struct LocalFramingPlan: Sendable {
         self.preferenceKey = preferenceKey
         self.recommendedEVBias = recommendedEVBias
         self.compositionRule = compositionRule
+        self.requiresPanBeforeZoom = requiresPanBeforeZoom
+        self.postPanZoom = postPanZoom
+        self.zoomStateRaw = zoomStateRaw
     }
 }
 
 
 enum LocalAutoselectCalibration {
     private static let thresholds: [String: Double] = {
-        guard let url = Bundle.main.url(forResource: "LocalAutoselectThresholds", withExtension: "json"),
+        guard let url = CompositionResourceLocator.url(forResource: "LocalAutoselectThresholds", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let values = try? JSONDecoder().decode([String: Double].self, from: data) else { return [:] }
         return values.filter { $0.value.isFinite && (0.28...1.0).contains($0.value) }

@@ -305,6 +305,13 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         lastRenderParams = nil
     }
 
+    func clearHeldBuffers() {
+        lastProcessedBuffer = nil
+        lastPresentedOnce = false
+        lastRenderParams = nil
+        UnifiedMetalColorEngine.shared.flushCaches()
+    }
+
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         lastPresentedOnce = false
     }
@@ -647,6 +654,19 @@ public class PreviewContainerView: UIView {
         self.metalView = mtk
 
         insertSubview(mtk, belowSubview: focusRingView)
+        CameraLogger.lifecycle("METAL_SETUP", detail: "MTKView \(Int(bounds.width))x\(Int(bounds.height))", category: .capture)
+    }
+
+    public func setHibernating(_ hibernating: Bool) {
+        if hibernating {
+            if metalView?.isPaused == false {
+                metalView?.isPaused = true
+                CameraLogger.lifecycle("METAL_PAUSE", detail: "Camera hibernating", category: .capture)
+            }
+            metalRenderer?.clearHeldBuffers()
+        } else {
+            metalRenderer?.resetPresentationDirtyState()
+        }
     }
 
     public func updateMetalPreviewState(

@@ -43,6 +43,29 @@ enum CompositionMemoryBudget {
         static let shared = EvictorRegistry()
         private let lock = NSLock()
         private var entries: [String: CacheEvictor] = [:]
+        private var lifecycleHook: (@Sendable (String, String) -> Void)?
+        #if os(iOS)
+        private var forceSequentialUnload: Bool = true
+        #else
+        private var forceSequentialUnload: Bool = false
+        #endif
+
+        func setLifecycleHook(_ hook: (@Sendable (String, String) -> Void)?) {
+            lock.withLock { lifecycleHook = hook }
+        }
+
+        func emit(_ event: String, _ detail: String) {
+            let hook = lock.withLock { lifecycleHook }
+            hook?(event, detail)
+        }
+
+        func setForceSequentialUnload(_ enabled: Bool) {
+            lock.withLock { forceSequentialUnload = enabled }
+        }
+
+        var isSequentialUnloadForced: Bool {
+            lock.withLock { forceSequentialUnload }
+        }
 
         func register(id: String, priority: Int, evict: @escaping @Sendable () -> Bool) {
             lock.withLock {
@@ -61,6 +84,29 @@ enum CompositionMemoryBudget {
 
     static func registerCacheEvictor(id: String, priority: Int, evict: @escaping @Sendable () -> Bool) {
         EvictorRegistry.shared.register(id: id, priority: priority, evict: evict)
+    }
+
+    static func setLifecycleObserver(_ observer: (@Sendable (String, String) -> Void)?) {
+        EvictorRegistry.shared.setLifecycleHook(observer)
+    }
+
+    static func emitLifecycle(_ event: String, detail: String) {
+        EvictorRegistry.shared.emit(event, detail)
+    }
+
+    static func setForceSequentialModelUnload(_ enabled: Bool) {
+        EvictorRegistry.shared.setForceSequentialUnload(enabled)
+    }
+
+    static func evictAllRegisteredCaches() -> [String] {
+        CompositionImageRenderer.clearSharedCaches()
+        var evicted: [String] = []
+        for entry in EvictorRegistry.shared.sortedEvictors(excluding: nil) {
+            if autoreleasepool(invoking: { entry.evict() }) {
+                evicted.append(entry.id)
+            }
+        }
+        return evicted
     }
 
     static func availableBytes() -> Int {
@@ -83,12 +129,15 @@ enum CompositionMemoryBudget {
     }
 
     /// Returns true when the current device can safely keep a compiled singleton model cached
-    /// without approaching iOS Jetsam limits.
+    /// without accumulating multi-model dirty heaps across live camera + photo capture sessions.
     static func shouldRetainModelCache(minimumAvailableBytes: Int) -> Bool {
+        if EvictorRegistry.shared.isSequentialUnloadForced {
+            return false
+        }
         guard ProcessInfo.processInfo.thermalState != .critical else { return false }
         let bytes = availableBytes()
         if bytes == 0 {
-            return ProcessInfo.processInfo.physicalMemory >= 8_000_000_000
+            return ProcessInfo.processInfo.physicalMemory >= 12_000_000_000
         }
         return bytes >= minimumAvailableBytes
     }
@@ -248,11 +297,15 @@ final class CompositionImageRenderer: @unchecked Sendable {
 
     @discardableResult
     func releaseDepthModel() -> Bool {
-        depthModelLock.withLock {
+        let evicted = depthModelLock.withLock { () -> Bool in
             let hadModel = (cachedDepthModel != nil)
             cachedDepthModel = nil
             return hadModel
         }
+        if evicted {
+            CompositionMemoryBudget.emitLifecycle("MODEL_UNLOAD", "DepthAnythingV2")
+        }
+        return evicted
     }
 
     func clearCaches() {
@@ -293,7 +346,7 @@ final class CompositionImageRenderer: @unchecked Sendable {
             "DepthAnythingV2",
             "DepthAnything",
         ]
-        guard let url = candidateNames.compactMap({ Bundle.main.url(forResource: $0, withExtension: "mlmodelc") }).first else {
+        guard let url = candidateNames.compactMap({ CompositionResourceLocator.url(forResource: $0, withExtension: "mlmodelc") }).first else {
             return nil
         }
         return autoreleasepool {
@@ -311,10 +364,13 @@ final class CompositionImageRenderer: @unchecked Sendable {
                 let config = MLModelConfiguration()
                 config.computeUnits = .cpuAndNeuralEngine
                 guard let loaded = try? MLModel(contentsOf: url, configuration: config) else { return nil }
+                CompositionMemoryBudget.emitLifecycle("MODEL_LOAD", "DepthAnythingV2 (ANE)")
                 if CompositionMemoryBudget.shouldRetainModelCache(
                     minimumAvailableBytes: CompositionMemoryBudget.depthRetainThresholdBytes
                 ) {
                     depthModelLock.withLock { cachedDepthModel = loaded }
+                } else {
+                    defer { CompositionMemoryBudget.emitLifecycle("MODEL_SCOPE_RELEASE", "DepthAnythingV2") }
                 }
                 return loaded
             }()

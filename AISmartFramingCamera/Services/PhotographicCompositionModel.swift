@@ -37,12 +37,16 @@ final class PhotographicCompositionModel {
 
         @discardableResult
         func clear() -> Bool {
-            lock.withLock {
+            let evicted = lock.withLock { () -> Bool in
                 let had = (cachedInstance != nil)
                 cachedURL = nil
                 cachedInstance = nil
                 return had
             }
+            if evicted {
+                CompositionMemoryBudget.emitLifecycle("MODEL_UNLOAD", "SAMPComposition")
+            }
+            return evicted
         }
 
         func getOrLoad(url: URL) -> PhotographicCompositionModel? {
@@ -56,6 +60,7 @@ final class PhotographicCompositionModel {
                 return nil
             }
             guard let loaded = try? PhotographicCompositionModel(url: url) else { return nil }
+            CompositionMemoryBudget.emitLifecycle("MODEL_LOAD", "SAMPComposition (FP16)")
             if CompositionMemoryBudget.shouldRetainModelCache(
                 minimumAvailableBytes: CompositionMemoryBudget.sampRetainThresholdBytes
             ) {
