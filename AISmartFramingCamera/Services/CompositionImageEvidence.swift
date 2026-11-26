@@ -90,7 +90,7 @@ enum CompositionMemoryBudget {
         EvictorRegistry.shared.setLifecycleHook(observer)
     }
 
-    static func emitLifecycle(_ event: String, detail: String) {
+    static func emitLifecycle(_ event: String, _ detail: String) {
         EvictorRegistry.shared.emit(event, detail)
     }
 
@@ -351,6 +351,12 @@ final class CompositionImageRenderer: @unchecked Sendable {
         }
         return autoreleasepool {
             guard !cancellation.isCancelled else { return nil }
+            var loadedUncached = false
+            defer {
+                if loadedUncached {
+                    CompositionMemoryBudget.emitLifecycle("MODEL_UNLOAD", "DepthAnythingV2 (scope exit)")
+                }
+            }
             let model: MLModel? = {
                 if let cached = depthModelLock.withLock({ cachedDepthModel }) {
                     return cached
@@ -370,7 +376,7 @@ final class CompositionImageRenderer: @unchecked Sendable {
                 ) {
                     depthModelLock.withLock { cachedDepthModel = loaded }
                 } else {
-                    defer { CompositionMemoryBudget.emitLifecycle("MODEL_SCOPE_RELEASE", "DepthAnythingV2") }
+                    loadedUncached = true
                 }
                 return loaded
             }()
