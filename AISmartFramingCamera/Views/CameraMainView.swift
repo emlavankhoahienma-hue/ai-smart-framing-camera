@@ -526,50 +526,78 @@ public struct CameraMainView: View {
                         .zIndex(601)
                 }
 
-                // Abnormal Exit Crash Log Banner (auto-surfaces last lines of previous session log after any crash/OOM)
+                // Abnormal Exit Crash Forensics Card (auto-surfaces exact last step + 1-tap Copy/View after any crash/OOM)
                 if viewModel.showAbnormalExitBanner && !Self.isUISnapshotMode {
                     VStack {
-                        HStack(spacing: 10) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundColor(.orange)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 14, weight: .bold))
+                                    .foregroundColor(.orange)
+                                    .padding(.top, 1)
 
-                            Button {
-                                viewModel.showAbnormalExitBanner = false
-                                viewModel.isShowingCrashDiagnosticsSheet = true
-                            } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Phiên trước thoát bất thường")
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Phiên trước bị văng — Đã lưu log pháp y")
                                         .font(.system(size: 12.5, weight: .bold))
                                         .foregroundColor(.white)
-                                    Text("Bấm xem & chia sẻ những dòng log cuối cùng")
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundColor(AlignTheme.studioAccent)
+                                    Text(CameraLogger.lastCrashHeadlineSummary())
+                                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                                        .foregroundColor(Color(white: 0.88))
+                                        .lineLimit(3)
+                                }
+
+                                Spacer(minLength: 4)
+
+                                Button {
+                                    withAnimation(.easeOut(duration: 0.2)) {
+                                        viewModel.showAbnormalExitBanner = false
+                                    }
+                                    CameraLogger.acknowledgeAbnormalExitBanner()
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 17))
+                                        .foregroundColor(Color.white.opacity(0.65))
                                 }
                             }
 
-                            Spacer(minLength: 4)
-
-                            Button {
-                                withAnimation(.easeOut(duration: 0.2)) {
+                            HStack(spacing: 8) {
+                                Button {
                                     viewModel.showAbnormalExitBanner = false
+                                    viewModel.isShowingCrashDiagnosticsSheet = true
+                                } label: {
+                                    Label("Xem & Chia sẻ Log", systemImage: "doc.text.magnifyingglass")
+                                        .font(.system(size: 11.5, weight: .bold))
+                                        .foregroundColor(.black)
+                                        .padding(.horizontal, 11)
+                                        .padding(.vertical, 6)
+                                        .background(AlignTheme.studioAccent)
+                                        .clipShape(Capsule())
                                 }
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 16))
-                                    .foregroundColor(Color.white.opacity(0.6))
+
+                                Button {
+                                    UIPasteboard.general.string = CameraLogger.readPreviousSessionQuickCopy(maxLines: 90)
+                                    viewModel.showHUDNotice("Đã copy 90 dòng log cuối (dán gửi ngay)")
+                                } label: {
+                                    Label("Copy nhanh", systemImage: "doc.on.doc.fill")
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 11)
+                                        .padding(.vertical, 6)
+                                        .background(Color.white.opacity(0.16))
+                                        .clipShape(Capsule())
+                                }
                             }
                         }
                         .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(Color.black.opacity(0.86))
+                        .padding(.vertical, 11)
+                        .background(Color.black.opacity(0.92))
                         .overlay(
                             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(Color.orange.opacity(0.55), lineWidth: 1)
+                                .stroke(Color.orange.opacity(0.75), lineWidth: 1.2)
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         .padding(.horizontal, 14)
-                        .padding(.top, max(8, geometry.safeAreaInsets.top + 6))
+                        .padding(.top, max(54, geometry.safeAreaInsets.top + 8))
 
                         Spacer()
                     }

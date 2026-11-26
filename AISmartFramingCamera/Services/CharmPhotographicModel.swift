@@ -71,9 +71,15 @@ final class CharmPhotographicModel {
                 minimumBytes: CompositionMemoryBudget.charmLoadHeadroomBytes,
                 excluding: "Charm"
             ) else {
+                CompositionMemoryBudget.emitTrace("Charm.SKIP_LOW_RAM", "avail=\(CompositionMemoryBudget.availableMB())MB")
                 return nil
             }
-            guard let loaded = try? CharmPhotographicModel(url: url, positionURL: positionURL) else {
+            CompositionMemoryBudget.emitTrace("Charm.LOAD_BEGIN", url.lastPathComponent)
+            let loaded: CharmPhotographicModel
+            do {
+                loaded = try CharmPhotographicModel(url: url, positionURL: positionURL)
+            } catch {
+                CompositionMemoryBudget.emitTrace("Charm.LOAD_FAIL", "\(error)")
                 return nil
             }
             CompositionMemoryBudget.emitLifecycle("MODEL_LOAD", "CharmAesthetics (FP16 MPSGraph)")
@@ -147,8 +153,15 @@ final class CharmPhotographicModel {
         guard let provider = try? MLDictionaryFeatureProvider(dictionary: [
                 "patches": MLFeatureValue(multiArray: inputs.patches),
                 "positions": MLFeatureValue(multiArray: inputs.positions)]),
-              !cancellation.isCancelled, let result = try? model.prediction(from: provider),
-              !cancellation.isCancelled,
+              !cancellation.isCancelled else { return nil }
+        let result: MLFeatureProvider
+        do {
+            result = try model.prediction(from: provider)
+        } catch {
+            CompositionMemoryBudget.emitTrace("Charm.PREDICT_FAIL", "\(error)")
+            return nil
+        }
+        guard !cancellation.isCancelled,
               let scores = result.featureValue(for: "aestheticDistribution")?.multiArrayValue, scores.count == 9 else { return nil }
         let values = (0..<9).map { Double(truncating: scores[$0]) }
         let sum = values.reduce(0, +)

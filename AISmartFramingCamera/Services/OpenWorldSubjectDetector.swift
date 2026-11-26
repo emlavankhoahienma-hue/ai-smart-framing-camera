@@ -212,14 +212,23 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
                     minimumBytes: CompositionMemoryBudget.openWorldLoadHeadroomBytes,
                     excluding: "OpenWorldYOLOE"
                 ) else {
+                    CameraLogger.checkpoint("S2a.YOLOE_SKIP_LOW_RAM", detail: "avail=\(CompositionMemoryBudget.availableMB())MB", category: .ai)
                     return nil
                 }
+                let loadSpan = CameraLogger.beginTrace("S2a.YOLOE_LOAD", detail: modelURL.lastPathComponent, category: .ai)
                 let config = MLModelConfiguration()
                 // Baked MobileCLIP2-B Conv2d 512x512 static W8A16 graph runs purely on ANE — keeping it off Metal GPU
                 // prevents MPSGraph heap fragmentation and 60fps viewfinder stalls with zero accuracy loss.
                 config.computeUnits = .cpuAndNeuralEngine
                 config.allowLowPrecisionAccumulationOnGPU = true
-                guard let loaded = try? MLModel(contentsOf: modelURL, configuration: config) else { return nil }
+                let loaded: MLModel
+                do {
+                    loaded = try MLModel(contentsOf: modelURL, configuration: config)
+                } catch {
+                    CameraLogger.endTrace(loadSpan, detail: "ERR=\(error)")
+                    return nil
+                }
+                CameraLogger.endTrace(loadSpan, detail: "ok")
                 CameraLogger.lifecycle("MODEL_LOAD", detail: "OpenWorldPhotoYOLOE (FP16 ANE)", category: .ai)
                 if allowCache && CompositionMemoryBudget.shouldRetainModelCache(
                     minimumAvailableBytes: CompositionMemoryBudget.openWorldRetainThresholdBytes
@@ -232,17 +241,32 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
 
             let inputName = model.modelDescription.inputDescriptionsByName.keys.first ?? "image"
             let modelSide = model.modelDescription.inputDescriptionsByName[inputName]?.imageConstraint?.pixelsWide ?? defaultInputSide
+            let lbSpan = CameraLogger.beginTrace("S2a.YOLOE_LETTERBOX", detail: "side=\(modelSide)", category: .ai)
             guard let letterboxed = makeLetterboxBuffer(from: pixelBuffer, orientation: orientation, targetSide: modelSide) else {
+                CameraLogger.endTrace(lbSpan, detail: "nil")
                 return []
             }
+            CameraLogger.endTrace(lbSpan, detail: "ok")
+            let predSpan = CameraLogger.beginTrace("S2a.YOLOE_PREDICT", detail: "input=\(inputName)", category: .ai)
             guard !cancellation.isCancelled,
                   let provider = try? MLDictionaryFeatureProvider(dictionary: [
                     inputName: MLFeatureValue(pixelBuffer: letterboxed.buffer)
-                  ]),
-                  let output = try? model.prediction(from: provider),
-                  !cancellation.isCancelled else {
+                  ]) else {
+                CameraLogger.endTrace(predSpan, detail: "cancelled_or_provider_nil")
                 return []
             }
+            let output: MLFeatureProvider
+            do {
+                output = try model.prediction(from: provider)
+            } catch {
+                CameraLogger.endTrace(predSpan, detail: "ERR=\(error)")
+                return []
+            }
+            guard !cancellation.isCancelled else {
+                CameraLogger.endTrace(predSpan, detail: "cancelled_post")
+                return []
+            }
+            CameraLogger.endTrace(predSpan, detail: "ok")
 
             let outVal = output.featureValue(for: "detections")
                 ?? output.featureNames.compactMap({ output.featureValue(for: $0) }).first(where: { $0.multiArrayValue != nil })

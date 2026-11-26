@@ -1960,6 +1960,16 @@ struct AdvancedSettingsSection: View {
                     viewModel.runLifecycleStressTest(cycles: 32)
                 }
 
+                if CameraLogger.didPreviousSessionExitUncleanly {
+                    dividerLine
+                    Text(CameraLogger.lastCrashHeadlineSummary())
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundColor(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.vertical, 6)
+                }
+
                 if !viewModel.stressTestReportText.isEmpty {
                     dividerLine
                     Text(viewModel.stressTestReportText)
@@ -2389,6 +2399,12 @@ public struct PreviousSessionLogSheetView: View {
                 .foregroundColor(.white)
                 Spacer()
             }
+            if CameraLogger.didPreviousSessionExitUncleanly {
+                Text(CameraLogger.lastCrashHeadlineSummary())
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !viewModel.stressTestReportText.isEmpty {
                 Text(viewModel.stressTestReportText)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -2424,8 +2440,10 @@ public struct PreviousSessionLogSheetView: View {
             }
 
             Button {
-                UIPasteboard.general.string = (selectedLogTab == 0 ? previousLogText : currentLogText)
-                copyFeedback = "Đã sao chép log vào bộ nhớ tạm"
+                UIPasteboard.general.string = (selectedLogTab == 0
+                    ? CameraLogger.readPreviousSessionQuickCopy(maxLines: 120)
+                    : currentLogText)
+                copyFeedback = "Đã sao chép log pháp y vào bộ nhớ tạm"
             } label: {
                 Label("Sao chép", systemImage: "doc.on.doc")
                     .font(.system(size: 13, weight: .medium))
@@ -2464,7 +2482,7 @@ public struct PreviousSessionLogSheetView: View {
     }
 
     private func reloadLogs() {
-        previousLogText = CameraLogger.readPreviousSessionLogTail(maxLines: 200)
-        currentLogText = CameraLogger.readCurrentSessionLogTail(maxLines: 200)
+        previousLogText = CameraLogger.readPreviousSessionLogTail(maxLines: 300)
+        currentLogText = CameraLogger.readCurrentSessionLogTail(maxLines: 260)
     }
 }

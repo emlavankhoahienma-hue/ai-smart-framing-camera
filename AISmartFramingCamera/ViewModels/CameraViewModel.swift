@@ -2058,6 +2058,11 @@ public final class CameraViewModel: ObservableObject {
     public func triggerZoomRevealAnimation(targetZoom: CGFloat) {
         guard targetZoom.isFinite, targetZoom > 0, currentZoom.isFinite,
               !isPinchingZoom, !zoomAwaitingVerification else { return }
+        CameraLogger.checkpoint(
+            "VM.triggerZoomReveal",
+            detail: String(format: "from=%.2fx to=%.2fx", Double(displayZoom), Double(targetZoom)),
+            category: .capture
+        )
         let targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(targetZoom)
         guard abs(targetDeviceZoom - currentZoom) > 0.05 || abs(targetZoom - displayZoom) > 0.05 else { return }
         hasExecutedAutoZoomForSession = true
@@ -2286,6 +2291,11 @@ public final class CameraViewModel: ObservableObject {
 
     private func lockHardTarget() {
         guard !isTargetLocked else { return }
+        CameraLogger.checkpoint(
+            "VM.lockHardTarget",
+            detail: String(format: "dispZoom=%.2fx pendingZoom=%.2fx autoZoom=%d", Double(displayZoom), Double(pendingSuggestedZoom), isAutoZoomEnabled ? 1 : 0),
+            category: .tracking
+        )
         isTargetLocked = true
         lockedTargetPosition = CGPoint(x: 0.5, y: 0.5)
         currentTargetPoint = lockedTargetPosition
@@ -3768,6 +3778,16 @@ public final class CameraViewModel: ObservableObject {
 
     /// Bắt đầu phiên AI khi người dùng bấm nút AI — chỉ phân tích ĐÚNG 1 LẦN duy nhất
     public func startAISession() {
+        CameraLogger.checkpoint(
+            "VM.startAISession",
+            detail: String(
+                format: "tapCount=%d gen=%d state=%@ zoom=%.2fx front=%d livePhoto=%d aiColor=%d cloud=%d hib=%d",
+                aiComposeTimes + 1, aiSessionGeneration + 1, String(describing: aiSessionState),
+                Double(displayZoom), isFrontCamera ? 1 : 0, isLivePhotoEnabled ? 1 : 0,
+                isAIFullColorEnabled ? 1 : 0, useGeminiForAnalysis ? 1 : 0, isCameraHibernating ? 1 : 0
+            ),
+            category: .ai
+        )
         if isCameraHibernating { return }
         if captureMode.isVideo { selectCaptureMode(.photo) }
         if isShutterPressing { isShutterPressing = false }
@@ -4010,6 +4030,12 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func cancelAISessionInternal(restarting: Bool) {
+        CameraLogger.checkpoint(
+            "VM.cancelAISession",
+            detail: "restarting=\(restarting ? 1 : 0) gen=\(aiSessionGeneration) state=\(String(describing: aiSessionState))",
+            category: .ai
+        )
+        CameraLogger.setHighFrequencyTelemetry(false)
         if plannedEVBias != 0.0 {
             setExposure(0.0)
             plannedEVBias = 0.0
@@ -4096,6 +4122,12 @@ public final class CameraViewModel: ObservableObject {
     /// Called when the camera overlay disappears or the app resigns active.
     /// A resumed CoreMotion reference frame must not inherit the old world ray.
     public func suspendSpatialTracking() {
+        CameraLogger.checkpoint(
+            "VM.suspendSpatialTracking",
+            detail: "gen=\(aiSessionGeneration) state=\(String(describing: aiSessionState)) hib=\(isCameraHibernating ? 1 : 0)",
+            category: .tracking
+        )
+        CameraLogger.setHighFrequencyTelemetry(false)
         unlockHardTargetLock()
         isPinchingZoom = false
         pendingManualZoomTarget = nil
@@ -4603,6 +4635,17 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func beginLocalCompositionAnalysis(source: AITrackingSource) {
+        CameraLogger.setHighFrequencyTelemetry(true)
+        let beginSpan = CameraLogger.beginTrace(
+            "VM.beginLocalAnalysis",
+            detail: String(
+                format: "gen=%d tap=%d buf=%dx%d fmt=0x%x zoom=%.2fx",
+                aiSessionGeneration, aiComposeTimes,
+                CVPixelBufferGetWidth(source.buffer), CVPixelBufferGetHeight(source.buffer),
+                CVPixelBufferGetPixelFormatType(source.buffer), Double(displayZoom)
+            ),
+            category: .ai
+        )
         localAnalysisCompletedAt = nil
         localAnalysisCancellation?.cancel()
         localAnalysisTask?.cancel()
@@ -4619,16 +4662,23 @@ public final class CameraViewModel: ObservableObject {
         // Detach from AVCaptureVideoDataOutput's tiny pool in a standalone task so `source.buffer`
         // is NOT captured by `localAnalysisTask` for the entire 2-5s AI run (returns to pool in <1.5ms).
         let detachTask = Task.detached(priority: .userInitiated) { () -> AITrackingSource in
+            let cloneSpan = CameraLogger.beginTrace("VM.clonePixelBuffer", category: .ai)
             let detachedBuffer = Self.clonePixelBuffer(source.buffer) ?? source.buffer
+            CameraLogger.endTrace(cloneSpan, detail: "cloned=\(detachedBuffer !== source.buffer ? 1 : 0)")
             return AITrackingSource(
                 buffer: detachedBuffer, frame: source.frame, pose: source.pose,
                 subjectRect: source.subjectRect, faceRects: source.faceRects
             )
         }
+        CameraLogger.endTrace(beginSpan, detail: "taskSpawned")
         localAnalysisTask = Task { [weak self] in
+            defer { CameraLogger.setHighFrequencyTelemetry(false) }
             let ownedSource = await detachTask.value
             guard let self, !Task.isCancelled, !cancellation.isCancelled,
-                  self.aiSessionGeneration == generation, self.aiSessionState == .analyzing else { return }
+                  self.aiSessionGeneration == generation, self.aiSessionState == .analyzing else {
+                CameraLogger.checkpoint("VM.localTask_ABORT_PRE", detail: "gen=\(generation)", category: .ai)
+                return
+            }
             self.localTrackingSource = ownedSource
             let preferences = await CompositionPreferenceStore.shared.bonuses()
             guard !Task.isCancelled, !cancellation.isCancelled else {
@@ -4656,6 +4706,7 @@ public final class CameraViewModel: ObservableObject {
             guard !Task.isCancelled, !cancellation.isCancelled,
                   self.aiSessionGeneration == generation, self.aiSessionState == .analyzing,
                   !self.localAnalysisExpired, let result else {
+                CameraLogger.checkpoint("VM.localTask_ABORT_POST", detail: "gen=\(generation) hasRes=\(result != nil ? 1 : 0)", category: .ai)
                 if self.localTrackingSource?.frame.timestamp == ownedSource.frame.timestamp {
                     self.localTrackingSource = nil
                 }
@@ -4907,6 +4958,16 @@ public final class CameraViewModel: ObservableObject {
     }
 
     private func acceptLocalPlan(_ plan: LocalFramingPlan, source: AITrackingSource) {
+        let planSpan = CameraLogger.beginTrace(
+            "VM.acceptLocalPlan",
+            detail: String(
+                format: "zoom=%.2fx postPan=%.2fx panFirst=%d state=%@ conf=%.2f",
+                Double(plan.zoom), Double(plan.postPanZoom ?? plan.zoom),
+                plan.requiresPanBeforeZoom ? 1 : 0, plan.zoomStateRaw, plan.confidence
+            ),
+            category: .ai
+        )
+        defer { CameraLogger.endTrace(planSpan, detail: String(format: "suggestedZoom=%.2fx", Double(aiSuggestedZoom ?? displayZoom))) }
         let hero = localEvidenceCandidates.first(where: {
             abs($0.boundingBox.midX - plan.subjectRect.midX) < 0.04 &&
             abs($0.boundingBox.midY - plan.subjectRect.midY) < 0.04
@@ -5167,6 +5228,12 @@ public final class CameraViewModel: ObservableObject {
                                           source: AITrackingSource?,
                                           trackedPoint: CGPoint? = nil,
                                           pinnedGuideRay: SIMD3<Double>? = nil) {
+        let pinSpan = CameraLogger.beginTrace(
+            "VM.pinTargetAndStartMotion",
+            detail: String(format: "pt=(%.2f,%.2f) hasSrc=%d gen=%llu", target.x, target.y, source != nil ? 1 : 0, targetPinGeneration + 1),
+            category: .tracking
+        )
+        defer { CameraLogger.endTrace(pinSpan, detail: "state=\(String(describing: aiSessionState))") }
         unlockHardTargetLock()
         unlockHandoffStartPoint = nil
         unlockHandoffStartTime = 0
@@ -5818,6 +5885,12 @@ public final class CameraViewModel: ObservableObject {
         guard captureMode == .photo, pendingCaptureMode == nil,
               isCameraReady, !isCameraHibernating,
               aiSessionState == .alignmentPerfect, !isShutterPressing else { return }
+        CameraLogger.setHighFrequencyTelemetry(true)
+        CameraLogger.checkpoint(
+            "VM.executeCapture",
+            detail: String(format: "zoom=%.2fx hiRes=%d", Double(displayZoom), isSuperResolutionRAWEnabled ? 1 : 0),
+            category: .capture
+        )
         autoCaptureTask?.cancel()
         autoCaptureTask = nil
         stateBeforeCapture = aiSessionState
@@ -7186,6 +7259,15 @@ extension CameraViewModel: CameraServiceDelegate {
         // Chuyển sang luồng phụ userInitiated để render CoreImage, không làm đơ Main UI
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
+            let postSpan = CameraLogger.beginTrace(
+                "VM.photoPostProcess",
+                detail: "src=\(photo.width)x\(photo.height) color=\(hasColorEdits ? 1 : 0) wm=\(isMasterWatermark ? 1 : 0) win=\(isWindowed ? 1 : 0)",
+                category: .capture
+            )
+            defer {
+                CameraLogger.endTrace(postSpan, detail: "done")
+                CameraLogger.setHighFrequencyTelemetry(false)
+            }
 
             // 1. Áp dụng cân bằng đường chân trời (Horizon Lock) hoặc giả lập góc siêu rộng 0.5x TRƯỚC khi cắt khung cửa sổ
             // để tọa độ khung cửa sổ trên màn hình khớp 100% với ảnh chụp thực tế.

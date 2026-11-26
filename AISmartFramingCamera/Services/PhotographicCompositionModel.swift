@@ -57,9 +57,17 @@ final class PhotographicCompositionModel {
                 minimumBytes: CompositionMemoryBudget.sampLoadHeadroomBytes,
                 excluding: "SAMP"
             ) else {
+                CompositionMemoryBudget.emitTrace("SAMP.SKIP_LOW_RAM", "avail=\(CompositionMemoryBudget.availableMB())MB")
                 return nil
             }
-            guard let loaded = try? PhotographicCompositionModel(url: url) else { return nil }
+            CompositionMemoryBudget.emitTrace("SAMP.LOAD_BEGIN", url.lastPathComponent)
+            let loaded: PhotographicCompositionModel
+            do {
+                loaded = try PhotographicCompositionModel(url: url)
+            } catch {
+                CompositionMemoryBudget.emitTrace("SAMP.LOAD_FAIL", "\(error)")
+                return nil
+            }
             CompositionMemoryBudget.emitLifecycle("MODEL_LOAD", "SAMPComposition (FP16)")
             if CompositionMemoryBudget.shouldRetainModelCache(
                 minimumAvailableBytes: CompositionMemoryBudget.sampRetainThresholdBytes
@@ -142,9 +150,15 @@ final class PhotographicCompositionModel {
         }
         guard let provider = try? MLDictionaryFeatureProvider(dictionary: [
                 "image": MLFeatureValue(multiArray: imageInput), "saliency": MLFeatureValue(multiArray: input)]),
-              !cancellation.isCancelled,
-              let result = try? model.prediction(from: provider),
-              !cancellation.isCancelled,
+              !cancellation.isCancelled else { return nil }
+        let result: MLFeatureProvider
+        do {
+            result = try model.prediction(from: provider)
+        } catch {
+            CompositionMemoryBudget.emitTrace("SAMP.PREDICT_FAIL", "\(error)")
+            return nil
+        }
+        guard !cancellation.isCancelled,
               let scores = result.featureValue(for: "compositionDistribution")?.multiArrayValue,
               scores.count == 5 else { return nil }
         let distribution = (0..<5).map { Double(truncating: scores[$0]) }

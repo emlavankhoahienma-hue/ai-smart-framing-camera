@@ -273,8 +273,14 @@ public final class VisionFramingEngine: @unchecked Sendable {
             pendingDetectionDelivery = nil
             return generation
         }
+        CameraLogger.checkpoint(
+            "TRACK.start",
+            detail: String(format: "epoch=%llu pt=(%.2f,%.2f) sz=(%.2f,%.2f) hasBuf=%d", epoch, point.x, point.y, size.width, size.height, refiningBuffer != nil ? 1 : 0),
+            category: .tracking
+        )
         visionQueue.async { [weak self] in
             guard let self, self.isCurrent(epoch) else { return }
+            let seedSpan = CameraLogger.beginTrace("TRACK.seed", detail: "epoch=\(epoch)", category: .tracking)
             self.resetTrackingState()
             self.seedPoint = point; self.seedSize = size
             self.seedBuffer = refiningBuffer; self.seedOrientation = orientation
@@ -285,6 +291,7 @@ public final class VisionFramingEngine: @unchecked Sendable {
                 self.seed(in: refiningBuffer, orientation: orientation,
                           timestamp: sourceTimestamp ?? CACurrentMediaTime())
             }
+            CameraLogger.endTrace(seedSpan, detail: "hasRefPrint=\(self.referencePrint != nil ? 1 : 0)")
         }
     }
 
@@ -1158,6 +1165,8 @@ public final class VisionFramingEngine: @unchecked Sendable {
         searchCenter: CGPoint
     ) -> (CGPoint, Double, CGRect)? {
         guard referencePrint != nil else { return nil }
+        let reidSpan = CameraLogger.beginTrace("TRACK.reidentifyWithDetectors", detail: "cat=\(pinnedCategory.rawValue)", category: .tracking)
+        defer { CameraLogger.endTrace(reidSpan) }
         var candidates: [(visionBox: CGRect, category: NeuralSubjectCategory, confidence: Float)] = []
 
         // 1. YOLO CoreML candidates (high accuracy semantic bounding boxes)

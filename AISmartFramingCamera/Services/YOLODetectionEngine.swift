@@ -147,15 +147,26 @@ public final class YOLODetectionEngine: @unchecked Sendable {
                                    depthGrid: [Double]? = nil, depthSide: Int = 0,
                                    cancellation: CompositionAnalysisCancellation) -> [NeuralSubjectCandidate] {
         guard !cancellation.isCancelled else { return [] }
+        let waitStart = ProcessInfo.processInfo.systemUptime
         inferenceLock.lock()
+        let waitMs = (ProcessInfo.processInfo.systemUptime - waitStart) * 1000.0
+        if waitMs > 3.0 {
+            CameraLogger.warning(String(format: "YOLO.inferenceLock contention wait=%.1fms (detectPhoto)", waitMs), category: .ai)
+        }
+        let span = CameraLogger.beginTrace("S0.YOLO_Photo", detail: "w=\(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer)) orient=\(orientation.rawValue)", category: .ai)
         defer {
             ciContext.clearCaches()
             inferenceLock.unlock()
         }
-        guard !cancellation.isCancelled else { return [] }
+        guard !cancellation.isCancelled else {
+            CameraLogger.endTrace(span, detail: "cancelled")
+            return []
+        }
         let process = ProcessInfo.processInfo
         if process.thermalState == .serious || process.thermalState == .critical || process.isLowPowerModeEnabled {
-            return detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
+            let fast = detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
+            CameraLogger.endTrace(span, detail: "thermal_fallback count=\(fast.count)")
+            return fast
         }
 
         let isHighMemory = process.physicalMemory >= 6_000_000_000
@@ -212,7 +223,9 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             return detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
         }
 
-        return Self.fuseDetectionsWithDepthNMS(primaryCandidates, depthGrid: depthGrid, depthSide: depthSide)
+        let fused = Self.fuseDetectionsWithDepthNMS(primaryCandidates, depthGrid: depthGrid, depthSide: depthSide)
+        CameraLogger.endTrace(span, detail: "raw=\(primaryCandidates.count) fused=\(fused.count)")
+        return fused
     }
 
     /// Depth-Weighted IoU NMS: keeps foreground & background overlapping subjects separated when their depth

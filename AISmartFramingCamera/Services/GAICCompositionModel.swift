@@ -58,9 +58,17 @@ final class GAICCompositionModel {
                 minimumBytes: CompositionMemoryBudget.gaicLoadHeadroomBytes,
                 excluding: "GAIC"
             ) else {
+                CompositionMemoryBudget.emitTrace("GAIC.SKIP_LOW_RAM", "avail=\(CompositionMemoryBudget.availableMB())MB")
                 return nil
             }
-            guard let loaded = try? GAICCompositionModel(url: url) else { return nil }
+            CompositionMemoryBudget.emitTrace("GAIC.LOAD_BEGIN", url.lastPathComponent)
+            let loaded: GAICCompositionModel
+            do {
+                loaded = try GAICCompositionModel(url: url)
+            } catch {
+                CompositionMemoryBudget.emitTrace("GAIC.LOAD_FAIL", "\(error)")
+                return nil
+            }
             CompositionMemoryBudget.emitLifecycle("MODEL_LOAD", "GAICCompositionScorer (FP16 ANE)")
             if CompositionMemoryBudget.shouldRetainModelCache(
                 minimumAvailableBytes: CompositionMemoryBudget.gaicRetainThresholdBytes
@@ -151,14 +159,22 @@ final class GAICCompositionModel {
             let end = min(boxes.count, start + Self.maxBoxes)
             let chunk = Array(boxes[start..<end])
             let chunkScores: [Double]? = autoreleasepool {
+                CompositionMemoryBudget.emitTrace("GAIC.PREDICT_BEGIN", "chunk=\(start)..<\(end)/\(boxes.count)")
                 guard let boxArray = fillBoxArray(chunk),
                       let provider = try? MLDictionaryFeatureProvider(dictionary: [
                           "image": imageFeature,
                           "boxes": MLFeatureValue(multiArray: boxArray)
                       ]),
-                      !cancellation.isCancelled,
-                      let result = try? model.prediction(from: provider),
-                      !cancellation.isCancelled,
+                      !cancellation.isCancelled else { return nil }
+                let result: MLFeatureProvider
+                do {
+                    result = try model.prediction(from: provider)
+                } catch {
+                    CompositionMemoryBudget.emitTrace("GAIC.PREDICT_FAIL", "\(error)")
+                    return nil
+                }
+                CompositionMemoryBudget.emitTrace("GAIC.PREDICT_END", "chunk=\(chunk.count)")
+                guard !cancellation.isCancelled,
                       let scoreArray = result.featureValue(for: "scores")?.multiArrayValue,
                       scoreArray.count >= Self.maxBoxes else { return nil }
 

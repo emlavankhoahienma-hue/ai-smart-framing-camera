@@ -160,12 +160,14 @@ private final class SemanticCropRanker: @unchecked Sendable {
             return (nil, [:])
         }
         do {
+            let loadSpan = CameraLogger.beginTrace("SigLIP.LOAD", detail: url.lastPathComponent, category: .ai)
             let config = MLModelConfiguration()
             // Static 224x224 W8A16 ViT runs purely on ANE — keeping SigLIP off Metal GPU prevents
             // MPSGraph heap fragmentation and 60fps viewfinder stalls with 100% identical accuracy.
             config.computeUnits = .cpuAndNeuralEngine
             config.allowLowPrecisionAccumulationOnGPU = true
             let loadedModel = try VNCoreMLModel(for: MLModel(contentsOf: url, configuration: config))
+            CameraLogger.endTrace(loadSpan, detail: "ok")
             CameraLogger.lifecycle("MODEL_LOAD", detail: "SigLIPBaseImage (FP16 ANE)", category: .ai)
             lock.lock()
             // Guard against a concurrent release occurring while MLModel compiled
@@ -788,6 +790,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     public static let shared = NeuralSubjectIntelligenceEngine()
     private let analysisLock = NSRecursiveLock()
     private var lastDiagnosticSnapshot: DetailedCompositionDiagnostic?
+    private var analysisRunSeq: Int = 0
     /// Dedicated serial worker queue with `.workItem` autorelease draining so CoreML/Vision ObjC
     /// allocations never linger on the worker thread between runs and Swift Concurrency never blocks on `analysisLock`.
     private let analysisQueue = DispatchQueue(
@@ -807,6 +810,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     public init() {
         CompositionMemoryBudget.setLifecycleObserver { event, detail in
             CameraLogger.lifecycle(event, detail: detail, category: .ai)
+        }
+        CompositionMemoryBudget.setTraceObserver { phase, detail in
+            CameraLogger.checkpoint(phase, detail: detail, category: .ai)
         }
         #if canImport(UIKit)
         _ = NotificationCenter.default.addObserver(
@@ -916,9 +922,28 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         let lowMem = lowMemoryBudget
         let siglipRetainBytes = lowMemoryBudget ? 520_000_000 : CompositionMemoryBudget.siglipRetainThresholdBytes
         let postRunReserveBytes = lowMemoryBudget ? 420_000_000 : CompositionMemoryBudget.postRunPhotoCaptureReserveBytes
+        let lockWaitStart = ProcessInfo.processInfo.systemUptime
         analysisLock.lock()
+        let lockWaitMs = (ProcessInfo.processInfo.systemUptime - lockWaitStart) * 1000.0
+        analysisRunSeq += 1
+        let runNo = analysisRunSeq
+        let runSpan = CameraLogger.beginTrace(
+            "AI_RUN#\(runNo)",
+            detail: String(
+                format: "req=%@ buf=%dx%d orient=%d zoom=%.2fx lowMem=%d lockWait=%.0fms",
+                String(requestID.uuidString.prefix(8)),
+                CVPixelBufferGetWidth(pixelBuffer),
+                CVPixelBufferGetHeight(pixelBuffer),
+                Int(frame.orientation.rawValue),
+                frame.displayZoom,
+                lowMem ? 1 : 0,
+                lockWaitMs
+            ),
+            category: .ai
+        )
         SemanticCropRanker.shared.beginAnalysis()
         defer {
+            let deferSpan = CameraLogger.beginTrace("S8.PostRunDefer#\(runNo)", category: .ai)
             SemanticCropRanker.shared.finishSession(lowMemoryBudget: lowMemoryBudget)
             if !CompositionMemoryBudget.shouldRetainModelCache(minimumAvailableBytes: postRunReserveBytes) {
                 releaseAllModelCachesLocked()
@@ -932,6 +957,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                     )
                 }
             }
+            CameraLogger.endTrace(deferSpan, detail: "cleaned")
+            CameraLogger.endTrace(runSpan, detail: "finished")
             analysisLock.unlock()
         }
         let started = ProcessInfo.processInfo.systemUptime
@@ -947,11 +974,13 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         }
         // Stage 0 runs inside its own tight autoreleasepool so 9 Vision requests + DepthAnythingV2 + YOLO
         // ObjC intermediates are immediately drained BEFORE OpenWorld/Mask/GAIC/SAMP/Charm allocate.
+        let s0Span = CameraLogger.beginTrace("S0.AnalyzeCapturedFrame#\(runNo)", category: .ai)
         let maybeOutput: NeuralAnalysisOutput? = autoreleasepool {
             guard !cancellation.isCancelled else { return nil }
             return analyzeCapturedFrame(pixelBuffer: pixelBuffer, orientation: frame.orientation,
                                         cancellation: cancellation)
         }
+        CameraLogger.endTrace(s0Span, detail: "cands=\(maybeOutput?.allCandidates.count ?? -1) cancelled=\(cancellation.isCancelled ? 1 : 0)")
         guard !cancellation.isCancelled, let output = maybeOutput else { return nil }
         let tAfterDetect = ProcessInfo.processInfo.systemUptime
         // Choose identity intelligently using spatial SigLIP semantics, pixel clutter/roof/VP maps, and filtered detectors.
@@ -966,6 +995,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         // MEMORY-SAFE STAGE ORDER:
         // 1) SigLIP is ALREADY loaded in RAM by `analyzeCapturedFrame`. Extract spatial semantic profile NOW...
         progress("Đang phân tích ngữ nghĩa & chiều sâu bố cục…")
+        let s1Span = CameraLogger.beginTrace("S1.SigLIP_Spatial#\(runNo)", category: .ai)
         let spatialProfile: SemanticCropRanker.SpatialSemanticProfile = autoreleasepool {
             SemanticCropRanker.shared.spatialProfile(
                 pixelBuffer: pixelBuffer,
@@ -976,6 +1006,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 cancellation: cancellation
             )
         }
+        CameraLogger.endTrace(s1Span, detail: "role=\(spatialProfile.role)")
         let tAfterSigLIP = ProcessInfo.processInfo.systemUptime
         // 2) Keep SigLIP singleton warm across taps when Jetsam headroom is healthy (preventing
         //    ANE/CoreML reload leaks on Run #2/#3); evict immediately only when RAM is constrained.
@@ -989,6 +1020,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
 
         // 3) Run Open-World Photographic YOLOE-26m (curated classes) + iOS 17+ Foreground Instance Mask (512px)
         progress("Đang nhận diện vật thể mở rộng & tách nền tiền cảnh…")
+        let s2Span = CameraLogger.beginTrace("S2.OpenWorld#\(runNo)", category: .ai)
         let openWorldDetections: [DirectorDetection] = autoreleasepool {
             OpenWorldSubjectDetector.shared.detect(
                 pixelBuffer: pixelBuffer,
@@ -997,6 +1029,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 preferSequential: lowMemoryBudget || ProcessInfo.processInfo.physicalMemory < 16_000_000_000
             )
         }
+        CameraLogger.endTrace(s2Span, detail: "owCount=\(openWorldDetections.count)")
         let tAfterOpenWorld = ProcessInfo.processInfo.systemUptime
         let directorDetections: [DirectorDetection] = {
             var list: [DirectorDetection] = output.allCandidates.map { c in
@@ -1084,6 +1117,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         var portraitBounds: CGRect?
         var poseProfile: AnatomicalPoseProfile?
         if hero.category == .human, !hero.isGroup {
+            let s3Span = CameraLogger.beginTrace("S3.BodyPose#\(runNo)", category: .ai)
             autoreleasepool {
                 let poseRequest = VNDetectHumanBodyPoseRequest()
                 let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: frame.orientation, options: [:])
@@ -1097,6 +1131,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                         faces: hero.faceBounds, observations: observations)
                 }
             }
+            CameraLogger.endTrace(s3Span, detail: "hasPose=\(poseProfile != nil ? 1 : 0)")
         }
         if portraitBounds == nil && (hero.category == .human || hero.category == .face) && !hero.isGroup {
             let box = hero.boundingBox
@@ -1273,6 +1308,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         progress("Đang đánh giá bố cục bằng mô hình trên máy…")
         let orientedCI = CIImage(cvPixelBuffer: pixelBuffer).oriented(frame.orientation)
         let tBeforeSearch = ProcessInfo.processInfo.systemUptime
+        let s5Span = CameraLogger.beginTrace("S5.AestheticSearch#\(runNo)", detail: "proposals=\(initialProposals.count)", category: .ai)
         let searchResult: CompositionAestheticSearch.Result? = autoreleasepool {
             let search = CompositionAestheticSearch(renderer: renderer)
             return search.run(proposals: initialProposals,
@@ -1288,6 +1324,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 lowMemoryBudget: lowMem,
                 cancellation: cancellation, progress: progress, refine: { proposals(refining: $0) })
         }
+        CameraLogger.endTrace(s5Span, detail: "ok=\(searchResult != nil ? 1 : 0) views=\(searchResult?.views.count ?? 0)")
         guard let result = searchResult else {
             renderer.clearCaches()
             return nil
@@ -1297,6 +1334,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         // Solve true 3D physical camera pan/tilt + smart optical zoom using Free-Form Neural-Guided Director:
         // fuses OpenWorld YOLOE + DepthAnythingV2 + iOS 17 Foreground Mask + SigLIP clutter avoidance +
         // ALL 256 GAIC boxes + SAMP/Charm aesthetic consensus (no Golden-Ratio straitjacket).
+        let s6Span = CameraLogger.beginTrace("S6.Director#\(runNo)", detail: "dets=\(directorDetections.count)", category: .ai)
         let semanticAffinities = spatialProfile.fullScores.isEmpty ? output.semanticAffinities : spatialProfile.fullScores
         let evaluatedProposalList = result.allEvaluatedViews.map(\.proposal)
         let directorDecision = CameraFramingDirector.direct(
@@ -1313,6 +1351,17 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             allowedZooms: allowedZooms,
             portraitBounds: portraitBounds,
             poseProfile: poseProfile
+        )
+        CameraLogger.endTrace(
+            s6Span,
+            detail: String(
+                format: "hero=%@ role=%@ zoom=%.2fx state=%@ panFirst=%d",
+                directorDecision.heroLabel,
+                directorDecision.role.rawValue,
+                Double(directorDecision.recommendedZoom),
+                directorDecision.zoomState.rawValue,
+                directorDecision.requiresPanBeforeZoom ? 1 : 0
+            )
         )
         lastDiagnosticSnapshot = DetailedCompositionDiagnostic(
             directorDecision: directorDecision,
@@ -2062,12 +2111,28 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         personSegReq.outputPixelFormat = kCVPixelFormatType_OneComponent8
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         var completed = Set<ObjectIdentifier>()
-        for request in [bodies, faces, animals, objectness, attention, classification, horizonReq, contoursReq, personSegReq] as [VNRequest] {
+        let visionRequests: [(String, VNRequest)] = [
+            ("VN.bodies", bodies),
+            ("VN.faces", faces),
+            ("VN.animals", animals),
+            ("VN.objectness", objectness),
+            ("VN.attention", attention),
+            ("VN.classify", classification),
+            ("VN.horizon", horizonReq),
+            ("VN.contours", contoursReq),
+            ("VN.personSeg", personSegReq),
+        ]
+        for (reqName, request) in visionRequests {
             if cancellation.isCancelled { return nil }
-            do { try cancellation.perform(request, with: handler); completed.insert(ObjectIdentifier(request)) }
-            catch {
+            let vnSpan = CameraLogger.beginTrace("S0.\(reqName)", category: .ai)
+            do {
+                try cancellation.perform(request, with: handler)
+                completed.insert(ObjectIdentifier(request))
+                CameraLogger.endTrace(vnSpan, detail: "ok")
+            } catch {
+                CameraLogger.endTrace(vnSpan, detail: "ERR=\(error)")
                 if cancellation.isCancelled { return nil }
-                CameraLogger.warning("Vision bỏ qua một bằng chứng: \(error)", category: .ai)
+                CameraLogger.warning("Vision bỏ qua \(reqName): \(error)", category: .ai)
             }
         }
         let fgMaskBuffer = completed.contains(ObjectIdentifier(personSegReq)) ? personSegReq.results?.first?.pixelBuffer : nil
@@ -2082,9 +2147,12 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             measuredVP = renderer.extractRANSACVanishingPoint(from: cObs, foregroundMask: fgMaskBuffer)
         }
         let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
+        let depthSpan = CameraLogger.beginTrace("S0.DepthV2", category: .ai)
         let measuredDepth: [Double]? = autoreleasepool {
             renderer.estimateMonocularDepth(image: image, side: 64, cancellation: cancellation)
         }
+        CameraLogger.endTrace(depthSpan, detail: "ok=\(measuredDepth != nil ? 1 : 0)")
+        let rasterSpan = CameraLogger.beginTrace("S0.Raster", category: .ai)
         let raster = renderer.raster(image: image,
             saliency: completed.contains(ObjectIdentifier(attention)) ? attention.results?.first?.pixelBuffer : nil,
             objectness: completed.contains(ObjectIdentifier(objectness)) ? objectness.results?.first?.pixelBuffer : nil,
@@ -2092,6 +2160,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             measuredDepth: measuredDepth,
             measuredHorizon: measuredHorizon,
             measuredVanishingPoint: measuredVP)
+        CameraLogger.endTrace(rasterSpan, detail: "ok=\(raster != nil ? 1 : 0)")
         let sceneLuma = SmartSceneExposureEngine.estimateSceneLuminance(from: pixelBuffer)
         let isLowLight = sceneLuma < 0.42
         var candidates = YOLODetectionEngine.shared.detectPhotographicObjects(
@@ -2306,6 +2375,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
         candidates = rankedDistinct(candidates, raster: raster)
         if let group = coherentGroup(candidates, raster: raster) { candidates.insert(group, at: 0) }
         var scene = sceneType(completed.contains(ObjectIdentifier(classification)) ? classification.results ?? [] : [])
+        let siglipSceneSpan = CameraLogger.beginTrace("S0.SigLIP_Scene", category: .ai)
         let (semantics, guidance, didUseSigLIP): ([String: Double], SemanticSceneGuidance, Bool) = autoreleasepool {
             let scores = SemanticCropRanker.shared.sceneEvidence(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
             let semGuidance = SemanticCropRanker.shared.extractSemanticGuidance(scores: scores, candidates: candidates)
@@ -2314,6 +2384,7 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             SemanticCropRanker.shared.endAnalysis()
             return (scores, semGuidance, produced)
         }
+        CameraLogger.endTrace(siglipSceneSpan, detail: "used=\(didUseSigLIP ? 1 : 0) keys=\(semantics.count)")
         if let hint = guidance.primarySceneHint, scene == .general { scene = hint }
         if scene == .general, let hero = candidates.first {
             if hero.category == .human || hero.category == .face {

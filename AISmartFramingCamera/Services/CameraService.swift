@@ -3122,6 +3122,11 @@ public final class CameraService: NSObject {
     // MARK: - Native photo capture
     public func capturePhoto(isDNG: Bool = false, isHEIF: Bool = false,
                              highResolution: Bool = false) {
+        CameraLogger.checkpoint(
+            "CAPTURE_TRIGGER",
+            detail: "dng=\(isDNG ? 1 : 0) heif=\(isHEIF ? 1 : 0) hiRes=\(highResolution ? 1 : 0) livePhoto=\(isLivePhotoMode ? 1 : 0)",
+            category: .capture
+        )
         sessionQueue.async { [weak self] in
             guard let self else { return }
             func reject(_ error: Error) {
@@ -3533,8 +3538,10 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
         let uniqueID = photo.resolvedSettings.uniqueID
         let isRaw = photo.isRawPhoto
         let metadata = photo.metadata
+        let procSpan = CameraLogger.beginTrace("CAPTURE_DID_FINISH_PHOTO", detail: "id=\(uniqueID) raw=\(isRaw ? 1 : 0) hasErr=\(error != nil ? 1 : 0)", category: .capture)
         let extractedData = (error == nil) ? photo.fileDataRepresentation() : nil
         let previewCG = (error == nil) ? photo.previewCGImageRepresentation() : nil
+        CameraLogger.endTrace(procSpan, detail: "bytes=\(extractedData?.count ?? 0) preview=\(previewCG != nil ? 1 : 0)")
 
         sessionQueue.async { [weak self] in
             guard let self, var request = self.inFlightPhotoRequests[uniqueID] ?? self.pendingPhoto,

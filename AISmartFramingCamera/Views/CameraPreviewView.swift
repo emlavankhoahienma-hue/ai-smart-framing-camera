@@ -422,8 +422,11 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
             let drawable = drawableBox.value
 
             // Giữ tham chiếu mạnh tới CVPixelBuffer cho đến khi GPU đọc xong IOSurface, đồng thời giải phóng semaphore
-            commandBuffer.addCompletedHandler { [weak self] _ in
+            commandBuffer.addCompletedHandler { [weak self] cb in
                 _ = pb
+                if cb.status == .error {
+                    CameraLogger.error("METAL_CMD_ERROR status=error", error: cb.error, category: .capture)
+                }
                 self?.inflightSemaphore.signal()
             }
 

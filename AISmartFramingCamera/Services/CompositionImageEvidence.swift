@@ -44,6 +44,7 @@ enum CompositionMemoryBudget {
         private let lock = NSLock()
         private var entries: [String: CacheEvictor] = [:]
         private var lifecycleHook: (@Sendable (String, String) -> Void)?
+        private var traceHook: (@Sendable (String, String) -> Void)?
         #if os(iOS)
         private var forceSequentialUnload: Bool = true
         #else
@@ -54,9 +55,18 @@ enum CompositionMemoryBudget {
             lock.withLock { lifecycleHook = hook }
         }
 
+        func setTraceHook(_ hook: (@Sendable (String, String) -> Void)?) {
+            lock.withLock { traceHook = hook }
+        }
+
         func emit(_ event: String, _ detail: String) {
             let hook = lock.withLock { lifecycleHook }
             hook?(event, detail)
+        }
+
+        func emitTrace(_ phase: String, _ detail: String) {
+            let hook = lock.withLock { traceHook }
+            hook?(phase, detail)
         }
 
         func setForceSequentialUnload(_ enabled: Bool) {
@@ -90,8 +100,16 @@ enum CompositionMemoryBudget {
         EvictorRegistry.shared.setLifecycleHook(observer)
     }
 
+    static func setTraceObserver(_ observer: (@Sendable (String, String) -> Void)?) {
+        EvictorRegistry.shared.setTraceHook(observer)
+    }
+
     static func emitLifecycle(_ event: String, _ detail: String) {
         EvictorRegistry.shared.emit(event, detail)
+    }
+
+    static func emitTrace(_ phase: String, _ detail: String = "") {
+        EvictorRegistry.shared.emitTrace(phase, detail)
     }
 
     static func setForceSequentialModelUnload(_ enabled: Bool) {
@@ -365,11 +383,19 @@ final class CompositionImageRenderer: @unchecked Sendable {
                     minimumBytes: CompositionMemoryBudget.depthLoadHeadroomBytes,
                     excluding: "DepthAnythingV2"
                 ) else {
+                    CompositionMemoryBudget.emitTrace("DepthV2.SKIP_LOW_RAM", "need=\(CompositionMemoryBudget.depthLoadHeadroomBytes / 1_000_000)MB avail=\(CompositionMemoryBudget.availableMB())MB")
                     return nil
                 }
+                CompositionMemoryBudget.emitTrace("DepthV2.LOAD_BEGIN", url.lastPathComponent)
                 let config = MLModelConfiguration()
                 config.computeUnits = .cpuAndNeuralEngine
-                guard let loaded = try? MLModel(contentsOf: url, configuration: config) else { return nil }
+                let loaded: MLModel
+                do {
+                    loaded = try MLModel(contentsOf: url, configuration: config)
+                } catch {
+                    CompositionMemoryBudget.emitTrace("DepthV2.LOAD_FAIL", "\(error)")
+                    return nil
+                }
                 CompositionMemoryBudget.emitLifecycle("MODEL_LOAD", "DepthAnythingV2 (ANE)")
                 if CompositionMemoryBudget.shouldRetainModelCache(
                     minimumAvailableBytes: CompositionMemoryBudget.depthRetainThresholdBytes
@@ -432,10 +458,18 @@ final class CompositionImageRenderer: @unchecked Sendable {
                 return nil
             }
 
+            CompositionMemoryBudget.emitTrace("DepthV2.PREDICT_BEGIN", "input=\(inputName)")
             guard !cancellation.isCancelled,
-                  let provider = try? MLDictionaryFeatureProvider(dictionary: [inputName: inputFeature]),
-                  let output = try? model.prediction(from: provider),
-                  !cancellation.isCancelled else { return nil }
+                  let provider = try? MLDictionaryFeatureProvider(dictionary: [inputName: inputFeature]) else { return nil }
+            let output: MLFeatureProvider
+            do {
+                output = try model.prediction(from: provider)
+            } catch {
+                CompositionMemoryBudget.emitTrace("DepthV2.PREDICT_FAIL", "\(error)")
+                return nil
+            }
+            CompositionMemoryBudget.emitTrace("DepthV2.PREDICT_END", "outputs=\(output.featureNames.count)")
+            guard !cancellation.isCancelled else { return nil }
 
             let preferredOutputs = ["depth", "predicted_depth", "inverse_depth"] + Array(output.featureNames)
             for outName in preferredOutputs {

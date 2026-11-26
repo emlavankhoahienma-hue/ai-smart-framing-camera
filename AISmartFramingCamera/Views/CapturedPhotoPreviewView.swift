@@ -200,9 +200,15 @@ public struct CapturedPhotoPreviewView: View {
         self.item = item
         self.viewModel = viewModel
         _currentProcessedImage = State(initialValue: item.processedImage)
+        let initSpan = CameraLogger.beginTrace(
+            "PREVIEW_INIT_DOWNSAMPLE",
+            detail: "src=\(item.processedImage.width)x\(item.processedImage.height)",
+            category: .capture
+        )
         let initialDisplayUI = Self.downsampleForFastDisplay(item.processedImage, maxSide: 1600)
         let initialOriginalUI = Self.downsampleForFastDisplay(item.originalImage, maxSide: 1600)
         let initialMiniUI = Self.downsampleForFastDisplay(item.processedImage, maxSide: 220)
+        CameraLogger.endTrace(initSpan, detail: "disp=\(Int(initialDisplayUI.size.width))x\(Int(initialDisplayUI.size.height))")
         _cachedFullResUIImage = State(initialValue: initialDisplayUI)
         _cachedDisplayUIImage = State(initialValue: initialDisplayUI)
         _cachedOriginalDisplayUIImage = State(initialValue: initialOriginalUI)

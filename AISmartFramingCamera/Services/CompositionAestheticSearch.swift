@@ -46,6 +46,7 @@ final class CompositionAestheticSearch {
         var usedGAIC = false
         var preScoredGAIC: [(corners: [CGPoint], gaic: Double)] = []
         if let resolvedGaicURL, !workingProposals.isEmpty {
+            CompositionMemoryBudget.emitTrace("S5a.GAIC_BEGIN", "proposals=\(workingProposals.count)")
             let evaluatedGAIC: [Double]? = autoreleasepool {
                 guard let gaicModel = GAICCompositionModel.cachedOrLoad(url: resolvedGaicURL) else { return nil }
                 return gaicModel.evaluate(image: image, proposals: workingProposals, cancellation: cancellation)
@@ -65,6 +66,7 @@ final class CompositionAestheticSearch {
                 GAICCompositionModel.clearCache()
             }
             CompositionImageRenderer.clearSharedCaches()
+            CompositionMemoryBudget.emitTrace("S5a.GAIC_END", "usedGAIC=\(usedGAIC ? 1 : 0) scored=\(allGAICScoredProposals.count)")
         }
         guard !cancellation.isCancelled else { return nil }
 
@@ -168,6 +170,7 @@ final class CompositionAestheticSearch {
 
         // Stage B: SAMP-Net runs inside its own tight autoreleasepool so 100% of CoreML / ANE / ObjC
         // buffers from PhotographicCompositionModel are drained BEFORE Charm DINOv2-small allocates.
+        CompositionMemoryBudget.emitTrace("S5b.SAMP_BEGIN", "shortlist=\(workingProposals.count)")
         var assessedCount = 0
         var hadSpecialist = false
         var evaluated: [View] = autoreleasepool {
@@ -190,6 +193,7 @@ final class CompositionAestheticSearch {
                         candidate.semanticCropBonus = matchedSemanticBonus(for: candidate)
                     }
                     let item: View? = autoreleasepool {
+                        CompositionMemoryBudget.emitTrace("S5b.SAMP_CROP", "\(index + 1)/\(candidates.count) skip=\(skipHeavyModel ? 1 : 0)")
                         guard let preview = renderer.preview(image: image, corners: candidate.sourceCorners, aspect: aspect) else { return nil }
                         let syncCrop = skipHeavyModel ? nil : raster.flatMap {
                             renderer.synchronizedSaliencyCrop(from: $0, corners: candidate.sourceCorners, side: 224)
@@ -268,6 +272,7 @@ final class CompositionAestheticSearch {
             PhotographicCompositionModel.clearCache()
         }
         CompositionImageRenderer.clearSharedCaches()
+        CompositionMemoryBudget.emitTrace("S5b.SAMP_END", "assessed=\(assessedCount)/\(evaluated.count)")
         guard !cancellation.isCancelled else { return nil }
         var usedSpecialist = !evaluated.isEmpty && assessedCount == evaluated.count
         if hadSpecialist && !usedSpecialist && !usedGAIC {
@@ -307,6 +312,7 @@ final class CompositionAestheticSearch {
             var pool = indices.prefix(budget).map { evaluated[$0] }
             // Stage C: Charm DINOv2-small (MPSGraph) runs inside its own tight autoreleasepool so 100%
             // of Metal MPSGraph / CoreML ObjC objects drain immediately when Charm completes.
+            CompositionMemoryBudget.emitTrace("S5c.Charm_BEGIN", "pool=\(pool.count)")
             let charmCancelled: Bool = autoreleasepool {
                 var modern: CharmPhotographicModel?
                 if let aestheticModelURL, let positionURL {
@@ -325,6 +331,7 @@ final class CompositionAestheticSearch {
                             progress("Nhiệt độ máy cao. Chuyển sang chọn bố cục thủ công…")
                             break
                         }
+                        CompositionMemoryBudget.emitTrace("S5c.Charm_CROP", "\(index + 1)/\(pool.count) img=\(pool[index].image.width)x\(pool[index].image.height)")
                         let assessment = autoreleasepool {
                             activeModern.assess(pool[index].image, cancellation: cancellation)
                         }
@@ -360,6 +367,7 @@ final class CompositionAestheticSearch {
                 CharmPhotographicModel.clearCache()
             }
             CompositionImageRenderer.clearSharedCaches()
+            CompositionMemoryBudget.emitTrace("S5c.Charm_END", "modernCount=\(modernCount)/\(pool.count) cancelled=\(charmCancelled ? 1 : 0)")
             guard !charmCancelled else { return nil }
             for poolItem in pool {
                 if let matchIdx = allEvaluated.firstIndex(where: {
