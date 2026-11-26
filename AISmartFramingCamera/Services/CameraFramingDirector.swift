@@ -288,10 +288,12 @@ enum CameraFramingDirector {
     /// Classifies an English or Vietnamese label string into `DirectorSubjectDomain`.
     static func classifyDomain(label: String, isHumanCategory: Bool = false, isFaceCategory: Bool = false,
                                isAnimalCategory: Bool = false, isGeneralCategory: Bool = false) -> DirectorSubjectDomain {
+        let l = label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if l == "hot dog" { return .food }
+        if l == "mouse" || l == "chuột máy tính" { return .object }
         if isFaceCategory { return .face }
         if isHumanCategory { return .human }
         if isAnimalCategory { return .animal }
-        let l = label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         if l == "human face" || l == "khuôn mặt" || l == "face" { return .face }
         if l == "person" || l == "người" || l.hasPrefix("nhóm") { return .human }
         let animals: Set<String> = [
@@ -374,15 +376,16 @@ enum CameraFramingDirector {
             "church": "Nhà thờ", "cathedral": "Thánh đường", "bridge": "Cây cầu", "arch": "Vòm kiến trúc",
             "fountain": "Đài phun nước", "monument": "Tượng đài", "sculpture": "Tác phẩm điêu khắc",
             "window": "Cửa sổ", "doorway": "Khung cửa", "balcony": "Ban công", "stairs": "Cầu thang",
-            "street": "Đường phố", "alley": "Con hẻm", "road": "Con đường", "street sign": "Biển báo",
+            "street": "Đường phố", "alley": "Con hẻm", "road": "Con đường", "street sign": "Biển báo", "stop sign": "Biển báo Stop",
             "food": "Món ăn", "dish": "Đĩa thức ăn", "cake": "Bánh ngọt", "ice cream": "Kem",
             "dessert": "Tráng miệng", "fruit": "Trái cây", "pizza": "Bánh pizza", "burger": "Burger",
             "noodle": "Mì/Phở", "bread": "Bánh mì", "coffee": "Ly cà phê", "cup": "Chiếc cốc",
             "mug": "Cốc sứ", "tea": "Ly trà", "cocktail": "Ly cocktail", "drink": "Đồ uống",
             "glass": "Ly thủy tinh", "wine glass": "Ly rượu", "bottle": "Chai nước", "bowl": "Bát", "plate": "Đĩa",
-            "teapot": "Ấm trà", "sandwich": "Bánh mì kẹp", "donut": "Bánh donut", "banana": "Chuối", "apple": "Quả táo", "orange": "Quả cam",
+            "teapot": "Ấm trà", "sandwich": "Bánh mì kẹp", "hot dog": "Hot dog", "donut": "Bánh donut", "banana": "Chuối", "apple": "Quả táo", "orange": "Quả cam",
             "car": "Ô tô", "motorcycle": "Xe máy", "scooter": "Xe tay ga", "bicycle": "Xe đạp",
             "bus": "Xe buýt", "truck": "Xe tải", "train": "Tàu hỏa", "boat": "Con thuyền", "airplane": "Máy bay",
+            "kite": "Cánh diều", "surfboard": "Ván lướt sóng", "skis": "Ván trượt tuyết", "baseball bat": "Gậy bóng chày", "tennis racket": "Vợt tennis",
             "helmet": "Mũ bảo hiểm",
             "laptop": "Laptop", "monitor": "Màn hình", "tv": "Màn hình TV", "keyboard": "Bàn phím",
             "mouse": "Chuột máy tính", "smartphone": "Điện thoại", "cell phone": "Điện thoại", "camera": "Máy ảnh",
@@ -455,14 +458,14 @@ enum CameraFramingDirector {
             // Single person portrait: height fill 48%-84%, ideal 62%
             return SubjectFillSpec(minFill: 0.48, idealFill: 0.62, maxFill: 0.84, isWideContextual: false)
         case .environmentalPortrait:
-            // Person in grand landscape/landmark: height fill 24%-58%, ideal 36%
-            return SubjectFillSpec(minFill: 0.24, idealFill: 0.36, maxFill: 0.58, isWideContextual: false)
+            // Person in grand landscape/landmark: height fill 33%-66%, ideal 45% (zooms in when distant < 33% height!)
+            return SubjectFillSpec(minFill: 0.33, idealFill: 0.45, maxFill: 0.66, isWideContextual: false)
         case .group:
             // Multi-person group: union span 46%-84%, ideal 62%
             return SubjectFillSpec(minFill: 0.46, idealFill: 0.62, maxFill: 0.84, isWideContextual: false)
         case .animal:
-            // Pet / wildlife: max(w, h) span 32%-78%, ideal 48%
-            return SubjectFillSpec(minFill: 0.32, idealFill: 0.48, maxFill: 0.78, isWideContextual: false)
+            // Pet / wildlife: effective span 34%-80%, ideal 48%
+            return SubjectFillSpec(minFill: 0.34, idealFill: 0.48, maxFill: 0.80, isWideContextual: false)
         case .flower:
             // Blossom / botanical close-up: effective span 34%-76%, ideal 46%
             return SubjectFillSpec(minFill: 0.34, idealFill: 0.46, maxFill: 0.76, isWideContextual: false)
@@ -501,7 +504,7 @@ enum CameraFramingDirector {
         case .group:
             return max(bw, bh * 0.86)
         case .animal:
-            return max(bw, bh)
+            return 0.50 * max(bw, bh) + 0.50 * sqrt(bArea)
         case .flower, .food, .object, .vehicle, .architecture, .street:
             return 0.55 * max(bw, bh) + 0.45 * sqrt(bArea)
         case .foliage, .aperture, .indoorRoom, .skyLandscape, .scene:
@@ -594,6 +597,7 @@ enum CameraFramingDirector {
         heroBox: CGRect,
         role: DirectorPhotographicRole,
         isFaceOnlyHero: Bool,
+        faceBounds: CGRect? = nil,
         isMinimalist: Bool,
         noClearSubject: Bool,
         currentZoom: CGFloat,
@@ -617,23 +621,45 @@ enum CameraFramingDirector {
             (heroBox.minY <= 0.014 ? 1 : 0) +
             (heroBox.maxY >= 0.986 ? 1 : 0)
 
-        let topFaceClipped = (role == .portrait || role == .group) && (
-            (heroBox.minY <= 0.015 && (bArea >= 0.45 || bh >= 0.64)) ||
-            (isFaceOnlyHero && bh > 0.40) ||
-            (isFaceOnlyHero && heroBox.minY <= 0.025 && bh >= 0.32)
-        )
+        // Waist-up / chest-up close-up portraits at 1.0x naturally exit the bottom/side borders with their jacket/arms;
+        // if the detected face has comfortable headroom (minY >= 0.036) and normal head scale (<= 40% height), keep 1.0x!
+        let isWellFramedWaistUpPortrait: Bool = {
+            guard role == .portrait, currentZoom <= 1.14, let fb = faceBounds else { return false }
+            guard heroBox.maxY >= 0.88 || isFaceOnlyHero else { return false }
+            return Double(fb.height) <= 0.40 &&
+                fb.minY >= 0.036 &&
+                fb.minX >= 0.015 &&
+                fb.maxX <= 0.985
+        }()
+
+        let topFaceClipped: Bool = {
+            guard (role == .portrait || role == .group), !isWellFramedWaistUpPortrait else { return false }
+            if let fb = faceBounds, role == .portrait {
+                return (heroBox.minY <= 0.015 && fb.minY <= 0.035 && (bArea >= 0.45 || bh >= 0.64)) ||
+                    Double(fb.height) > 0.42 ||
+                    fb.minY <= 0.012
+            }
+            return (heroBox.minY <= 0.015 && (bArea >= 0.45 || bh >= 0.64)) ||
+                (isFaceOnlyHero && bh > 0.40) ||
+                (isFaceOnlyHero && heroBox.minY <= 0.025 && bh >= 0.32)
+        }()
         let archCramped = (role == .architecture || role == .indoorRoom) &&
             ((heroBox.minY <= 0.015 && heroBox.maxY >= 0.985 && bw >= 0.72) || (bw >= 0.86 && bh >= 0.84))
         let groupCramped = role == .group && ((edgeTouches >= 2 && bArea >= 0.46) || bw >= 0.84)
         let oppositeClipped = ((heroBox.minX <= 0.012 && heroBox.maxX >= 0.988) ||
                                (heroBox.minY <= 0.012 && heroBox.maxY >= 0.988 && role != .portrait)) &&
             max(bw, bh) >= 0.54
-        let borderClippedSubject = !spec.isWideContextual && !noClearSubject && (
-            ((heroBox.minX <= 0.010 || heroBox.maxX >= 0.990 || heroBox.minY <= 0.010) && measured >= spec.idealFill * 0.92 && max(bw, bh) >= 0.44) ||
-            oppositeClipped
-        )
+        let borderClippedSubject: Bool = {
+            guard !spec.isWideContextual, !noClearSubject, !isWellFramedWaistUpPortrait else { return false }
+            if role == .portrait && currentZoom <= 1.14 && faceBounds == nil {
+                return oppositeClipped || (heroBox.minY <= 0.008 && bh >= 0.72)
+            }
+            return (((heroBox.minX <= 0.010 || heroBox.maxX >= 0.990 || heroBox.minY <= 0.010) &&
+                     measured >= spec.idealFill * 0.92 && max(bw, bh) >= 0.44) ||
+                    oppositeClipped)
+        }()
         let isSeverelyCramped = topFaceClipped || archCramped || groupCramped || borderClippedSubject
-        let isOversized = !spec.isWideContextual && !noClearSubject && measured > spec.maxFill
+        let isOversized = !spec.isWideContextual && !noClearSubject && !isWellFramedWaistUpPortrait && measured > spec.maxFill
         let isZoomedInWideScene = currentZoom > 1.14 && (spec.isWideContextual || noClearSubject)
 
         // STATE 1: ZOOM OUT (subject too large, border-clipped, or zoomed-in wide landscape)
@@ -793,8 +819,11 @@ enum CameraFramingDirector {
             let lower = d.label.lowercased()
             if lower == "table" || lower == "dining table" || lower == "bàn ăn" { continue }
             let area = d.area
-            // Keep both small distant subjects (>=0.08% area) AND large border-clipped subjects (<=99.5% area)
-            if area < 0.0008 || area > 0.995 { continue }
+            // Keep both small distant subjects (>=0.08% area) AND full-bleed border-clipped subjects (<=100% area)
+            let maxAllowedArea: Double = (d.domain == .human || d.domain == .face || d.domain == .animal ||
+                                          d.domain == .food || d.domain == .pureFlower || d.domain == .object || d.domain == .vehicle)
+                ? 1.001 : 0.96
+            if area < 0.0008 || area > maxAllowedArea { continue }
             if d.domain == .foregroundMask && (isBottomStrip(d.boundingBox, center: d.center) || isSideWall(d.boundingBox)) {
                 continue
             }
@@ -841,8 +870,16 @@ enum CameraFramingDirector {
                 return overlapsFlora || siglipScene == "flower" || siglipScene == "foliage"
             }()
 
+            let isTextureFoodFalsePositive: Bool = {
+                guard (d.domain == .food || d.domain == .object), d.confidence < 0.46 else { return false }
+                let foodAff = max(semanticAffinities["food"] ?? 0.0,
+                                  max(semanticAffinities["food_spread"] ?? 0.0, semanticAffinities["coffee_drink"] ?? 0.0))
+                return foodAff < 0.022 &&
+                    (siglipScene == "architecture" || siglipScene == "street" || siglipScene == "landscape" || siglipScene == "foliage")
+            }()
+
             let catW: Double
-            if isCornerHeadless || isHandHoldingObject || isPlantConfusableFood {
+            if isCornerHeadless || isHandHoldingObject || isPlantConfusableFood || isTextureFoodFalsePositive {
                 catW = 0.18
             } else {
                 switch d.domain {
@@ -886,7 +923,7 @@ enum CameraFramingDirector {
                 det: d, depth: dep, dAim: dAim, hasFace: hasFace,
                 isCornerHeadless: isCornerHeadless || isHandHoldingObject,
                 isEdgeSliver: edgeSliver,
-                isSuppressedFood: isPlantConfusableFood,
+                isSuppressedFood: isPlantConfusableFood || isTextureFoodFalsePositive,
                 heroScore: score
             ))
         }
@@ -929,15 +966,29 @@ enum CameraFramingDirector {
         }
         fgCandidates.sort { $0.heroScore > $1.heroScore }
 
-        // 4. Identify people (including distant full-body >= 0.18% area!), animals, objects, ensembles, and scenes
-        let validPeople = fgCandidates.filter {
-            ($0.det.domain == .human || $0.det.domain == .face) &&
+        // 4. Identify people (including distant full-body >= 0.18% area!), animals, objects, ensembles, and scenes.
+        // Separate `.human` bodies from `.face` boxes so one person + their own face is NEVER miscounted as `group(2)`!
+        let humanBodies = fgCandidates.filter {
+            $0.det.domain == .human &&
             $0.det.confidence >= ($0.hasFace ? 0.24 : 0.34) &&
             $0.det.area >= ($0.hasFace ? 0.0010 : 0.0018) &&
             !$0.isCornerHeadless && !$0.isEdgeSliver
         }
+        let orphanFaces = fgCandidates.filter { f in
+            guard f.det.domain == .face, f.det.confidence >= 0.28, f.det.area >= 0.0010 else { return false }
+            let fc = f.det.center
+            return !humanBodies.contains { hb in
+                hb.det.boundingBox.insetBy(dx: -0.05, dy: -0.06).contains(fc) ||
+                rectContainment(f.det.boundingBox, inside: hb.det.boundingBox) >= 0.45
+            }
+        }
+        let validPeople = (humanBodies + orphanFaces).sorted { $0.heroScore > $1.heroScore }
+
+        let isGrandVistaScene = !strongWideNature.isEmpty &&
+            (siglipScene == "landscape" || siglipScene == "sky_clouds" || siglipScene == "sunset")
         let validAnimals = fgCandidates.filter {
-            $0.det.domain == .animal && !$0.isEdgeSliver && $0.det.confidence >= 0.20
+            $0.det.domain == .animal && !$0.isEdgeSliver && $0.det.confidence >= 0.22 &&
+            (!isGrandVistaScene || $0.det.area >= 0.006)
         }
         let namedNonPerson = fgCandidates.filter {
             $0.det.domain != .human && $0.det.domain != .face &&
@@ -986,9 +1037,12 @@ enum CameraFramingDirector {
             (furnitureHits.count >= 2 || (furnitureHits.count == 1 && namedNonPerson.count == furnitureHits.count))
         let isFrameAperture = (semanticAffinities["frame_aperture"] ?? 0.0) > 0.034 &&
             (sceneHints.role == .apertureView || siglipScene == "aperture" || (namedNonPerson.isEmpty && isIndoorRoomCue))
-        let dominantWideNature = !strongWideNature.isEmpty && validPeople.isEmpty && validAnimals.isEmpty && !fgCandidates.contains {
-            ($0.det.domain == .pureFlower || $0.det.domain == .food) && $0.det.confidence >= 0.35 && !$0.isEdgeSliver
+        let hasStrongFocalSubject = fgCandidates.contains {
+            (($0.det.domain == .pureFlower || $0.det.domain == .food) && $0.det.confidence >= 0.35 && !$0.isEdgeSliver && !$0.isSuppressedFood) ||
+            (($0.det.domain == .vehicle || $0.det.domain == .object) &&
+             $0.det.confidence >= 0.68 && $0.dAim <= 0.26 && $0.det.area >= 0.008 && !$0.isEdgeSliver && !$0.isSuppressedFood)
         }
+        let dominantWideNature = !strongWideNature.isEmpty && validPeople.isEmpty && validAnimals.isEmpty && !hasStrongFocalSubject
         let dominantArchitecture = validPeople.isEmpty && validAnimals.isEmpty &&
             (!strongArchitecture.isEmpty || siglipScene == "architecture" || siglipScene == "street" ||
              sceneHints.role == .architecture || sceneHints.role == .streetLeading) &&
@@ -1005,30 +1059,32 @@ enum CameraFramingDirector {
         var heroGazeX = 0.0
         var protectedBoxes: [CGRect] = []
         var isFaceOnlyHero = false
+        var heroFaceBounds: CGRect? = nil
         var portraitBustBox: CGRect? = nil
         var noClearSubject = false
 
         if !validPeople.isEmpty && !bystanderOverridden {
-            if let explicitGroup = validPeople.first(where: { $0.det.isGroup }) {
-                role = .group
-                heroDomain = .human
-                heroBox = explicitGroup.det.boundingBox
-                let memberFaces = faceDets.filter { explicitGroup.det.boundingBox.insetBy(dx: -0.04, dy: -0.04).contains($0.center) }
-                if !memberFaces.isEmpty {
-                    let meanFaceY = memberFaces.map { Double($0.boundingBox.minY + 0.40 * $0.boundingBox.height) }.reduce(0.0, +) / Double(memberFaces.count)
-                    heroAnchor = CGPoint(x: heroBox.midX, y: CGFloat(meanFaceY))
-                } else {
-                    heroAnchor = explicitGroup.det.anchor ?? CGPoint(x: heroBox.midX, y: heroBox.minY + 0.24 * heroBox.height)
+            var distinctGroupMembers: [RankedCandidate] = []
+            if let leadP = validPeople.first {
+                distinctGroupMembers.append(leadP)
+                for cand in validPeople.dropFirst() {
+                    guard cand.heroScore >= 0.30 * leadP.heroScore,
+                          abs(cand.depth - leadP.depth) < 0.35 else { continue }
+                    let overlapsExisting = distinctGroupMembers.contains { m in
+                        rectIoU(cand.det.boundingBox, m.det.boundingBox) >= 0.35 ||
+                        rectContainment(cand.det.boundingBox, inside: m.det.boundingBox) >= 0.60
+                    }
+                    if !overlapsExisting {
+                        distinctGroupMembers.append(cand)
+                        if distinctGroupMembers.count >= 6 { break }
+                    }
                 }
-                heroLabel = explicitGroup.det.label
-                heroLocalized = explicitGroup.det.localizedLabel
-                heroConf = explicitGroup.det.confidence
-                protectedBoxes = (explicitGroup.det.companionBounds.isEmpty ? [heroBox] : explicitGroup.det.companionBounds) + memberFaces.map(\.boundingBox)
-            } else if validPeople.count >= 2 && validPeople[1].heroScore >= 0.36 * validPeople[0].heroScore &&
-                      abs(validPeople[0].depth - validPeople[1].depth) < 0.32 {
-                let members = Array(validPeople.filter {
-                    $0.heroScore >= 0.30 * validPeople[0].heroScore && abs($0.depth - validPeople[0].depth) < 0.35
-                }.prefix(6))
+            }
+
+            if distinctGroupMembers.count >= 2 &&
+               distinctGroupMembers[1].heroScore >= 0.36 * distinctGroupMembers[0].heroScore &&
+               abs(distinctGroupMembers[0].depth - distinctGroupMembers[1].depth) < 0.32 {
+                let members = distinctGroupMembers
                 let box = unionRects(members.map(\.det.boundingBox))
                 role = .group
                 heroDomain = .human
@@ -1053,6 +1109,7 @@ enum CameraFramingDirector {
                     return fc.x >= heroBox.minX - 0.04 && fc.x <= heroBox.maxX + 0.04 &&
                         fc.y >= heroBox.minY - 0.05 && fc.y <= heroBox.minY + 0.52 * heroBox.height
                 })
+                heroFaceBounds = matchingFace?.boundingBox ?? p0.det.faceBounds.first
                 let maxFaceH = max(
                     Double(p0.det.faceBounds.map(\.height).max() ?? 0),
                     Double(matchingFace?.boundingBox.height ?? 0)
@@ -1263,11 +1320,12 @@ enum CameraFramingDirector {
             heroConf = food0.det.confidence
         } else if let obj0 = topNamed,
                   obj0.det.domain != .furniture && obj0.det.domain != .pottedPlant &&
+                  !(obj0.det.confidence < 0.42 && obj0.dAim > 0.36 && (maskInstances.first?.heroScore ?? 0) > obj0.heroScore * 1.6) &&
                   (obj0.dAim <= 0.42 || obj0.det.confidence >= 0.45 || obj0.det.domain == .pureFlower ||
                    (siglipScene != "flower" && siglipScene != "foliage" && siglipScene != "sky_clouds" && siglipScene != "sunset" && siglipScene != "landscape")) {
             role = obj0.det.domain == .animal ? .animal : (obj0.det.domain == .vehicle ? .vehicle : (obj0.det.domain == .pureFlower ? .flower : .object))
             heroDomain = obj0.det.domain
-            if !companionBoxes.isEmpty && role == .object && (siglipScene == "object" || siglipScene == "indoor_room" || siglipScene == "food") {
+            if !companionBoxes.isEmpty && role == .object {
                 let allB = [obj0.det.boundingBox] + companionBoxes
                 heroBox = unionRects(allB)
                 heroAnchor = CGPoint(x: heroBox.midX, y: heroBox.midY)
@@ -1282,36 +1340,32 @@ enum CameraFramingDirector {
                 protectedBoxes = [heroBox]
             }
             heroConf = obj0.det.confidence
-        } else if (fgCandidates.first?.det.domain == .pureFlower && !(fgCandidates.first?.isEdgeSliver ?? true) && (fgCandidates.first?.det.confidence ?? 0) >= 0.16) ||
-                  siglipScene == "flower" || siglipScene == "foliage" {
-            let explicitFlora = fgCandidates.first { $0.det.domain == .pureFlower && !$0.isEdgeSliver && $0.det.area < 0.78 }
-            if let f = explicitFlora {
-                role = .flower
-                heroDomain = .pureFlower
-                heroBox = f.det.boundingBox
-                heroAnchor = f.det.anchor ?? f.det.center
-                heroLabel = f.det.label
-                heroLocalized = f.det.localizedLabel
-                heroConf = f.det.confidence
-            } else if let m0 = maskInstances.first(where: { !$0.isEdgeSliver }), m0.det.area >= 0.03 {
-                role = siglipScene == "flower" ? .flower : .foliage
+        } else if let f = fgCandidates.first(where: { $0.det.domain == .pureFlower && !$0.isEdgeSliver && $0.det.confidence >= 0.16 && $0.det.area < 0.78 }) {
+            role = .flower
+            heroDomain = .pureFlower
+            heroBox = f.det.boundingBox
+            heroAnchor = f.det.anchor ?? f.det.center
+            heroLabel = f.det.label
+            heroLocalized = f.det.localizedLabel
+            heroConf = f.det.confidence
+            protectedBoxes = [heroBox]
+        } else if siglipScene == "foliage",
+                  (semanticAffinities["foliage"] ?? 0.0) >= 0.048 || (semanticAffinities["forest_woods"] ?? 0.0) >= 0.048 {
+            role = .foliage
+            if let m0 = maskInstances.first(where: { !$0.isEdgeSliver }), m0.det.area >= 0.03 {
                 heroDomain = .foregroundMask
                 heroBox = m0.det.boundingBox
                 heroAnchor = m0.det.anchor ?? m0.det.center
-                heroLabel = role == .flower ? "flower_mask" : "foliage_mask"
-                heroLocalized = role == .flower ? "Cụm hoa tiền cảnh" : "Tán lá thiên nhiên"
+                heroLabel = "foliage_mask"
+                heroLocalized = "Tán lá thiên nhiên"
                 heroConf = max(0.72, m0.det.confidence)
             } else {
-                role = siglipScene == "flower" ? .flower : .foliage
                 heroDomain = .wideNature
                 heroBox = neuralField.attentionBox
                 heroAnchor = CGPoint(x: heroBox.midX, y: heroBox.midY)
-                heroLabel = role.rawValue
-                heroLocalized = role == .flower ? "Cụm hoa nổi bật" : "Mảng xanh thiên nhiên"
+                heroLabel = "foliage"
+                heroLocalized = "Mảng xanh thiên nhiên"
                 heroConf = 0.70
-                if role == .foliage && explicitFlora == nil {
-                    noClearSubject = false
-                }
             }
             protectedBoxes = [heroBox]
         } else if siglipScene == "sky_clouds" || siglipScene == "sunset" || siglipScene == "landscape" ||
@@ -1326,7 +1380,7 @@ enum CameraFramingDirector {
             heroLocalized = horizonInfo.skyRich >= horizonInfo.groundRich * 0.92 ? "Bầu trời & mây" : "Cảnh quan rộng"
             heroConf = 0.78
         } else if let obj0 = topForegroundNonPerson,
-                  obj0.det.confidence >= 0.34 && obj0.heroScore >= 0.045 {
+                  obj0.det.confidence >= 0.42 && obj0.heroScore >= 0.055 {
             role = obj0.det.domain == .vehicle ? .vehicle : .object
             heroDomain = obj0.det.domain
             heroBox = obj0.det.boundingBox
@@ -1356,6 +1410,7 @@ enum CameraFramingDirector {
             heroBox: heroBox,
             role: role,
             isFaceOnlyHero: isFaceOnlyHero,
+            faceBounds: heroFaceBounds,
             isMinimalist: isMinimalist,
             noClearSubject: noClearSubject,
             currentZoom: safeZoom,
@@ -2156,11 +2211,13 @@ enum CameraFramingDirector {
     // MARK: - Deduplication & Spatial Evidence Helpers
 
     private static func deduplicate(_ detections: [DirectorDetection]) -> [DirectorDetection] {
-        let compactMasks = detections.filter {
+        // Drop pre-synthesized group union boxes so group vs solo portrait resolution is always computed cleanly from deduplicated individuals.
+        let individuals = detections.filter { !$0.isGroup }
+        let compactMasks = individuals.filter {
             $0.domain == .foregroundMask && $0.area <= 0.72 &&
             !isBottomStrip($0.boundingBox, center: $0.center) && !isSideWall($0.boundingBox)
         }
-        var nonMasks = detections.filter { $0.domain != .foregroundMask }
+        var nonMasks = individuals.filter { $0.domain != .foregroundMask }
         for i in nonMasks.indices {
             let nm = nonMasks[i]
             if nm.domain == .backgroundSurface || nm.domain == .wideNature { continue }
@@ -2181,7 +2238,7 @@ enum CameraFramingDirector {
                         label: nm.label, localizedLabel: nm.localizedLabel,
                         boundingBox: mergedBox, anchor: mergedAnchor,
                         confidence: boostedConf, domain: nm.domain,
-                        gazeX: nm.gazeX, isGroup: nm.isGroup,
+                        gazeX: nm.gazeX, isGroup: false,
                         isAttentionOnly: nm.isAttentionOnly,
                         companionBounds: nm.companionBounds, faceBounds: nm.faceBounds
                     )
@@ -2209,27 +2266,47 @@ enum CameraFramingDirector {
         for d in ordered {
             if let idx = kept.firstIndex(where: { existing in
                 let iou = rectIoU(d.boundingBox, existing.boundingBox)
-                if iou <= 0.55 { return false }
-                if d.label.lowercased() == existing.label.lowercased() { return true }
-                if d.domain == existing.domain && d.domain != .object { return true }
-                if d.domain == .foregroundMask && existing.domain != .foregroundMask { return true }
+                if iou > 0.46 {
+                    if d.label.lowercased() == existing.label.lowercased() { return true }
+                    if d.domain == existing.domain && d.domain != .object { return true }
+                    if d.domain == .foregroundMask && existing.domain != .foregroundMask { return true }
+                }
+                // Merge upper-body + full-body boxes on the same person or duplicate pet boxes across YOLO12s/YOLOE/Vision
+                if (d.domain == .human && existing.domain == .human) ||
+                   (d.domain == .animal && existing.domain == .animal && d.localizedLabel == existing.localizedLabel) {
+                    let cont = rectContainment(d.boundingBox, inside: existing.boundingBox)
+                    let maxW = max(d.boundingBox.width, existing.boundingBox.width)
+                    let alignedX = abs(d.boundingBox.midX - existing.boundingBox.midX) <= 0.22 * maxW
+                    if cont >= 0.68 && alignedX {
+                        if let fA = d.faceBounds.first, let fB = existing.faceBounds.first,
+                           rectIoU(fA, fB) < 0.20 {
+                            return false
+                        }
+                        return true
+                    }
+                }
                 return false
             }) {
                 let prev = kept[idx]
                 let mergedAnchor = prev.anchor ?? d.anchor
                 let mergedGaze = abs(prev.gazeX) >= 0.05 ? prev.gazeX : d.gazeX
                 let mergedFaces = prev.faceBounds.isEmpty ? d.faceBounds : prev.faceBounds
-                let mergedGroup = prev.isGroup || d.isGroup
                 let mergedCompanions = prev.companionBounds.isEmpty ? d.companionBounds : prev.companionBounds
+                let mergedBounds: CGRect
+                if prev.domain == .human && d.domain == .human && rectIoU(prev.boundingBox, d.boundingBox) >= 0.30 {
+                    mergedBounds = prev.boundingBox.union(d.boundingBox)
+                } else {
+                    mergedBounds = prev.boundingBox
+                }
                 kept[idx] = DirectorDetection(
                     label: prev.label,
                     localizedLabel: prev.localizedLabel,
-                    boundingBox: prev.boundingBox,
+                    boundingBox: mergedBounds,
                     anchor: mergedAnchor,
                     confidence: prev.confidence,
                     domain: prev.domain,
                     gazeX: mergedGaze,
-                    isGroup: mergedGroup,
+                    isGroup: false,
                     isAttentionOnly: prev.isAttentionOnly && d.isAttentionOnly,
                     companionBounds: mergedCompanions,
                     faceBounds: mergedFaces

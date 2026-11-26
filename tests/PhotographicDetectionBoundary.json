@@ -3,7 +3,7 @@
   "protected": [
     {
       "path": "AISmartFramingCamera/Services/YOLODetectionEngine.swift",
-      "sha256": "312f44a08657ff3e718a6f2eb0e80cc361b2e7e9039510dadf0adde874eb7658"
+      "sha256": "81237d08fc87a0fad657f8b300231d664aac72536517681ff9bf7b30e3ab14c5"
     },
     {
       "path": "AISmartFramingCamera/Services/NeuralSubjectIntelligenceEngine.swift",

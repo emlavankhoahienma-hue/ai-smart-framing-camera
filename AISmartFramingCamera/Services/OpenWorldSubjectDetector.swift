@@ -39,13 +39,13 @@ final class OpenWorldSubjectDetector: @unchecked Sendable {
         "flower", "blossom", "rose", "sunflower", "bouquet", "succulent", "cactus", "leaf", "branch",
         "building", "skyscraper", "tower", "castle", "pagoda", "temple", "church", "cathedral",
         "bridge", "arch", "fountain", "monument", "sculpture", "statue", "street sign",
-        "coffee", "tea", "dish", "food", "cake", "camera", "watch", "book", "guitar"
+        "coffee", "tea", "camera", "watch", "guitar"
     ]
 
-    /// Fine-grained classes that score high (>0.50) on real subjects but can fire weakly on textures/graffiti.
+    /// Fine-grained classes that score high (>0.50) on real subjects but can fire weakly on brick/stone textures.
     private static let strictThresholdClasses: Set<String> = [
         "insect", "beetle", "snake", "lizard", "frog", "turtle",
-        "barrel", "rock", "cliff", "box", "package", "mushroom"
+        "barrel", "rock", "cliff", "box", "package", "mushroom", "bread", "cake"
     ]
 
     private final class ConcurrentResults: @unchecked Sendable {

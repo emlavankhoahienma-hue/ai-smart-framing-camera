@@ -35,9 +35,10 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     public init() { loadYOLOModel() }
 
     public func loadYOLOModel() {
+        // Use genuine COCO-pretrained Ultralytics YOLO12s/YOLO12n models (never synthetic benchmark weights).
         let names = ProcessInfo.processInfo.physicalMemory >= 6_000_000_000
-            ? ["yolo12s", "yolo12n", "yolov26_ane", "yolov26_416_fp16", "yolo26s", "yolo26n"]
-            : ["yolo12n", "yolov26_416_fp16", "yolo12s", "yolov26_ane", "yolo26n", "yolo26s"]
+            ? ["yolo12s", "yolo12n", "yolo26s", "yolo26n"]
+            : ["yolo12n", "yolo12s", "yolo26n", "yolo26s"]
         for name in names {
             if let modelResult = makeModel(named: name, computeUnits: .all) {
                 modelLock.withLock {
@@ -211,58 +212,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             return detectObjects(pixelBuffer: pixelBuffer, orientation: orientation, cancellation: cancellation)
         }
 
-        guard !cancellation.isCancelled, process.physicalMemory >= 3_500_000_000 else {
-            return Self.fuseDetectionsWithDepthNMS(primaryCandidates, depthGrid: depthGrid, depthSide: depthSide)
-        }
-
-        // Secondary dedicated YOLOv26 ANE pass (if bundled and distinct from active primary model).
-        let primaryName = modelLock.withLock { loadedModelName }
-        let secondaryOrder = isHighMemory ? ["yolov26_ane", "yolov26_416_fp16"] : ["yolov26_416_fp16", "yolov26_ane"]
-        guard let secondaryName = secondaryOrder.first(where: {
-            $0 != primaryName && CompositionResourceLocator.url(forResource: $0, withExtension: "mlmodelc") != nil
-        }) else {
-            return Self.fuseDetectionsWithDepthNMS(primaryCandidates, depthGrid: depthGrid, depthSide: depthSide)
-        }
-
-        if !isHighMemory {
-            // RAM < 6GB: release Model 1 weights before loading Model 2 inside autoreleasepool,
-            // preserving `loadedModelName` so target recovery lazily restores Model 1 only if needed.
-            autoreleasepool {
-                modelLock.withLock {
-                    yoloCoreMLModel = nil
-                    yoloNativeMLModel = nil
-                    secondaryDedicatedModel = nil
-                    secondaryDedicatedModelName = nil
-                }
-            }
-        }
-
-        let secondaryCandidates: [NeuralSubjectCandidate] = autoreleasepool {
-            guard !cancellation.isCancelled else { return [] }
-            if isHighMemory {
-                var cachedSecondary = modelLock.withLock {
-                    secondaryDedicatedModelName == secondaryName ? secondaryDedicatedModel : nil
-                }
-                if cachedSecondary == nil, let loaded = makeModel(named: secondaryName, computeUnits: .all)?.mlModel {
-                    modelLock.withLock {
-                        secondaryDedicatedModel = loaded
-                        secondaryDedicatedModelName = secondaryName
-                    }
-                    cachedSecondary = loaded
-                }
-                guard let model = cachedSecondary else { return [] }
-                return detectWithDedicatedANE(model: model, modelName: secondaryName, pixelBuffer: pixelBuffer,
-                                              orientation: orientation, cancellation: cancellation)
-            } else {
-                guard let loaded = makeModel(named: secondaryName, computeUnits: .all)?.mlModel else { return [] }
-                let results = detectWithDedicatedANE(model: loaded, modelName: secondaryName, pixelBuffer: pixelBuffer,
-                                                     orientation: orientation, cancellation: cancellation)
-                return results
-            }
-        }
-
-        let merged = primaryCandidates + secondaryCandidates
-        return Self.fuseDetectionsWithDepthNMS(merged, depthGrid: depthGrid, depthSide: depthSide)
+        return Self.fuseDetectionsWithDepthNMS(primaryCandidates, depthGrid: depthGrid, depthSide: depthSide)
     }
 
     /// Depth-Weighted IoU NMS: keeps foreground & background overlapping subjects separated when their depth
@@ -750,11 +700,11 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     
     private func recoverLightweightModel() {
         let current = modelLock.withLock { loadedModelName }
-        guard current == "yolov26_ane" || current == "yolo26s" || current == "yolo12s" || current == "yolo11s" else { return }
+        guard current == "yolo26s" || current == "yolo12s" || current == "yolo11s" else { return }
         modelLock.withLock { yoloCoreMLModel = nil; yoloNativeMLModel = nil; loadedModelName = nil; isDedicatedYOLO26ANE = false }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
-            for name in ["yolov26_416_fp16", "yolo26n", "yolo12n", "yolo11n"] {
+            for name in ["yolo12n", "yolo26n", "yolo11n"] {
                 if let modelResult = self.makeModel(named: name, computeUnits: .all) {
                     self.modelLock.withLock {
                         self.yoloCoreMLModel = modelResult.vnModel
@@ -771,6 +721,9 @@ public final class YOLODetectionEngine: @unchecked Sendable {
     // MARK: - COCO labels
     public func mapYOLOLabelToCategory(_ label: String) -> NeuralSubjectCategory {
         let l = label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if l == "hot dog" {
+            return .foregroundObject
+        }
         
         // 1. Nhận diện Khuôn mặt (Face)
         if l == "face" || l == "human face" || l == "head" || l == "portrait_face" || l == "khuon mat" {
@@ -783,15 +736,16 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             return .human
         }
         
-        // 3. Nhận diện Động vật / Thú cưng (Animal / Pets)
+        // 3. Nhận diện Động vật / Thú cưng (Animal / Pets) — word-safe so "hot dog" / "cathedral" never misclassify
         let animalLabels: Set<String> = [
             "cat", "dog", "bird", "horse", "sheep", "cow", "elephant", "bear",
             "zebra", "giraffe", "rabbit", "deer", "fox", "monkey", "panda",
             "lion", "tiger", "pet", "kitten", "puppy", "hamster", "animal",
-            "duck", "chicken", "pig", "goat", "mouse", "squirrel", "wolf",
+            "duck", "chicken", "pig", "goat", "squirrel", "wolf",
             "otter", "koala", "kangaroo"
         ]
-        if animalLabels.contains(l) || l.contains("dog") || l.contains("cat") || l.contains("pet") {
+        let words = Set(l.split(whereSeparator: { !$0.isLetter }).map(String.init))
+        if animalLabels.contains(l) || words.contains("dog") || words.contains("cat") || words.contains("pet") {
             return .animal
         }
         
@@ -845,9 +799,15 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             "truck": "Xe tải",
             "boat": "Thuyền",
             "traffic light": "Đèn giao thông",
+            "stop sign": "Biển báo Stop",
             "backpack": "Balo",
             "umbrella": "Chiếc ô",
             "handbag": "Túi xách",
+            "kite": "Cánh diều",
+            "baseball bat": "Gậy bóng chày",
+            "skis": "Ván trượt tuyết",
+            "surfboard": "Ván lướt sóng",
+            "tennis racket": "Vợt tennis",
             "bottle": "Chai nước",
             "wine glass": "Ly rượu",
             "cup": "Cốc nước",
@@ -859,6 +819,7 @@ public final class YOLODetectionEngine: @unchecked Sendable {
             "apple": "Táo",
             "sandwich": "Bánh mì",
             "orange": "Quả cam",
+            "hot dog": "Hot dog",
             "pizza": "Pizza",
             "donut": "Bánh donut",
             "cake": "Bánh ngọt",
