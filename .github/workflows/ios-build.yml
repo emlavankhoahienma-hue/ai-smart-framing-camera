@@ -65,7 +65,13 @@ jobs:
             tests/CompositionPlanningRegression.swift \
             -o "$RUNNER_TEMP/composition-regressions"
           "$RUNNER_TEMP/composition-regressions"
+          xcrun clang++ -std=gnu++20 -O3 -c \
+            AISmartFramingCamera/Services/NativeTrackingCore.cpp \
+            -o "$RUNNER_TEMP/NativeTrackingCore.o"
           xcrun swiftc -O -warnings-as-errors \
+            -import-objc-header AISmartFramingCamera/Services/NativeTrackingCore.h \
+            "$RUNNER_TEMP/NativeTrackingCore.o" \
+            -lc++ \
             AISmartFramingCamera/Services/CameraLogger.swift \
             AISmartFramingCamera/Services/CompositionTuning.swift \
             AISmartFramingCamera/Services/CompositionPureCalculations.swift \
