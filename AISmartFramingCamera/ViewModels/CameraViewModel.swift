@@ -2974,20 +2974,20 @@ public final class CameraViewModel: ObservableObject {
         setupMotionCallbacks()
         syncHorizonLevelerLifecycle()
         self.showAbnormalExitBanner = CameraLogger.shouldShowAbnormalExitBanner()
-        CameraLogger.registerSessionStateProvider { [weak self] in
-            guard let self else { return "vm=nil" }
-            return String(
-                format: "session=%d hibernate=%d ai=%@ zoom=%.2fx livePhoto=%d",
-                self.cameraService.isSessionRunning ? 1 : 0,
-                self.isCameraHibernating ? 1 : 0,
-                String(describing: self.aiSessionState),
-                self.displayZoom,
-                self.isLivePhotoEnabled ? 1 : 0
-            )
-        }
+        CameraLogger.updateSessionStateSummary("session=0 hibernate=0 ai=idle zoom=1.00x")
     }
 
     private func updateFrameProcessingConfiguration() {
+        CameraLogger.updateSessionStateSummary(
+            String(
+                format: "session=%d hibernate=%d ai=%@ zoom=%.2fx livePhoto=%d",
+                cameraService.isSessionRunning ? 1 : 0,
+                isCameraHibernating ? 1 : 0,
+                String(describing: aiSessionState),
+                displayZoom,
+                isLivePhotoEnabled ? 1 : 0
+            )
+        )
         frameProcessor.updateConfiguration(
             CameraFrameProcessingConfiguration(
                 isHibernating: isCameraHibernating,
@@ -7452,7 +7452,9 @@ extension CameraViewModel: CameraServiceDelegate {
                 // 3) Run full Local AI analysis on live detached frame (if camera frame available)
                 if let snap = self.frameProcessor.latestTrackingFrameSnapshot(),
                    let detached = Self.clonePixelBuffer(snap.0) {
-                    let pose = SpatialTrackingEngine.shared.pose(at: snap.1.timestamp) ?? SpatialTrackingEngine.shared.latestPose()
+                    let pose = SpatialTrackingEngine.shared.pose(at: snap.1.timestamp)
+                        ?? SpatialTrackingEngine.shared.latestPose()
+                        ?? simd_quatd(ix: 0, iy: 0, iz: 0, r: 1)
                     let cancel = CompositionAnalysisCancellation(softTimeoutSeconds: 4.5)
                     let reqID = UUID()
                     let zooms = self.cameraService.availableDisplayZoomOptions

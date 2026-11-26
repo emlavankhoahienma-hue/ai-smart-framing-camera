@@ -29,6 +29,7 @@ public enum CameraLogger {
     private static let peakLock = NSLock()
     private static var peakFootprintBytes: UInt64 = 0
     private static var activeSessionSummaryProvider: (@Sendable () -> String)?
+    private static var latestSessionStateSummary: String = "ready"
 
     /// `true` nếu phiên trước kết thúc mà không đi qua `didEnterBackground` / `willTerminate` (ví dụ Jetsam OOM, SIGABRT, SIGSEGV, Watchdog).
     public private(set) static var didPreviousSessionExitUncleanly: Bool = false
@@ -167,6 +168,12 @@ public enum CameraLogger {
     public static func registerSessionStateProvider(_ provider: @escaping @Sendable () -> String) {
         fileLock.lock()
         activeSessionSummaryProvider = provider
+        fileLock.unlock()
+    }
+
+    public static func updateSessionStateSummary(_ summary: String) {
+        fileLock.lock()
+        latestSessionStateSummary = summary
         fileLock.unlock()
     }
 
@@ -368,8 +375,8 @@ public enum CameraLogger {
         let timer = DispatchSource.makeTimerSource(queue: heartbeatQueue)
         timer.schedule(deadline: .now() + 1.0, repeating: 1.0, leeway: .milliseconds(120))
         timer.setEventHandler {
-            let provider = fileLock.withLock { activeSessionSummaryProvider }
-            let stateText = provider?() ?? "ready"
+            let (provider, cachedSummary) = fileLock.withLock { (activeSessionSummaryProvider, latestSessionStateSummary) }
+            let stateText = provider?() ?? cachedSummary
             let phys = currentMemoryFootprintMB()
             let peak = peakMemoryFootprintMB()
             let avail = availableMemoryMB()
@@ -417,7 +424,7 @@ public enum CameraLogger {
         let phys = currentMemoryFootprintMB()
         let avail = availableMemoryMB()
         let therm = thermalStateName()
-        let line = String(
+        var line = String(
             format: "[%@] [thr=%@] [mem=%.1fMB avail=%dMB therm=%@] %@ %@: %@\n",
             ts, thr, phys, avail, therm, category.rawValue, level, message
         )
@@ -463,7 +470,7 @@ public enum CameraLogger {
         let reason = exception.reason ?? "Không có lý do chi tiết"
         let name = exception.name.rawValue
         let backtrace = exception.callStackSymbols.joined(separator: "\n")
-        let report = """
+        var report = """
         =========================================
         ALIGNAI STUDIO CRASH REPORT (NSException)
         Time: \(utcTimestampMillis())
@@ -529,7 +536,8 @@ public enum CameraLogger {
         raise(sig)
     }
 
-    fileprivate static func appendMetricKitDiagnostic(_ report: String) {
+    fileprivate static func appendMetricKitDiagnostic(_ reportInput: String) {
+        var report = reportInput
         fileLock.lock()
         didPreviousSessionExitUncleanly = true
         if previousSessionAbnormalSummary == nil {
@@ -538,7 +546,7 @@ public enum CameraLogger {
         if let mkURL = metricKitLogFileURL, let data = report.data(using: .utf8) {
             if FileManager.default.fileExists(atPath: mkURL.path),
                let fh = try? FileHandle(forWritingTo: mkURL) {
-                try? fh.seekToEnd()
+                _ = try? fh.seekToEnd()
                 try? fh.write(contentsOf: data)
                 try? fh.close()
             } else {
