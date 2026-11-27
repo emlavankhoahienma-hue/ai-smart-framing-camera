@@ -1328,9 +1328,11 @@ enum CameraFramingDirector {
             // Criterion 5: Optical quality preference vs digital upscale penalty
             let qualPen = opticalQualityPenalty(for: z)
 
-            // Guard: never zoom into heavier severe clutter on multi-object scenes
-            let clutterWorsenedPen: Double = (!isBase && vpClut.clutterScore > baseClutter.clutterScore + 0.02 && vpClut.clutterScore >= 0.50)
-                ? 0.22
+            // Guard: never zoom into persistent severe clutter (e.g. crowded desk with 8+ competing objects where clutter stays >= 0.54)
+            let clutterWorsenedPen: Double = (!isBase &&
+                ((vpClut.clutterScore > baseClutter.clutterScore + 0.02 && vpClut.clutterScore >= 0.50) ||
+                 (distractors.count >= 8 && vpClut.clutterScore >= baseClutter.clutterScore - 0.01 && vpClut.clutterScore >= 0.54)))
+                ? 0.25
                 : 0.0
 
             let total = 0.50 * fScore + 0.42 * clutGain + distractorClearBonus + 0.16 * voidGain - edgeCutPen - qualPen - clutterWorsenedPen
@@ -1839,8 +1841,28 @@ enum CameraFramingDirector {
         let isFrameAperture = (semanticAffinities["frame_aperture"] ?? 0.0) > 0.034 &&
             (sceneHints.role == .apertureView || siglipScene == "aperture" || (clusterableObjects.isEmpty && isIndoorRoomCue))
         let hasRealVistaNature = strongWideNature.contains { !groundCoverTokens.contains($0.label.lowercased()) }
-        let hasStrongCenteredMask = !isGrandVistaScene && !hasRealVistaNature &&
-            (centeredVisualObject.map { $0.confidence >= 0.60 && $0.area >= 0.18 && hypot(Double($0.center.x) - 0.50, Double($0.center.y) - 0.48) <= 0.18 } ?? false)
+        let hasChromaticVisualObject: Bool = {
+            guard let vis = centeredVisualObject, raster.side >= 8,
+                  raster.structuralChromaticAccentMap.count == raster.side * raster.side else { return false }
+            let s = raster.side
+            let x0 = max(0, min(s - 1, Int(Double(vis.boundingBox.minX) * Double(s))))
+            let x1 = max(x0 + 1, min(s, Int(ceil(Double(vis.boundingBox.maxX) * Double(s)))))
+            let y0 = max(0, min(s - 1, Int(Double(vis.boundingBox.minY) * Double(s))))
+            let y1 = max(y0 + 1, min(s, Int(ceil(Double(vis.boundingBox.maxY) * Double(s)))))
+            var sum = 0.0
+            var cnt = 0
+            for y in y0..<y1 {
+                let row = y * s
+                for x in x0..<x1 {
+                    sum += raster.structuralChromaticAccentMap[row + x]
+                    cnt += 1
+                }
+            }
+            let meanChroma = cnt > 0 ? sum / Double(cnt) : 0.0
+            return meanChroma >= 0.14
+        }()
+        let hasStrongCenteredMask = !isGrandVistaScene && !hasRealVistaNature && hasChromaticVisualObject &&
+            (centeredVisualObject.map { $0.confidence >= 0.58 && $0.area >= 0.16 && hypot(Double($0.center.x) - 0.50, Double($0.center.y) - 0.48) <= 0.24 } ?? false)
         let hasStrongFocalSubject = hasStrongCenteredMask || fgCandidates.contains {
             (($0.det.domain == .pureFlower || $0.det.domain == .food) && $0.det.confidence >= 0.35 && !$0.isEdgeSliver && !$0.isSuppressedFood) ||
             (($0.det.domain == .vehicle || $0.det.domain == .object) &&
@@ -2027,9 +2049,12 @@ enum CameraFramingDirector {
                 guard nxt.heroScore >= 0.38 * a0.heroScore else { return false }
                 let maxGapX: CGFloat = (sameSpecies && nxt.det.confidence >= 0.68) ? 0.36 : 0.24
                 let maxGapY: CGFloat = (sameSpecies && nxt.det.confidence >= 0.68) ? 0.28 : 0.24
-                guard abs(nxt.depth - a0.depth) < 0.22, gapX < maxGapX && gapY < maxGapY else { return false }
+                let isWideGap = gapX >= 0.24
+                let maxDepthDiff = isWideGap ? 0.16 : 0.22
+                let minSharpRatio = isWideGap ? 0.72 : 0.48
+                guard abs(nxt.depth - a0.depth) < maxDepthDiff, gapX < maxGapX && gapY < maxGapY else { return false }
                 let nxtSharp = meanEdgeSharpness(in: nxt.det.boundingBox, raster: raster)
-                return nxtSharp >= 0.48 * leadSharp
+                return nxtSharp >= minSharpRatio * leadSharp
             }
             if !coherentPeers.isEmpty && (coherentPeers[0].heroScore >= 0.35 * a0.heroScore) {
                 let pets = [a0] + Array(coherentPeers.prefix(3))
