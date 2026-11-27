@@ -933,6 +933,7 @@ enum CameraFramingDirector {
         role: DirectorPhotographicRole,
         isFaceOnlyHero: Bool,
         faceBounds: CGRect?,
+        groupFaces: [CGRect] = [],
         isMinimalist: Bool,
         noClearSubject: Bool,
         isClutteredMultiObjectScene: Bool,
@@ -1064,13 +1065,18 @@ enum CameraFramingDirector {
             if (heroBox.minX <= 0.010 || heroBox.maxX >= 0.990) && bw >= 0.72 && fb.minX <= 0.05 { return false }
             return Double(fb.height) <= 0.40 && fb.minY >= 0.032 && fb.minX >= 0.015 && fb.maxX <= 0.985
         }()
-        // Tall-narrow full-body person in wide landscape (e.g. 16:9 skier filling 26% width x 95% height cleanly) is NOT oversized!
+        // Tall-narrow full-body person in wide landscape (e.g. 16:9 skier filling 25% width cleanly) is NOT oversized!
         let isTallNarrowLandscapeFullBody: Bool = (role == .portrait || role == .environmentalPortrait) &&
-            frameAspect > 1.18 && bw <= 0.44 && bArea <= 0.38 &&
-            (faceBounds.map { $0.minY >= 0.015 && Double($0.height) <= 0.30 } ?? (heroBox.minY >= 0.005 || bh <= 0.98))
+            frameAspect > 1.18 && bw <= 0.42 && bArea <= 0.36 &&
+            (faceBounds.map { $0.minY >= 0.012 && Double($0.height) <= 0.30 } ?? true)
+        // Cozy waist-up group portrait where ALL detected faces sit cleanly inside the frame with comfortable headroom
+        let allGroupFacesClean: Bool = role == .group && !groupFaces.isEmpty && currentZoom <= 1.14 &&
+            groupFaces.allSatisfy { fb in
+                fb.minY >= 0.045 && fb.minX >= 0.06 && fb.maxX <= 0.94 && Double(fb.height) <= 0.38
+            }
 
         let topFaceClipped: Bool = {
-            guard (role == .portrait || role == .group), !isWellFramedWaistUp, !isTallNarrowLandscapeFullBody else { return false }
+            guard (role == .portrait || role == .group), !isWellFramedWaistUp, !isTallNarrowLandscapeFullBody, !allGroupFacesClean else { return false }
             if let fb = faceBounds, role == .portrait {
                 return (heroBox.minY <= 0.012 && fb.minY <= 0.030 && (bArea >= 0.44 || bh >= 0.74)) ||
                     Double(fb.height) > 0.42 || fb.minY <= 0.010
@@ -1079,10 +1085,21 @@ enum CameraFramingDirector {
                 (isFaceOnlyHero && bh > 0.40) ||
                 (isFaceOnlyHero && heroBox.minY <= 0.020 && bh >= 0.32)
         }()
-        // Horizontal body/head slicing at left/right frame edge (e.g. headless reclining person or half-cut cat/dog)
-        let sideBodyClipped: Bool = !isWellFramedWaistUp && !isTallNarrowLandscapeFullBody &&
-            (role == .portrait || role == .group || role == .animal || role == .vehicle) &&
-            ((heroBox.minX <= 0.010 || heroBox.maxX >= 0.990) && bw >= 0.68 && bArea >= 0.36)
+        // Horizontal body/head slicing at left/right frame edge (e.g. headless reclining person in 16:9 or half-cut cat in 4:3;
+        // avoids false triggers on narrow vertical 9:16 portraits where knees/shoulders naturally touch both side walls!)
+        let sideBodyClipped: Bool = {
+            guard !isWellFramedWaistUp, !isTallNarrowLandscapeFullBody, !allGroupFacesClean else { return false }
+            guard role == .portrait || role == .group || role == .animal || role == .vehicle else { return false }
+            let touchesL = heroBox.minX <= 0.010
+            let touchesR = heroBox.maxX >= 0.990
+            if let fb = faceBounds, (fb.minX <= 0.010 || fb.maxX >= 0.990) { return true }
+            if role == .portrait || role == .group {
+                // In narrow vertical portrait frames, spanning left-to-right across the lower half is natural, not side-amputation
+                if frameAspect < 0.92 && touchesL && touchesR && bh < 0.78 { return false }
+                return (touchesL || touchesR) && bw >= 0.70 && bh >= 0.55 && bArea >= 0.40
+            }
+            return (touchesL || touchesR) && bw >= 0.68 && bArea >= 0.36
+        }()
         let animalOrObjectClipped: Bool = {
             guard role == .animal || role == .object || role == .flower || role == .vehicle else { return false }
             let topTight = heroBox.minY <= 0.012 && bh >= 0.84 && bArea >= 0.42
@@ -1092,12 +1109,12 @@ enum CameraFramingDirector {
         }()
         let archCramped = role == .architecture &&
             ((heroBox.minY <= 0.012 && heroBox.maxY >= 0.988 && bw >= 0.76) || (bw >= 0.88 && bh >= 0.86))
-        let groupCramped = role == .group &&
+        let groupCramped = role == .group && !allGroupFacesClean &&
             ((heroBox.minY <= 0.012 && (bArea >= 0.50 || bh >= 0.76)) ||
-             (heroBox.minX <= 0.008 && heroBox.maxX >= 0.992 && bArea >= 0.58))
+             (heroBox.minX <= 0.008 && heroBox.maxX >= 0.992 && bh >= 0.78 && bArea >= 0.68))
 
         let isSeverelyClipped = topFaceClipped || sideBodyClipped || animalOrObjectClipped || archCramped || groupCramped
-        let isOversized = !isWellFramedWaistUp && !isTallNarrowLandscapeFullBody && role != .food &&
+        let isOversized = !isWellFramedWaistUp && !isTallNarrowLandscapeFullBody && !allGroupFacesClean && role != .food &&
             measured > spec.maxFill && bArea >= 0.48
 
         if isSeverelyClipped || isOversized {
@@ -1191,6 +1208,12 @@ enum CameraFramingDirector {
         var anyZoomInMarginSafe = false
         var anyZoomInBlockedByUpscale = false
 
+        let baseDistArea: Double = distractors.reduce(0.0) { acc, d in
+            let inter = d.intersection(fullFrame)
+            guard !inter.isNull, !inter.isEmpty else { return acc }
+            return acc + Double(inter.width * inter.height)
+        }
+
         for z in candidateZooms {
             let relZ = Double(z / max(0.5, currentZoom))
             let isBase = abs(z - currentZoom) <= 0.03
@@ -1200,25 +1223,31 @@ enum CameraFramingDirector {
                     heroBox: heroBox, heroAnchor: heroAnchor, role: role,
                     portraitBustBox: portraitBustBox, relZoom: relZ
                 )
-            let projHero = isBase ? heroBox : projectIntoViewport(heroBox, viewport: vp)
+            // Physical post-pan viewport centered freely on the hero (real 3D camera pans to center the subject
+            // even if it currently sits near x=0 or y=1 in the pre-pan frame!).
+            let span = CGFloat(min(1.0, max(0.15, 1.0 / max(1.0, relZ))))
+            let physicalPostPanVP = isBase
+                ? fullFrame
+                : CGRect(x: heroBox.midX - span * 0.5, y: heroBox.midY - span * 0.5, width: span, height: span)
+            let projHero = isBase ? heroBox : projectIntoViewport(heroBox, viewport: physicalPostPanVP)
 
-            // Criterion 1: Hard subject & group containment with 5-8% safe margin
+            // Criterion 1: Hard subject & group containment in the TRUE POST-PAN centered frame with 4.5-5.5% safe margins
             var marginSafe = true
             if !isBase {
                 let allowPortraitBustCrop = (role == .portrait && isWaistUpPortrait && portraitBustBox != nil && !isFaceOnlyHero)
                 if allowPortraitBustCrop, let bust = portraitBustBox {
-                    let projBust = projectIntoViewport(bust, viewport: vp)
+                    let bustVP = CGRect(x: bust.midX - span * 0.5, y: bust.midY - span * 0.5, width: span, height: span)
+                    let projBust = projectIntoViewport(bust, viewport: bustVP)
                     if projBust.minX < marginX || projBust.maxX > (1.0 - marginX) ||
                        projBust.minY < 0.045 || projBust.maxY > 0.97 {
                         marginSafe = false
                     }
                 } else {
-                    let minAllowedX = marginX
-                    let maxAllowedX = 1.0 - marginX
-                    let minAllowedY = marginY
-                    let maxAllowedY = (role == .portrait && isWaistUpPortrait) ? 1.02 : (1.0 - marginY)
-                    if projHero.minX < minAllowedX - 0.008 || projHero.maxX > maxAllowedX + 0.008 ||
-                       projHero.minY < minAllowedY - 0.008 || projHero.maxY > maxAllowedY + 0.008 {
+                    let maxAllowedW = 1.0 - 2.0 * Double(marginX) + 0.012
+                    let maxAllowedH = (role == .portrait && isWaistUpPortrait)
+                        ? (1.02 - Double(marginY))
+                        : (1.0 - 2.0 * Double(marginY) + 0.012)
+                    if Double(projHero.width) > maxAllowedW || Double(projHero.height) > maxAllowedH {
                         marginSafe = false
                     }
                 }
@@ -1226,7 +1255,7 @@ enum CameraFramingDirector {
                     let reqVis: Double = (role == .group) ? 0.96 : 0.92
                     let protMargin: CGFloat = (role == .group) ? 0.045 : 0.030
                     for pBox in protectedBoxes {
-                        let pp = projectIntoViewport(pBox, viewport: vp)
+                        let pp = projectIntoViewport(pBox, viewport: physicalPostPanVP)
                         if visibleFraction(pp, margin: protMargin) < reqVis {
                             marginSafe = false
                             break
@@ -1246,20 +1275,30 @@ enum CameraFramingDirector {
                 ? baseClutter
                 : evaluateViewportClutter(viewport: vp, heroBox: heroBox, distractors: distractors, raster: raster, sceneHints: sceneHints)
             let clutGain = max(-0.20, baseClutter.clutterScore - vpClut.clutterScore)
+            let distractorClearBonus: Double = {
+                guard !isBase, baseDistArea >= 0.035 else { return 0.0 }
+                let vpDistArea: Double = distractors.reduce(0.0) { acc, d in
+                    let inter = d.intersection(vp)
+                    guard !inter.isNull, !inter.isEmpty else { return acc }
+                    return acc + Double(inter.width * inter.height)
+                }
+                let removedFrac = max(0.0, (baseDistArea - vpDistArea) / max(1e-5, baseDistArea))
+                return removedFrac >= 0.60 ? (0.068 * removedFrac) : 0.0
+            }()
             let voidGain: Double = (!isBase && !isMinimalist && projFill <= spec.idealFill + 0.10 && baseClutter.deadVoidFraction >= 0.42)
                 ? max(0.0, (baseClutter.deadVoidFraction - vpClut.deadVoidFraction) * 0.45 + 0.06 * min(1.0, (relZ - 1.0)))
                 : 0.0
 
-            // Criterion 4: Border partial-cut penalty on secondary objects (capped so cleaning heavy clutter isn't paralyzed)
+            // Criterion 4: Border partial-cut penalty on secondary objects (prefers clean borders without vetoing needed zoom)
             let deltaCuts = Double(vpClut.partialEdgeCuts - baseClutter.partialEdgeCuts)
             let edgeCutPen = deltaCuts > 0
-                ? min(0.14, deltaCuts * 0.045)
-                : max(-0.12, deltaCuts * 0.055) // Negative penalty = bonus when removing already-sliced border clutter!
+                ? min(0.075, deltaCuts * 0.025)
+                : max(-0.10, deltaCuts * 0.045) // Negative penalty = bonus when removing already-sliced border clutter!
 
             // Criterion 5: Optical quality preference vs digital upscale penalty
             let qualPen = opticalQualityPenalty(for: z)
 
-            let total = 0.50 * fScore + 0.42 * clutGain + 0.16 * voidGain - edgeCutPen - qualPen
+            let total = 0.50 * fScore + 0.42 * clutGain + distractorClearBonus + 0.16 * voidGain - edgeCutPen - qualPen
             let candTrace = ZoomCandidateTrace(
                 zoom: z,
                 totalScore: total,
@@ -1548,14 +1587,23 @@ enum CameraFramingDirector {
 
             // Texture hallucination guard for rare animals falsely fired on flat grass/gravel/stone patterns
             let isTextureAnimalFalsePositive: Bool = {
-                guard d.domain == .animal, d.confidence < 0.56 else { return false }
-                let rareAnimalTokens: Set<String> = [
-                    "snake", "lizard", "frog", "insect", "beetle", "spider", "bear", "elephant", "zebra", "giraffe",
-                    "rắn", "thằn lằn", "ếch", "côn trùng", "nhện", "gấu", "voi", "ngựa vằn", "hươu cao cổ"
+                guard d.domain == .animal else { return false }
+                let nonCocoReptileInsectTokens: Set<String> = [
+                    "snake", "lizard", "frog", "insect", "beetle", "spider",
+                    "rắn", "thằn lằn", "ếch", "côn trùng", "nhện"
                 ]
-                guard rareAnimalTokens.contains(lower) else { return false }
+                let rareCocoAnimalTokens: Set<String> = [
+                    "bear", "elephant", "zebra", "giraffe", "gấu", "voi", "ngựa vằn", "hươu cao cổ"
+                ]
+                let isZeroShotReptile = nonCocoReptileInsectTokens.contains(lower)
+                let isRareCoco = rareCocoAnimalTokens.contains(lower) && d.confidence < 0.56
+                guard isZeroShotReptile || isRareCoco else { return false }
                 let animalAff = max(semanticAffinities["animal"] ?? 0.0, semanticAffinities["pet_portrait"] ?? 0.0)
-                guard animalAff < 0.025 && siglipScene != "animal" else { return false }
+                guard animalAff < 0.024 && siglipScene != "animal" else { return false }
+                if isZeroShotReptile {
+                    // Open-vocab reptile/insect classes (not in COCO) need either SigLIP animal support or high-chroma focal pop
+                    return true
+                }
                 let frameDepthMean = raster.foregroundDepth.isEmpty ? 0.5 : (raster.foregroundDepth.reduce(0.0, +) / Double(raster.foregroundDepth.count))
                 return !(raster.hasCoreMLDepth && (dep - frameDepthMean) > 0.12)
             }()
@@ -1748,13 +1796,10 @@ enum CameraFramingDirector {
         let dominantWideNature = !strongWideNature.isEmpty && validPeople.isEmpty && validAnimals.isEmpty && !hasStrongFocalSubject
         let hasArchVP = (sceneHints.refinedVanishingPoint?.confidence ?? raster.measuredVanishingPoint?.confidence ?? 0.0) >= 0.38
         let hasArchRoof = (sceneHints.archRoofTopY ?? raster.structuralArchRoofTopY) != nil
-        let hasDepthRelief: Bool = {
-            guard raster.hasCoreMLDepth, raster.foregroundDepth.count >= 16 else { return true }
-            let sd = raster.foregroundDepth.sorted()
-            return sd[Int(Double(sd.count - 1) * 0.95)] - sd[Int(Double(sd.count - 1) * 0.15)] >= 0.18
-        }()
-        let isPlainFlatTextureWall = strongArchitecture.isEmpty && !hasArchVP && !hasArchRoof &&
-            raster.hasCoreMLDepth && !hasDepthRelief && raster.subjectAttentionDominance < 0.38
+        let anyArchDet = fgCandidates.contains { $0.det.domain == .architecture && !$0.isEdgeSliver && $0.det.confidence >= 0.20 }
+        let isPlainFlatTextureWall = strongArchitecture.isEmpty && !anyArchDet && !hasArchVP && !hasArchRoof &&
+            raster.structuralSkyFraction < 0.04 &&
+            (siglipScene == "architecture" || sceneHints.role == .architecture)
         let dominantArchitecture = validPeople.isEmpty && validAnimals.isEmpty && !isPlainFlatTextureWall &&
             (!strongArchitecture.isEmpty || siglipScene == "architecture" || siglipScene == "street" ||
              sceneHints.role == .architecture || sceneHints.role == .streetLeading) &&
@@ -1772,6 +1817,7 @@ enum CameraFramingDirector {
         var protectedBoxes: [CGRect] = []
         var isFaceOnlyHero = false
         var heroFaceBounds: CGRect? = nil
+        var heroGroupFaces: [CGRect] = []
         var portraitBustBox: CGRect? = nil
         var noClearSubject = false
 
@@ -1779,13 +1825,22 @@ enum CameraFramingDirector {
             var distinctGroupMembers: [RankedCandidate] = []
             if let leadP = validPeople.first {
                 distinctGroupMembers.append(leadP)
+                let leadSharp = max(0.02, meanEdgeSharpness(in: leadP.det.boundingBox, raster: raster))
                 for cand in validPeople.dropFirst() {
                     let candTouchesEdge = cand.det.boundingBox.minX <= 0.015 || cand.det.boundingBox.maxX >= 0.985
                     let isEdgeBystander = candTouchesEdge && !cand.hasFace &&
                         (cand.det.boundingBox.width < 0.15 || cand.det.area < 0.16 * leadP.det.area)
                     if isEdgeBystander { continue }
+                    let depthDiff = abs(cand.depth - leadP.depth)
+                    // Reject out-of-focus background bokeh people (different depth plane or much lower edge sharpness)
+                    if raster.hasCoreMLDepth && depthDiff >= 0.22 { continue }
+                    let candSharp = meanEdgeSharpness(in: cand.det.boundingBox, raster: raster)
+                    if raster.hasCoreMLDepth && candSharp < 0.52 * leadSharp && depthDiff >= 0.08 { continue }
+                    // Reject scattered headless background spectators across wide gaps (e.g. crowd behind fence)
+                    let gapX = max(0.0, max(leadP.det.boundingBox.minX, cand.det.boundingBox.minX) - min(leadP.det.boundingBox.maxX, cand.det.boundingBox.maxX))
+                    if !cand.hasFace && gapX > 0.22 && cand.det.area < 0.55 * leadP.det.area { continue }
                     guard cand.heroScore >= 0.30 * leadP.heroScore,
-                          abs(cand.depth - leadP.depth) < 0.35 else { continue }
+                          depthDiff < 0.35 else { continue }
                     let overlapsExisting = distinctGroupMembers.contains { m in
                         rectIoU(cand.det.boundingBox, m.det.boundingBox) >= 0.35 ||
                         rectContainment(cand.det.boundingBox, inside: m.det.boundingBox) >= 0.60
@@ -1833,7 +1888,8 @@ enum CameraFramingDirector {
                 heroLabel = "group(\(groupCount))"
                 heroLocalized = "Nhóm \(groupCount) người"
                 heroConf = validPeople[0].det.confidence
-                protectedBoxes = members.map(\.det.boundingBox) + memberFaces.map(\.boundingBox)
+                heroGroupFaces = memberFaces.map(\.boundingBox)
+                protectedBoxes = members.map(\.det.boundingBox) + heroGroupFaces
             } else {
                 let p0 = validPeople[0]
                 heroBox = p0.det.boundingBox
@@ -1904,13 +1960,19 @@ enum CameraFramingDirector {
             }
         } else if let a0 = validAnimals.first,
                   topNamed.map({ $0.det.domain == .animal || a0.heroScore >= $0.heroScore * 0.72 }) ?? true {
-            // Multi-animal group support ONLY when peers share the same depth plane, proximity, and focal sharpness
+            // Multi-animal group support: always preserve touching/overlapping same-species peers;
+            // for separated animals, require shared depth plane and focal sharpness (excludes distant bokeh decoys)
             let leadSharp = max(0.02, meanEdgeSharpness(in: a0.det.boundingBox, raster: raster))
             let coherentPeers = validAnimals.dropFirst().filter { nxt in
-                guard nxt.heroScore >= 0.42 * a0.heroScore, abs(nxt.depth - a0.depth) < 0.22 else { return false }
+                guard nxt.heroScore >= 0.42 * a0.heroScore else { return false }
                 let gapX = max(0.0, max(a0.det.boundingBox.minX, nxt.det.boundingBox.minX) - min(a0.det.boundingBox.maxX, nxt.det.boundingBox.maxX))
                 let gapY = max(0.0, max(a0.det.boundingBox.minY, nxt.det.boundingBox.minY) - min(a0.det.boundingBox.maxY, nxt.det.boundingBox.maxY))
-                guard gapX < 0.24 && gapY < 0.24 else { return false }
+                let isTouchingSameSpecies = gapX <= 0.04 && gapY <= 0.04 &&
+                    nxt.det.localizedLabel.lowercased() == a0.det.localizedLabel.lowercased()
+                if isTouchingSameSpecies {
+                    return abs(nxt.depth - a0.depth) < 0.32
+                }
+                guard abs(nxt.depth - a0.depth) < 0.22, gapX < 0.24 && gapY < 0.24 else { return false }
                 let nxtSharp = meanEdgeSharpness(in: nxt.det.boundingBox, raster: raster)
                 return nxtSharp >= 0.48 * leadSharp
             }
@@ -2051,7 +2113,9 @@ enum CameraFramingDirector {
                 heroLocalized = role == .street ? "Góc phố" : "Công trình kiến trúc"
                 heroConf = 0.74
             }
-        } else if let food0 = topNamed, food0.det.domain == .food {
+        } else if let food0 = topNamed, food0.det.domain == .food,
+                  !(food0.det.area < 0.032 && food0.dAim > 0.28 &&
+                    (maskInstances.first.map { $0.det.area >= 0.16 && $0.dAim <= 0.24 && $0.heroScore > food0.heroScore * 1.05 } ?? false)) {
             role = .food
             heroDomain = .food
             if !companionBoxes.isEmpty {
@@ -2072,8 +2136,8 @@ enum CameraFramingDirector {
         } else if let obj0 = topNamed,
                   obj0.det.domain != .furniture && obj0.det.domain != .pottedPlant &&
                   !(obj0.det.confidence < 0.42 && obj0.dAim > 0.36 && (maskInstances.first?.heroScore ?? 0) > obj0.heroScore * 1.6) &&
-                  !(obj0.det.domain == .object && obj0.det.area < 0.032 && obj0.dAim > 0.28 &&
-                    (maskInstances.first.map { $0.det.area >= 0.16 && $0.dAim <= 0.24 && $0.heroScore > obj0.heroScore * 1.15 } ?? false)) &&
+                  !((obj0.det.domain == .object || obj0.det.domain == .food) && obj0.det.area < 0.032 && obj0.dAim > 0.28 &&
+                    (maskInstances.first.map { $0.det.area >= 0.16 && $0.dAim <= 0.24 && $0.heroScore > obj0.heroScore * 1.05 } ?? false)) &&
                   (obj0.dAim <= 0.42 || obj0.det.confidence >= 0.45 || obj0.det.domain == .pureFlower ||
                    (siglipScene != "flower" && siglipScene != "foliage" && siglipScene != "sky_clouds" && siglipScene != "sunset" && siglipScene != "landscape")) {
             role = obj0.det.domain == .animal ? .animal : (obj0.det.domain == .vehicle ? .vehicle : (obj0.det.domain == .pureFlower ? .flower : .object))
@@ -2180,6 +2244,7 @@ enum CameraFramingDirector {
             role: role,
             isFaceOnlyHero: isFaceOnlyHero,
             faceBounds: heroFaceBounds,
+            groupFaces: heroGroupFaces,
             isMinimalist: isMinimalist,
             noClearSubject: noClearSubject,
             isClutteredMultiObjectScene: isClutteredMultiObjectScene,
@@ -3434,6 +3499,25 @@ enum CameraFramingDirector {
                 let meanC = sumC / Double(pix)
                 if area < 0.012 && (meanS < 0.22 || meanC < 0.40) { continue }
                 if meanS < 0.10 && meanC < 0.26 { continue }
+                // Same-row 3D depth pop guard: cancels ground/wall tilt gradients so flat gravel/pavement patches
+                // without genuine 3D relief or strong chromatic accent never hallucinate a foreground subject
+                if raster.hasCoreMLDepth {
+                    var rowBgSum = 0.0
+                    var rowBgCnt = 0
+                    for ry in minY...maxY {
+                        let rOff = ry * s
+                        for rx in 0..<s {
+                            if rx >= minX && rx <= maxX { continue }
+                            rowBgSum += raster.foregroundDepth[rOff + rx]
+                            rowBgCnt += 1
+                        }
+                    }
+                    if rowBgCnt >= 8 {
+                        let rowBgDepth = rowBgSum / Double(rowBgCnt)
+                        let depthPop = meanD - rowBgDepth
+                        if depthPop < 0.055 && meanC < 0.50 { continue }
+                    }
+                }
                 let dAim = hypot(cx - 0.50, cy - 0.46)
                 let aimW = 0.68 + 0.55 * exp(-(dAim * dAim) / (2.0 * 0.26 * 0.26))
                 let sc = (0.34 * meanD + 0.33 * meanS + 0.33 * meanC) * sqrt(max(0.012, area)) * aimW
