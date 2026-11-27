@@ -1605,7 +1605,7 @@ enum CompositionPlanner {
                               protectedPeople: protectedPeople,
                               activeThreshold: baselineProfile?.activeThreshold ?? 0.14)
             hasAttention = raster.hasAttention
-            evBias = computeOptimalEVBias(raster: raster, heroRect: box, aimPoint: aimPoint, zoom: zoom, scene: intent)
+            evBias = computeOptimalEVBias(raster: raster, heroRect: subject.bounds, aimPoint: aimPoint, zoom: zoom, scene: intent)
             torqueBalance = raster.visualTorqueBalance(heroRect: box, cropRect: CGRect(x: 0, y: 0, width: 1, height: 1))
         } else {
             let retention = visibleFraction(box)
@@ -2553,20 +2553,17 @@ enum CompositionPlanner {
         zoom: CGFloat,
         scene: LocalCompositionIntent
     ) -> CGFloat {
-        guard raster.isValid else { return 0.0 }
-        let targetLuma: Double
-        switch scene {
-        case .portrait: targetLuma = 0.54
-        case .animal: targetLuma = 0.53
-        case .food, .closeUp: targetLuma = 0.50
-        case .landscape, .street: targetLuma = 0.44
-        case .architecture: targetLuma = 0.46
-        case .environmentalPortrait, .group, .object: targetLuma = 0.48
-        }
+        guard raster.isValid, !raster.luminance.isEmpty else { return 0.0 }
 
         var heroLumaSum = 0.0, heroCount = 0.0
-        var centerLumaSum = 0.0, centerCount = 0.0
-        let centerRadius = 0.22
+        var totalLumaSum = 0.0
+        var highlightCount = 0
+        var nearClipCount = 0
+        let count = raster.side * raster.side
+        guard count > 0, raster.luminance.count >= count else { return 0.0 }
+
+        var sortedLuma = [Double]()
+        sortedLuma.reserveCapacity(count)
 
         for y in 0..<raster.side {
             let py = (Double(y) + 0.5) / Double(raster.side)
@@ -2574,20 +2571,45 @@ enum CompositionPlanner {
                 let px = (Double(x) + 0.5) / Double(raster.side)
                 let p = CGPoint(x: px, y: py)
                 let luma = raster.luminance[y * raster.side + x]
+                totalLumaSum += luma
+                sortedLuma.append(luma)
+                if luma >= 0.90 { highlightCount += 1 }
+                if luma >= 0.84 { nearClipCount += 1 }
                 if heroRect.contains(p) {
-                    heroLumaSum += luma; heroCount += 1
-                }
-                if hypot(px - Double(aimPoint.x), py - Double(aimPoint.y)) < centerRadius {
-                    centerLumaSum += luma; centerCount += 1
+                    heroLumaSum += luma
+                    heroCount += 1
                 }
             }
         }
-        let heroLuma = heroCount > 0 ? heroLumaSum / heroCount : 0.48
-        let centerLuma = centerCount > 0 ? centerLumaSum / centerCount : 0.48
-        let measuredLuma = heroCount > 0 ? (0.65 * heroLuma + 0.35 * centerLuma) : centerLuma
 
-        let evDelta = log2(targetLuma / max(0.08, measuredLuma))
-        return CGFloat(min(1.5, max(-1.5, evDelta)))
+        sortedLuma.sort()
+        let p95Index = min(count - 1, max(0, Int(Double(count - 1) * 0.95)))
+        let p95Luma = sortedLuma[p95Index]
+        let overallLuma = totalLumaSum / Double(count)
+        let highlightRatio = Double(highlightCount) / Double(count)
+        let nearClipRatio = Double(nearClipCount) / Double(count)
+        let heroLuma = heroCount > 0 ? (heroLumaSum / heroCount) : overallLuma
+
+        // Quy tắc ưu tiên chống cháy sáng tuyệt đối (Highlight-First):
+        // iPhone AE phần cứng đã cân bằng cảnh chuẩn; KHÔNG đẩy EV dương khi có vùng sáng sát ngưỡng trắng.
+        if highlightRatio >= 0.045 || overallLuma >= 0.72 || (p95Luma >= 0.96 && highlightRatio >= 0.020) {
+            let pull = min(0.5, max(0.2, 0.2 + (highlightRatio - 0.02) * 5.0))
+            return CGFloat(-round(pull * 10.0) / 10.0)
+        }
+
+        // Bất kỳ dấu hiệu vùng sáng cao nào -> giữ nguyên 0.0 EV (tuyệt đối không tăng sáng gây cháy)
+        if highlightRatio >= 0.012 || nearClipRatio >= 0.08 || p95Luma >= 0.90 || overallLuma >= 0.52 {
+            return 0.0
+        }
+
+        // Chỉ bù sáng dương rất nhẹ (tối đa +0.2 EV) khi chủ thể thật sự quá tối và toàn cảnh còn dư nhiều dải sáng
+        if heroCount > 0, heroLuma < 0.24, overallLuma < 0.46, highlightRatio < 0.008, p95Luma < 0.82 {
+            let gentleBoost = min(0.2, max(0.0, (0.28 - heroLuma) * 0.9))
+            let rounded = round(gentleBoost * 10.0) / 10.0
+            return rounded >= 0.1 ? CGFloat(rounded) : 0.0
+        }
+
+        return 0.0
     }
 
     private static func dynamicPlacements(subject: CompositionSubject, intent: LocalCompositionIntent,

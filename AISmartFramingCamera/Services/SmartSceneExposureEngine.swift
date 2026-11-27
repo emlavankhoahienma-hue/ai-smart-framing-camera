@@ -190,17 +190,26 @@ public final class SmartSceneExposureEngine: @unchecked Sendable {
         let clipRatio = metrics.highlightClippingRatio
         let overall = metrics.overallLuma
 
-        // 1. NGƯỢC SÁNG (Backlit):
-        // Hậu cảnh rất sáng nhưng chủ thể/khuôn mặt bị tối -> Bù sáng dương (+0.4 đến +1.2 EV)
-        let isBacklit = (bg >= 0.58 && subj <= 0.44 && (bg - subj) >= 0.18) ||
-                        (sceneContext == .portrait && bg - subj >= 0.22)
+        // 1. NGƯỢC SÁNG GẮT (Severe Backlit):
+        // Chỉ bù sáng rất nhẹ (tối đa +0.3 EV) khi chủ thể bị tối gắt VÀ vùng highlight nền CHƯA chạm ngưỡng cháy.
+        // Nếu đã có highlight clipping (>= 1.2%) hoặc nền sáng mạnh -> giữ 0.0 EV để bảo vệ vùng sáng tuyệt đối.
+        let isBacklit = (bg >= 0.62 && subj <= 0.28 && (bg - subj) >= 0.28) ||
+                        (sceneContext == .portrait && bg >= 0.60 && subj <= 0.30 && (bg - subj) >= 0.28)
         if isBacklit {
-            let neededBoost = (0.48 - subj) * 2.5
-            var ev = Float(min(1.2, max(0.4, Double(neededBoost))))
-            // Chống cháy sáng nền quá mức: nếu highlight đã chiếm >= 4% thì giới hạn ở +0.6 EV
-            if clipRatio >= 0.04 {
-                ev = min(ev, 0.6)
+            if clipRatio >= 0.012 || overall >= 0.56 || metrics.maxLuma >= 0.96 {
+                return SceneExposureDecision(
+                    recommendedEVBias: 0.0,
+                    sceneType: .backlit,
+                    ev100: ev100,
+                    subjectLuma: subj,
+                    backgroundLuma: bg,
+                    highlightClippingRatio: clipRatio,
+                    shadowRatio: metrics.shadowRatio,
+                    rationale: "Ngược sáng · Giữ EV chuẩn để chống cháy nền sáng"
+                )
             }
+            let neededBoost = (0.34 - subj) * 1.2
+            let ev = Float(min(0.3, max(0.1, Double(neededBoost))))
             let roundedEV = round(ev * 10) / 10
             return SceneExposureDecision(
                 recommendedEVBias: roundedEV,
@@ -210,7 +219,7 @@ public final class SmartSceneExposureEngine: @unchecked Sendable {
                 backgroundLuma: bg,
                 highlightClippingRatio: clipRatio,
                 shadowRatio: metrics.shadowRatio,
-                rationale: String(format: "Ngược sáng · Bù sáng %+.1f EV làm rõ chi tiết chủ thể", roundedEV)
+                rationale: String(format: "Ngược sáng · Bù sáng nhẹ %+.1f EV an toàn highlight", roundedEV)
             )
         }
 
@@ -268,10 +277,9 @@ public final class SmartSceneExposureEngine: @unchecked Sendable {
         }
 
         // 4. BÌNH THƯỜNG / CÂN BẰNG (Normal):
-        // Giữ EV ở mức chuẩn tự nhiên (tinh chỉnh vi mô [-0.2...+0.2] nếu cần)
-        let diff = 0.48 - subj
-        let fineEV = Float(max(-0.2, min(0.2, Double(diff) * 0.6)))
-        let finalEV = abs(fineEV) < 0.08 ? 0.0 : (round(fineEV * 10) / 10)
+        // Tin tưởng hệ thống đo sáng phần cứng iPhone (0.0 EV), không tự kéo sáng dương gây cháy highlight;
+        // chỉ giảm nhẹ -0.2 EV nếu vùng highlight đang sát ngưỡng cháy.
+        let finalEV: Float = (clipRatio >= 0.025 || (overall >= 0.64 && clipRatio >= 0.012)) ? -0.2 : 0.0
         return SceneExposureDecision(
             recommendedEVBias: finalEV,
             sceneType: .normal,
@@ -282,7 +290,7 @@ public final class SmartSceneExposureEngine: @unchecked Sendable {
             shadowRatio: metrics.shadowRatio,
             rationale: finalEV == 0.0 ?
                 "Ánh sáng cân bằng · Giữ EV chuẩn tự nhiên" :
-                String(format: "Ánh sáng hài hòa · Tinh chỉnh %+.1f EV", finalEV)
+                String(format: "Bảo toàn vùng sáng · Giảm %+.1f EV", finalEV)
         )
     }
 

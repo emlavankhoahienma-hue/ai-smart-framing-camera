@@ -171,6 +171,7 @@ private struct PhotographicStyleMetricsCapsuleView: View {
                 metric: .tone,
                 label: "TONE",
                 value: liveHUD.toneHUDNumber,
+                numericValue: liveHUD.displayedToneInt,
                 highlighted: isPadDragging || activeNudgeMetric == .tone,
                 dimmed: isPaletteDragging
             )
@@ -179,6 +180,7 @@ private struct PhotographicStyleMetricsCapsuleView: View {
                 metric: .color,
                 label: "COLOR",
                 value: liveHUD.colorHUDNumber,
+                numericValue: liveHUD.displayedColorInt,
                 highlighted: isPadDragging || activeNudgeMetric == .color,
                 dimmed: isPaletteDragging
             )
@@ -187,6 +189,7 @@ private struct PhotographicStyleMetricsCapsuleView: View {
                 metric: .palette,
                 label: "PALETTE",
                 value: liveHUD.paletteHUDNumber,
+                numericValue: liveHUD.displayedPaletteInt,
                 highlighted: isPaletteDragging || activeNudgeMetric == .palette,
                 dimmed: isPadDragging
             )
@@ -208,6 +211,7 @@ private struct PhotographicStyleMetricsCapsuleView: View {
         metric: PhotographicStyleNudgeMetric,
         label: String,
         value: String,
+        numericValue: Int,
         highlighted: Bool,
         dimmed: Bool
     ) -> some View {
@@ -232,8 +236,10 @@ private struct PhotographicStyleMetricsCapsuleView: View {
                 Text(value)
                     .font(.system(size: compact ? 10.5 : 11.2, weight: .semibold, design: .monospaced))
                     .monospacedDigit()
+                    .contentTransition(.numericText(value: Double(numericValue)))
                     .foregroundColor(isEditingThis ? AlignTheme.studioAccent : AlignTheme.studioInkPrimary)
-                    .frame(minWidth: compact ? 20 : 22, alignment: .leading)
+                    .frame(minWidth: compact ? 25 : 28, alignment: .leading)
+                    .animation(.snappy(duration: 0.14), value: numericValue)
             }
             .contentShape(Rectangle())
         }
@@ -1347,7 +1353,9 @@ private struct PhotographicTextureTickSlider: View {
                 Text("\(percent)")
                     .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                     .monospacedDigit()
+                    .contentTransition(.numericText(value: Double(percent)))
                     .foregroundColor(AlignTheme.studioAccent)
+                    .animation(.snappy(duration: 0.14), value: percent)
             }
             .frame(width: width)
 

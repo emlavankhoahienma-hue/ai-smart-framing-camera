@@ -35,18 +35,22 @@ def calculate_virtual_crop(anchor_x, anchor_y, grid_x, grid_y, target_zoom):
     return {"x": min_x, "y": min_y, "w": crop_w, "h": crop_h}
 
 def decide_exposure(subject_luma, bg_luma, overall_luma, clip_ratio, shadow_ratio, max_luma, ev100, scene_type):
-    # 1. Backlit
-    is_backlit = (bg_luma >= 0.58 and subject_luma <= 0.44 and (bg_luma - subject_luma) >= 0.18) or \
-                 (scene_type == "portrait" and (bg_luma - subject_luma) >= 0.22)
+    # 1. Severe Backlit (highlight-safe: max +0.3 EV and strictly 0.0 EV if any highlight clipping risk)
+    is_backlit = (bg_luma >= 0.62 and subject_luma <= 0.28 and (bg_luma - subject_luma) >= 0.28) or \
+                 (scene_type == "portrait" and bg_luma >= 0.60 and subject_luma <= 0.30 and (bg_luma - subject_luma) >= 0.28)
     if is_backlit:
-        needed_boost = (0.48 - subject_luma) * 2.5
-        ev = min(1.2, max(0.4, needed_boost))
-        if clip_ratio >= 0.04:
-            ev = min(ev, 0.6)
+        if clip_ratio >= 0.012 or overall_luma >= 0.56 or max_luma >= 0.96:
+            return {
+                "ev": 0.0,
+                "scene": "backlit",
+                "rationale": "Ngược sáng · Giữ EV chuẩn để chống cháy nền sáng"
+            }
+        needed_boost = (0.34 - subject_luma) * 1.2
+        ev = min(0.3, max(0.1, needed_boost))
         return {
             "ev": round(ev, 1),
             "scene": "backlit",
-            "rationale": f"Ngược sáng · Bù sáng +{round(ev, 1)} EV làm rõ chi tiết chủ thể"
+            "rationale": f"Ngược sáng · Bù sáng nhẹ +{round(ev, 1)} EV an toàn highlight"
         }
 
     # 2. Night / Neon / Sunset / Low-Key
@@ -78,14 +82,12 @@ def decide_exposure(subject_luma, bg_luma, overall_luma, clip_ratio, shadow_rati
             "rationale": f"Nắng gắt ngoài trời · Giảm {round(ev, 1)} EV bảo toàn chi tiết highlight"
         }
 
-    # 4. Normal
-    diff = 0.48 - subject_luma
-    fine_ev = max(-0.2, min(0.2, diff * 0.6))
-    final_ev = 0.0 if abs(fine_ev) < 0.08 else round(fine_ev, 1)
+    # 4. Normal (trust hardware AE 0.0 EV, never push positive EV; only pull -0.2 EV when near clipping)
+    final_ev = -0.2 if (clip_ratio >= 0.025 or (overall_luma >= 0.64 and clip_ratio >= 0.012)) else 0.0
     return {
         "ev": final_ev,
         "scene": "normal",
-        "rationale": "Ánh sáng cân bằng · Giữ EV chuẩn tự nhiên"
+        "rationale": "Ánh sáng cân bằng · Giữ EV chuẩn tự nhiên" if final_ev == 0.0 else f"Bảo toàn vùng sáng · Giảm {final_ev:+.1f} EV"
     }
 
 def test_suite():
@@ -107,16 +109,25 @@ def test_suite():
         failures.append(f"Khung cắt W(1.5x) sai kích thước: {crop_15x}")
     print(f" [PASS] 2. Trích xuất Khung cắt ảo tương lai W(Z*): w={crop_15x['w']:.2f}, h={crop_15x['h']:.2f}")
 
-    # Test 3: Backlit Scenario (Ngược sáng)
-    # Hậu cảnh sáng (0.78), chủ thể tối (0.28)
+    # Test 3a: Backlit Scenario WITHOUT clipping (chủ thể tối gắt, nền chưa cháy -> bù rất nhẹ <= +0.3 EV)
     res_backlit = decide_exposure(
-        subject_luma=0.28, bg_luma=0.78, overall_luma=0.65,
-        clip_ratio=0.01, shadow_ratio=0.10, max_luma=0.98,
+        subject_luma=0.22, bg_luma=0.68, overall_luma=0.48,
+        clip_ratio=0.004, shadow_ratio=0.10, max_luma=0.90,
+        ev100=9.5, scene_type="portrait"
+    )
+    if res_backlit["scene"] != "backlit" or not (0.1 <= res_backlit["ev"] <= 0.3):
+        failures.append(f"Ngược sáng an toàn highlight thất bại: {res_backlit}")
+    print(f" [PASS] 3a. Kịch bản Ngược sáng (chưa cháy nền): EV={res_backlit['ev']:+.1f} EV ({res_backlit['rationale']})")
+
+    # Test 3b: Backlit Scenario WITH bright highlights (chủ thể tối nhưng nền đã gần trắng -> CẤM tăng sáng!)
+    res_backlit_clip = decide_exposure(
+        subject_luma=0.26, bg_luma=0.78, overall_luma=0.62,
+        clip_ratio=0.025, shadow_ratio=0.08, max_luma=0.99,
         ev100=10.0, scene_type="portrait"
     )
-    if res_backlit["scene"] != "backlit" or not (0.4 <= res_backlit["ev"] <= 1.2):
-        failures.append(f"Ngược sáng thất bại: {res_backlit}")
-    print(f" [PASS] 3. Kịch bản Ngược sáng: EV={res_backlit['ev']:+.1f} EV ({res_backlit['rationale']})")
+    if res_backlit_clip["scene"] != "backlit" or res_backlit_clip["ev"] > 0.0:
+        failures.append(f"Ngược sáng nền cháy vẫn bị đẩy EV dương: {res_backlit_clip}")
+    print(f" [PASS] 3b. Kịch bản Ngược sáng (nền sát cháy): EV={res_backlit_clip['ev']:+.1f} EV ({res_backlit_clip['rationale']})")
 
     # Test 4: Night with Neon lights (Đêm đèn Neon)
     # CẤM kéo sáng! Phải giữ hoặc giảm nhẹ

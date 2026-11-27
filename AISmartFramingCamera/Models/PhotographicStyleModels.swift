@@ -1005,9 +1005,9 @@ public final class PhotographicStyleLiveHUDState: ObservableObject {
     @Published public var isModifiedFromDefault: Bool = false
     @Published public var isInteracting: Bool = false
 
-    private var displayedToneInt: Int = 0
-    private var displayedColorInt: Int = 0
-    private var displayedPaletteInt: Int = 100
+    @Published public private(set) var displayedToneInt: Int = 0
+    @Published public private(set) var displayedColorInt: Int = 0
+    @Published public private(set) var displayedPaletteInt: Int = 100
 
     public init() {}
 
@@ -1021,24 +1021,29 @@ public final class PhotographicStyleLiveHUDState: ObservableObject {
 
         // Schmitt-trigger hysteresis (±0.28 đơn vị khi đang giữ tay) ngăn con số nhảy qua lại ở ranh giới .5
         let hysteresis: Float = isInteracting ? 0.28 : 0.0
-        displayedToneInt = Self.quantizeWithHysteresis(
+        let nextTone = Self.quantizeWithHysteresis(
             scaledValue: state.tone * 100.0,
             currentInt: displayedToneInt,
             hysteresis: hysteresis,
             range: -100...100
         )
-        displayedColorInt = Self.quantizeWithHysteresis(
+        if displayedToneInt != nextTone { displayedToneInt = nextTone }
+
+        let nextColor = Self.quantizeWithHysteresis(
             scaledValue: state.color * 100.0,
             currentInt: displayedColorInt,
             hysteresis: hysteresis,
             range: -100...100
         )
-        displayedPaletteInt = Self.quantizeWithHysteresis(
+        if displayedColorInt != nextColor { displayedColorInt = nextColor }
+
+        let nextPalette = Self.quantizeWithHysteresis(
             scaledValue: state.palette * 100.0,
             currentInt: displayedPaletteInt,
             hysteresis: hysteresis,
             range: 0...100
         )
+        if displayedPaletteInt != nextPalette { displayedPaletteInt = nextPalette }
     }
 
     private static func quantizeWithHysteresis(

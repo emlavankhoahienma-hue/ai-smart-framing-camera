@@ -5002,7 +5002,10 @@ public final class CameraViewModel: ObservableObject {
             exposureDuration: cameraService.currentExposureDuration,
             aperture: cameraService.currentAperture
         )
-        self.plannedEVBias = plan.recommendedEVBias != 0.0 ? Float(plan.recommendedEVBias) : evaluatedFraming.recommendedEVBias
+        let engineEV = evaluatedFraming.recommendedEVBias
+        let plannerEV = Float(plan.recommendedEVBias)
+        // Bảo toàn vùng sáng ưu tiên: kết hợp bảo thủ để không bao giờ để planner đẩy EV dương gây cháy sáng
+        self.plannedEVBias = min(engineEV, plannerEV)
         self.plannedLightingScene = evaluatedFraming.lightingScene
         self.plannedLightingDescription = evaluatedFraming.lightingRationale
 
@@ -6046,21 +6049,45 @@ public final class CameraViewModel: ObservableObject {
     /// Pha 3: Thực thi áp dụng mức bù sáng thông minh đã tính sẵn (Smart Scene-Aware Exposure)
     public func applyPlannedEVBiasIfNeeded() {
         guard isSmartExposureEnabled else { return }
+        // Tôn trọng chỉnh sáng / khóa AE-AF thủ công của người dùng
+        guard !isAEAFLocked, abs(activeSunExposureBias) < 0.04 else { return }
         let bias = plannedEVBias
         guard bias.isFinite, abs(bias) > 0.05 else { return }
 
-        // Kiểm tra an toàn quang phổ với RealtimeHistogramEngine: đảm bảo clip ratio < 1%
-        let currentLuma = RealtimeHistogramEngine.shared.averageLuminance
-        var safeEV = bias
-        // Highlight Roll-off Damper: Bảo vệ vùng sáng không bị cháy highlight khi độ chói tổng thể đã cao
-        if bias > 0 && currentLuma > 0.72 {
-            let excess = Float(currentLuma - 0.72) / 0.28
-            safeEV = max(0.0, min(bias, 0.35 * (1.0 - excess)))
-        } else if bias < -0.8 && currentLuma < 0.18 {
+        // Đo trực tiếp độ chói & tỷ lệ cháy sáng từ frame hiện tại (không phụ thuộc trạng thái bật/tắt Histogram HUD)
+        let liveLuma: Float
+        let liveClipRatio: Float
+        if let liveBuf = frameProcessor.latestPixelBufferSnapshot() {
+            let liveDecision = SmartSceneExposureEngine.shared.evaluateExposure(
+                pixelBuffer: liveBuf,
+                virtualCrop: CGRect(x: 0.0, y: 0.0, width: 1.0, height: 1.0),
+                subjectRect: nil,
+                sceneContext: detectedScene,
+                iso: cameraService.currentISO,
+                exposureDuration: cameraService.currentExposureDuration,
+                aperture: cameraService.currentAperture
+            )
+            liveLuma = SmartSceneExposureEngine.estimateSceneLuminance(from: liveBuf)
+            liveClipRatio = liveDecision.highlightClippingRatio
+        } else {
+            liveLuma = RealtimeHistogramEngine.shared.averageLuminance
+            liveClipRatio = RealtimeHistogramEngine.shared.highlightClipRatio
+        }
+
+        // Khóa biên độ an toàn tuyệt đối chống cháy sáng: AI chỉ được phép nâng tối đa +0.2 EV và chỉ khi khung chưa có highlight clipping
+        var safeEV = min(0.2, max(-0.8, bias))
+        if safeEV > 0.0 && (liveClipRatio >= 0.008 || liveLuma >= 0.50) {
+            safeEV = 0.0
+        } else if safeEV < -0.6 && liveLuma < 0.18 {
             // Shadow Protection: Không dìm tối quá mức khi khung hình đã quá thiếu sáng
-            safeEV = max(bias, -0.7)
+            safeEV = max(safeEV, -0.5)
         }
         safeEV = (safeEV * 10.0).rounded() / 10.0
+        CameraLogger.checkpoint(
+            "VM.applyPlannedEVBias",
+            detail: String(format: "planned=%+.2f safe=%+.1f liveLuma=%.2f liveClip=%.3f", bias, safeEV, liveLuma, liveClipRatio),
+            category: .capture
+        )
         guard abs(safeEV) > 0.04 else { return }
         setExposure(safeEV)
         showHUDNotice(String(format: "Đã tinh chỉnh ánh sáng %+.1f EV (%@)", safeEV, plannedLightingScene))
@@ -7416,6 +7443,12 @@ extension CameraViewModel: CameraServiceDelegate {
                     self.haptics.triggerShutterClick()
                 }
                 self.unlockHardTargetLock()
+                if self.plannedEVBias != 0.0 && !self.isAEAFLocked && abs(self.activeSunExposureBias) < 0.04 {
+                    self.setExposure(0.0)
+                    self.plannedEVBias = 0.0
+                    self.plannedLightingScene = "normal"
+                    self.plannedLightingDescription = ""
+                }
                 withAnimation {
                     self.latestCapturedPhoto = item
                     self.aiSessionState = .done
@@ -7457,6 +7490,12 @@ extension CameraViewModel: CameraServiceDelegate {
     public func cameraService(_ service: CameraService, didFailCaptureWithError error: Error) {
         deactivateScreenFlash()
         self.unlockHardTargetLock()
+        if self.plannedEVBias != 0.0 && !self.isAEAFLocked && abs(self.activeSunExposureBias) < 0.04 {
+            self.setExposure(0.0)
+            self.plannedEVBias = 0.0
+            self.plannedLightingScene = "normal"
+            self.plannedLightingDescription = ""
+        }
         // AVCapture can reject a new request while an earlier capture is
         // finishing. Restore this request's UI state instead of stranding it
         // in .capturing; repeated failure callbacks are ignored below.

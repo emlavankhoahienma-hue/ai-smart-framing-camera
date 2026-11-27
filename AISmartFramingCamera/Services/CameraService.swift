@@ -2101,13 +2101,13 @@ public final class CameraService: NSObject {
                 }
 
                 // Bảo vệ chống cháy sáng thông minh (Highlight-Clipping Protection EV):
+                // Giữ nguyên Matrix Metering tại tâm (0.5, 0.5) cho .salientObject / .aiTarget / .center
+                // để không chuyển sang Spot Metering vào chủ thể tối gây tăng sáng đột ngột khi khớp target.
                 let exposurePoint: CGPoint
                 switch focusType {
                 case .face:
-                    exposurePoint = CGPoint(x: clampedPoint.x * 0.40 + 0.5 * 0.60, y: clampedPoint.y * 0.40 + 0.5 * 0.60)
-                case .salientObject, .aiTarget:
-                    exposurePoint = CGPoint(x: clampedPoint.x * 0.30 + 0.5 * 0.70, y: clampedPoint.y * 0.30 + 0.5 * 0.70)
-                case .center:
+                    exposurePoint = CGPoint(x: clampedPoint.x * 0.20 + 0.5 * 0.80, y: clampedPoint.y * 0.20 + 0.5 * 0.80)
+                case .salientObject, .aiTarget, .center:
                     exposurePoint = CGPoint(x: 0.5, y: 0.5)
                 }
                 let clampedExposurePoint = CGPoint(
