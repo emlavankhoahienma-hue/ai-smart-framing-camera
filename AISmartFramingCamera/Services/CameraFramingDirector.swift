@@ -587,20 +587,20 @@ enum CameraFramingDirector {
         switch role {
         case .portrait:
             if isWaistUpPortrait {
-                // Half-body / waist-up portrait: comfortable height 55%-86%, ideal 68%
-                return SubjectFillSpec(minFill: 0.55, idealFill: 0.68, maxFill: 0.86, isWideContextual: false)
+                // Half-body / waist-up portrait: comfortable height 52%-86%, ideal 64%
+                return SubjectFillSpec(minFill: 0.52, idealFill: 0.64, maxFill: 0.86, isWideContextual: false)
             }
-            // Full-body solo portrait: comfortable height 58%-86%, ideal 72% (with 5-8% top/bottom margin)
-            return SubjectFillSpec(minFill: 0.58, idealFill: 0.72, maxFill: 0.86, isWideContextual: false)
+            // Full-body solo portrait: comfortable height 50%-84%, ideal 62% (triggers clean zoom when <= 49%)
+            return SubjectFillSpec(minFill: 0.50, idealFill: 0.62, maxFill: 0.84, isWideContextual: false)
         case .environmentalPortrait:
-            // Person in grand landscape/landmark: height fill 36%-65%, ideal 48%
-            return SubjectFillSpec(minFill: 0.36, idealFill: 0.48, maxFill: 0.65, isWideContextual: false)
+            // Person in grand landscape/landmark: height fill 34%-64%, ideal 46%
+            return SubjectFillSpec(minFill: 0.34, idealFill: 0.46, maxFill: 0.64, isWideContextual: false)
         case .group:
-            // Multi-person group: comfortable union span 52%-84%, ideal 66% (preserving all members + margin)
-            return SubjectFillSpec(minFill: 0.52, idealFill: 0.66, maxFill: 0.84, isWideContextual: false)
+            // Multi-person group: comfortable union span 48%-84%, ideal 60% (preserving all members + margin)
+            return SubjectFillSpec(minFill: 0.48, idealFill: 0.60, maxFill: 0.84, isWideContextual: false)
         case .animal:
-            // Pet / wildlife: effective area-balanced fill 44%-78%, ideal 58%
-            return SubjectFillSpec(minFill: 0.44, idealFill: 0.58, maxFill: 0.78, isWideContextual: false)
+            // Pet / wildlife: effective area-balanced fill 44%-78%, ideal 56%
+            return SubjectFillSpec(minFill: 0.44, idealFill: 0.56, maxFill: 0.78, isWideContextual: false)
         case .flower:
             // Blossom / botanical close-up: effective fill 40%-76%, ideal 52%
             return SubjectFillSpec(minFill: 0.40, idealFill: 0.52, maxFill: 0.76, isWideContextual: false)
@@ -611,12 +611,12 @@ enum CameraFramingDirector {
             if isMinimalist {
                 return SubjectFillSpec(minFill: 0.30, idealFill: 0.42, maxFill: 0.72, isWideContextual: false)
             }
-            // Small/foreground object or vehicle: effective fill 42%-78%, ideal 54%
-            return SubjectFillSpec(minFill: 0.42, idealFill: 0.54, maxFill: 0.78, isWideContextual: false)
+            // Foreground object or vehicle: effective fill 40%-78%, ideal 52%
+            return SubjectFillSpec(minFill: 0.40, idealFill: 0.52, maxFill: 0.78, isWideContextual: false)
         case .architecture:
-            return SubjectFillSpec(minFill: 0.48, idealFill: 0.66, maxFill: 0.88, isWideContextual: false)
+            return SubjectFillSpec(minFill: 0.46, idealFill: 0.62, maxFill: 0.88, isWideContextual: false)
         case .street:
-            return SubjectFillSpec(minFill: 0.42, idealFill: 0.56, maxFill: 0.84, isWideContextual: false)
+            return SubjectFillSpec(minFill: 0.40, idealFill: 0.54, maxFill: 0.84, isWideContextual: false)
         case .foliage, .aperture, .indoorRoom, .skyLandscape, .scene:
             return SubjectFillSpec(minFill: 0.50, idealFill: 0.75, maxFill: 0.96, isWideContextual: true)
         }
