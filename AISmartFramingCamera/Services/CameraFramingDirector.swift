@@ -805,8 +805,8 @@ enum CameraFramingDirector {
             let dArea = Double(max(1e-6, d.width * d.height))
             let iArea = Double(inter.width * inter.height)
             let visInVP = iArea / dArea
-            // Secondary object awkwardly sliced right across the viewport edge
-            if visInVP > 0.08 && visInVP < 0.82 {
+            // Secondary object awkwardly sliced right across the viewport edge (ignore tiny <14% dust corners)
+            if visInVP > 0.14 && visInVP < 0.80 {
                 partialCuts += 1
             }
             // Project distractor into viewport coordinates to measure peripheral prominence
@@ -1150,9 +1150,18 @@ enum CameraFramingDirector {
         let marginY: CGFloat = (role == .portrait && isWaistUpPortrait) ? 0.045 : 0.050
 
         func fillUtility(_ f: Double) -> Double {
-            let err = f - spec.idealFill
-            let sigma = err < 0 ? 0.23 : 0.19
-            return exp(-(err * err) / (2.0 * sigma * sigma))
+            // Flat-top plateau around idealFill..idealFill+0.10 (capped safely below maxFill) so a clean zoom
+            // that strips border clutter isn't artificially penalized for landing slightly above idealFill.
+            let lo = spec.idealFill - 0.03
+            let hi = min(spec.maxFill - 0.08, spec.idealFill + 0.10)
+            if f >= lo && f <= hi { return 1.0 }
+            if f < lo {
+                let err = lo - f
+                return exp(-(err * err) / (2.0 * 0.22 * 0.22))
+            } else {
+                let err = f - hi
+                return exp(-(err * err) / (2.0 * 0.16 * 0.16))
+            }
         }
 
         func opticalQualityPenalty(for z: CGFloat) -> Double {
@@ -1241,14 +1250,16 @@ enum CameraFramingDirector {
                 ? max(0.0, (baseClutter.deadVoidFraction - vpClut.deadVoidFraction) * 0.45 + 0.06 * min(1.0, (relZ - 1.0)))
                 : 0.0
 
-            // Criterion 4: Border partial-cut penalty on secondary objects
+            // Criterion 4: Border partial-cut penalty on secondary objects (capped so cleaning heavy clutter isn't paralyzed)
             let deltaCuts = Double(vpClut.partialEdgeCuts - baseClutter.partialEdgeCuts)
-            let edgeCutPen = deltaCuts > 0 ? (deltaCuts * 0.085) : (deltaCuts * 0.055) // Negative penalty = bonus when removing sliced border clutter!
+            let edgeCutPen = deltaCuts > 0
+                ? min(0.14, deltaCuts * 0.045)
+                : max(-0.12, deltaCuts * 0.055) // Negative penalty = bonus when removing already-sliced border clutter!
 
             // Criterion 5: Optical quality preference vs digital upscale penalty
             let qualPen = opticalQualityPenalty(for: z)
 
-            let total = 0.56 * fScore + 0.34 * clutGain + 0.14 * voidGain - edgeCutPen - qualPen
+            let total = 0.50 * fScore + 0.42 * clutGain + 0.16 * voidGain - edgeCutPen - qualPen
             let candTrace = ZoomCandidateTrace(
                 zoom: z,
                 totalScore: total,
