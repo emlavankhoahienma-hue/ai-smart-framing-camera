@@ -1218,7 +1218,7 @@ enum LegacyCameraFramingDirector {
             allowedZooms: allowedZooms
         )
         let stabilizedZoom = zoomSolution.recommendedZoom
-        _ = (enableTemporalHysteresis, now)
+        _ = (enableTemporalHysteresis, now, heroDomain)
 
         // Fast-return for No-Clear-Subject scenes: keep centered equilibrium (or zoom back out to 1.0x if zoomed in)
         if noClearSubject {
