@@ -262,6 +262,29 @@ public final class CameraService: NSObject {
         return deviceZoom / displayMultiplier
     }
 
+    /// True physical optical lens switchover rungs in display zoom units (never includes simulated 0.5x or digital-only steps).
+    public var opticalDisplayZoomOptions: [CGFloat] {
+        var rungs: [CGFloat] = [1.0]
+        if hasUltraWideLens {
+            rungs.append(0.5)
+        }
+        if hasPhysicalTelephotoLens, let tele = telephotoOpticalDisplayZoom, tele > 1.05 {
+            rungs.append(tele)
+        }
+        return Array(Set(rungs)).sorted()
+    }
+
+    /// Hardware sensor upscale threshold in display zoom units (above this threshold frames require digital upscaling).
+    public var displayZoomUpscaleThreshold: CGFloat {
+        let opticalMax = opticalDisplayZoomOptions.max() ?? 1.0
+        guard let rawThresh = activeCamera?.activeFormat.videoZoomFactorUpscaleThreshold,
+              rawThresh.isFinite, rawThresh > 0.5 else {
+            return max(2.4, opticalMax * 1.35)
+        }
+        let disp = convertDeviceZoomToDisplayZoom(rawThresh)
+        return max(opticalMax, min(6.0, disp.isFinite ? disp : max(2.4, opticalMax * 1.35)))
+    }
+
     public private(set) var flashMode: AVCaptureDevice.FlashMode = .auto
     public private(set) var isLivePhotoMode = false
     public private(set) var selectedVideoFormatOption: VideoFormatOption = .hd60

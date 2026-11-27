@@ -1225,7 +1225,7 @@ enum CompositionPlanningRegression {
             try require(abs(unpaddedPortrait.width - (0.50 / 0.75)) < 1e-4 && abs(unpaddedPortrait.height - 0.50) < 1e-4,
                         "oriented portrait unpadLetterbox inverted padX/padY: got \(unpaddedPortrait)")
 
-            // 21. No-clear-subject ambient texture -> preservesOriginalFrame, NO false zoom
+            // 21. No-clear-subject ambient texture -> preservesOriginalFrame, NO_SUBJECT state, NO false zoom
             let flatRaster = CompositionRaster(
                 side: 16,
                 luminance: Array(repeating: 0.44, count: 256),
@@ -1238,8 +1238,95 @@ enum CompositionPlanningRegression {
                 semanticAffinities: [:], neuralProposals: [],
                 calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
             )
-            try require(emptyRes.role == .scene && emptyRes.zoomState == .noZoomNeeded && emptyRes.preservesOriginalFrame,
+            try require(emptyRes.role == .scene && emptyRes.zoomState == .noSubject && emptyRes.preservesOriginalFrame,
                         "no-clear-subject scene hallucinated crop/zoom: \(emptyRes)")
+            try require(emptyRes.zoomTrace?.reasonCode == .noZoomNoClearSubject,
+                        "expected NO_ZOOM_NO_CLEAR_SUBJECT trace, got \(String(describing: emptyRes.zoomTrace?.reasonCode))")
+
+            // 22. Clutter-driven compositional Zoom-In: medium subject surrounded by peripheral distractors zooms cleanly to strip clutter
+            let clutteredHero = DirectorDetection(
+                label: "motorcycle", localizedLabel: "Xe máy",
+                boundingBox: CGRect(x: 0.30, y: 0.36, width: 0.40, height: 0.38),
+                anchor: CGPoint(x: 0.50, y: 0.55), confidence: 0.90, domain: .vehicle
+            )
+            let borderClutter1 = DirectorDetection(
+                label: "chair", localizedLabel: "Ghế",
+                boundingBox: CGRect(x: 0.01, y: 0.02, width: 0.24, height: 0.26),
+                anchor: nil, confidence: 0.80, domain: .furniture
+            )
+            let borderClutter2 = DirectorDetection(
+                label: "car", localizedLabel: "Ô tô",
+                boundingBox: CGRect(x: 0.76, y: 0.02, width: 0.23, height: 0.24),
+                anchor: nil, confidence: 0.78, domain: .vehicle
+            )
+            let borderClutter3 = DirectorDetection(
+                label: "bottle", localizedLabel: "Chai nước",
+                boundingBox: CGRect(x: 0.02, y: 0.78, width: 0.20, height: 0.20),
+                anchor: nil, confidence: 0.72, domain: .object
+            )
+            var clutterHints22 = CompositionSceneHints()
+            clutterHints22.avoid = EdgeAvoidanceHints(left: 0.78, right: 0.74, top: 0.82, bottom: 0.65)
+            clutterHints22.hasRichGuidance = true
+            let clutterZoomRes = CameraFramingDirector.direct(
+                detections: [clutteredHero, borderClutter1, borderClutter2, borderClutter3],
+                raster: baseRaster, sceneHints: clutterHints22,
+                semanticAffinities: ["object": 0.08], neuralProposals: [],
+                calibration: TrackingCalibration.fallback(aspect: 1.5), pose: identityPose,
+                currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0],
+                opticalZooms: [0.5, 1.0, 2.0, 3.0], upscaleThreshold: 3.0
+            )
+            try require(clutterZoomRes.zoomState.isZoomInFamily && clutterZoomRes.idealZoomAfterPan >= 1.25,
+                        "clutter-surrounded medium subject failed to zoom in: state=\(clutterZoomRes.zoomState) zoom=\(clutterZoomRes.recommendedZoom)x trace=\(String(describing: clutterZoomRes.zoomTrace))")
+            try require((clutterZoomRes.zoomTrace?.clutterAfter ?? 1.0) < (clutterZoomRes.zoomTrace?.clutterBefore ?? 0.0),
+                        "clutter-driven zoom did not reduce clutter score")
+
+            // 23. Border partial-cut penalty awareness: trace accurately detects partial edge cuts and distractor boxes
+            try require((clutterZoomRes.zoomTrace?.distractorBoxes.count ?? 0) >= 3,
+                        "expected >= 3 distractor boxes tracked in zoomTrace, got \(clutterZoomRes.zoomTrace?.distractorBoxes.count ?? 0)")
+
+            // 24. Temporal stability (EMA fill + dead-band + hysteresis + dwell): 12 jittered frames produce ZERO zoom flicker
+            CameraFramingDirector.resetTemporalState()
+            var jitterZooms: [CGFloat] = []
+            for frameIdx in 0..<12 {
+                let dJit = CGFloat((frameIdx % 2 == 0) ? 1 : -1) * 0.012
+                let jitterSubject = DirectorDetection(
+                    label: "cat", localizedLabel: "Chú mèo",
+                    boundingBox: CGRect(x: 0.36 + dJit * 0.5, y: 0.36, width: 0.28 + dJit, height: 0.26 - dJit * 0.5),
+                    anchor: CGPoint(x: 0.50, y: 0.45), confidence: 0.88, domain: .animal
+                )
+                let jRes = CameraFramingDirector.direct(
+                    detections: [jitterSubject], raster: baseRaster, sceneHints: .neutral,
+                    semanticAffinities: ["animal": 0.09], neuralProposals: [],
+                    calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0],
+                    enableTemporalHysteresis: true, opticalZooms: [0.5, 1.0, 2.0, 3.0], upscaleThreshold: 3.0
+                )
+                jitterZooms.append(jRes.recommendedZoom)
+            }
+            CameraFramingDirector.resetTemporalState()
+            let maxJitterSwing = (jitterZooms.max() ?? 1.0) - (jitterZooms.min() ?? 1.0)
+            try require(maxJitterSwing <= 0.05,
+                        "temporal zoom hysteresis flickered across jittered frames: \(jitterZooms)")
+
+            // 25. Target 3D world-ray projection stability across zoom changes (1.0x -> 1.5x -> 2.0x -> 3.0x -> 1.0x)
+            let baseK = TrackingCalibration.fallback(aspect: 0.75, zoom: 1.0)
+            let alignedRay = baseK.deviceRay(at: CGPoint(x: 0.5, y: 0.5))
+            let offCenterRay = baseK.deviceRay(at: CGPoint(x: 0.60, y: 0.42))
+            for zStep in [1.0, 1.5, 2.0, 3.0, 1.0] {
+                let zK = TrackingCalibration(
+                    fx: baseK.fx * zStep, fy: baseK.fy * zStep,
+                    cx: baseK.cx, cy: baseK.cy, aspect: baseK.aspect, isMeasured: baseK.isMeasured
+                )
+                let pCenter = zK.project(deviceRay: alignedRay)
+                try require(pCenter.isInFront && hypot(Double(pCenter.point.x - 0.5), Double(pCenter.point.y - 0.5)) < 1e-5,
+                            "aligned target drifted at zoom \(zStep)x: \(pCenter.point)")
+                let pOff = zK.project(deviceRay: offCenterRay)
+                let expectedOffX = 0.5 + (0.60 - 0.5) * zStep
+                let expectedOffY = 0.5 + (0.42 - 0.5) * zStep
+                try require(pOff.isInFront &&
+                            abs(Double(pOff.point.x) - expectedOffX) < 1e-4 &&
+                            abs(Double(pOff.point.y) - expectedOffY) < 1e-4,
+                            "off-center target projection jumped at zoom \(zStep)x: got \(pOff.point) expected (\(expectedOffX), \(expectedOffY))")
+            }
         }
         print("Composition regressions: \(passed) passed")
     }

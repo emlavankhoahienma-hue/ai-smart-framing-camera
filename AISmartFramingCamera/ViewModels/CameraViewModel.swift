@@ -1309,6 +1309,10 @@ public final class CameraViewModel: ObservableObject {
     @Published public var isAutoZoomEnabled: Bool = true {
         didSet { UserDefaults.standard.set(isAutoZoomEnabled, forKey: "isAutoZoomEnabled") }
     }
+    @Published public var isZoomDebugOverlayEnabled: Bool = false {
+        didSet { UserDefaults.standard.set(isZoomDebugOverlayEnabled, forKey: "isZoomDebugOverlayEnabled") }
+    }
+    @Published public internal(set) var zoomDebugSnapshot: ZoomDebugSnapshot? = nil
 
     // Camera Mode & Live Photo
     @Published public private(set) var captureMode: CameraCaptureMode = .photo {
@@ -2033,9 +2037,17 @@ public final class CameraViewModel: ObservableObject {
     public func applyAISuggestedZoom(_ targetZoom: CGFloat, force: Bool = false) {
         guard isAutoZoomEnabled else { return }
         guard targetZoom.isFinite, currentZoom.isFinite else { return }
-        guard aiSessionState == .alignmentPerfect, !isPinchingZoom,
+        // Allow immediate Zoom-Out even before alignmentPerfect (zooming out widens FOV and never clips the subject)
+        let isImmediateZoomOut = force && targetZoom < displayZoom - 0.10
+        let stateAllowsZoom: Bool = {
+            if aiSessionState == .alignmentPerfect { return true }
+            if isImmediateZoomOut, case .targetPlaced = aiSessionState { return true }
+            return false
+        }()
+        guard stateAllowsZoom, !isPinchingZoom,
               !hasExecutedAutoZoomForSession, !zoomAwaitingVerification,
-              (hasFreshOpticalLock || isTargetLocked), canZoomCurrentSubject(to: targetZoom) else { return }
+              (hasFreshOpticalLock || isTargetLocked || isImmediateZoomOut),
+              canZoomCurrentSubject(to: targetZoom) else { return }
 
         // Cooldown: Tối thiểu 0.8s giữa các lần tự động zoom (tránh spam, nhưng không chặn người dùng khi căn chỉnh)
         let now = Date()
@@ -2599,6 +2611,7 @@ public final class CameraViewModel: ObservableObject {
             previewContainerView?.setHibernating(true)
             YOLODetectionEngine.shared.releaseTransientCaches()
             CameraFramingDirector.resetTemporalState()
+            zoomDebugSnapshot = nil
             NeuralSubjectIntelligenceEngine.shared.scheduleReleaseAllModelCaches()
             updateFrameProcessingConfiguration()
             CameraLogger.lifecycle("CAMERA_HIBERNATE_ENTER", detail: "Standby buffers & models flushed", category: .general)
@@ -2840,6 +2853,9 @@ public final class CameraViewModel: ObservableObject {
         }
         if defaults.object(forKey: "isAutoZoomEnabled") != nil {
             self.isAutoZoomEnabled = defaults.bool(forKey: "isAutoZoomEnabled")
+        }
+        if defaults.object(forKey: "isZoomDebugOverlayEnabled") != nil {
+            self.isZoomDebugOverlayEnabled = defaults.bool(forKey: "isZoomDebugOverlayEnabled")
         }
         if defaults.object(forKey: "isLivePhotoEnabled") != nil {
             self.isLivePhotoEnabled = defaults.bool(forKey: "isLivePhotoEnabled")
@@ -4068,6 +4084,7 @@ public final class CameraViewModel: ObservableObject {
         aiFilterRankingTask?.cancel()
         aiFilterRankingTask = nil
         CameraFramingDirector.resetTemporalState()
+        zoomDebugSnapshot = nil
         if hadActiveLocalWork && !restarting {
             NeuralSubjectIntelligenceEngine.shared.scheduleTrimCachesUnderPressure()
         }
@@ -4157,6 +4174,7 @@ public final class CameraViewModel: ObservableObject {
         aiFilterRankingTask?.cancel()
         aiFilterRankingTask = nil
         CameraFramingDirector.resetTemporalState()
+        zoomDebugSnapshot = nil
         // Always release held specialist models & Vision buffers on suspend regardless of hadActiveLocalWork
         _ = hadActiveLocalWork
         NeuralSubjectIntelligenceEngine.shared.scheduleReleaseAllModelCaches()
@@ -4660,6 +4678,8 @@ public final class CameraViewModel: ObservableObject {
         let generation = aiSessionGeneration
         let requestID = localAnalysisRequestID
         let zooms = cameraService.availableDisplayZoomOptions
+        let opticalZooms = cameraService.opticalDisplayZoomOptions
+        let upscaleThresh = cameraService.displayZoomUpscaleThreshold
         let livePhotoLowMemoryBudget = isLivePhotoEnabled
         let startDisplayZoom = self.displayZoom
         // Detach from AVCaptureVideoDataOutput's tiny pool in a standalone task so `source.buffer`
@@ -4694,7 +4714,8 @@ public final class CameraViewModel: ObservableObject {
             let result = await withTaskCancellationHandler {
                 await NeuralSubjectIntelligenceEngine.shared.analyzeCompositionAsync(
                     pixelBuffer: ownedSource.buffer, frame: ownedSource.frame, pose: ownedSource.pose,
-                    allowedZooms: zooms, preferences: preferences, requestID: requestID,
+                    allowedZooms: zooms, opticalZooms: opticalZooms, upscaleThreshold: upscaleThresh,
+                    preferences: preferences, requestID: requestID,
                     lowMemoryBudget: livePhotoLowMemoryBudget, cancellation: cancellation,
                     progress: { [weak self] message in
                         Task { @MainActor [weak self] in
@@ -5165,6 +5186,7 @@ public final class CameraViewModel: ObservableObject {
             guideDescription: localCompositionExplanation)
         pendingSuggestedZoom = effectiveZoom
         aiSuggestedZoom = effectiveZoom
+        zoomDebugSnapshot = plan.zoomDebugSnapshot
         isTargetLocked = false
         zoomAwaitingVerification = false
         zoomVerified = true
@@ -5187,9 +5209,10 @@ public final class CameraViewModel: ObservableObject {
         }
         // Nếu cần Zoom-OUT (mở rộng góc 0.5x/1.0x khi chủ thể quá lớn hoặc bị cắt), thực thi ngay lập tức
         // vì zoom-out không bao giờ cắt mất chủ thể và giúp người dùng thấy trọn khung hình ngay!
+        // Lưu ý: KHÔNG tự gán `hasExecutedAutoZoomForSession = true` ở đây — để `triggerZoomRevealAnimation`
+        // chỉ đánh dấu khi lệnh zoom thực sự khởi chạy.
         if isAutoZoomEnabled && effectiveZoom < displayZoom - 0.10 {
             applyAISuggestedZoom(effectiveZoom, force: true)
-            hasExecutedAutoZoomForSession = true
         }
         // Với Zoom-IN: chờ người dùng đưa tâm trắng vào khớp tâm mục tiêu (tránh cắt mất chủ thể lệch tâm quanh (0.5, 0.5)),
         // khi khớp tâm `lockHardTarget()` sẽ kích hoạt `triggerZoomRevealAnimation()` mượt mà tới `effectiveZoom`.
@@ -5257,6 +5280,7 @@ public final class CameraViewModel: ObservableObject {
         localAnalysisCancellation = nil
         localAnalysisTask?.cancel()
         localAnalysisTask = nil
+        zoomDebugSnapshot = nil
         activeCompositionPreviewID = nil
         selectedCompositionPreviewID = nil
         compositionPreviewPresentation = nil
@@ -5677,7 +5701,6 @@ public final class CameraViewModel: ObservableObject {
                 pendingSuggestedZoom = desired
                 aiSuggestedZoom = desired
                 applyAISuggestedZoom(desired, force: true)
-                hasExecutedAutoZoomForSession = true
                 if zoomAwaitingVerification { return }
             }
         }
@@ -5866,6 +5889,10 @@ public final class CameraViewModel: ObservableObject {
         // while optical/spatial tracking still holds the subject safely inside the frame!
         if hasFreshOpticalLock, let optPt = latestOpticalPoint,
            (0.06...0.94).contains(optPt.x), (0.06...0.94).contains(optPt.y) {
+            return true
+        }
+        if SpatialTrackingEngine.shared.isTrackingActive, let targetPt = currentTargetPoint,
+           (0.06...0.94).contains(targetPt.x), (0.06...0.94).contains(targetPt.y) {
             return true
         }
         return false
@@ -7607,12 +7634,16 @@ extension CameraViewModel: CameraServiceDelegate {
                     let cancel = CompositionAnalysisCancellation(softTimeoutSeconds: 9.0)
                     let reqID = UUID()
                     let zooms = self.cameraService.availableDisplayZoomOptions
+                    let optZooms = self.cameraService.opticalDisplayZoomOptions
+                    let upscaleThresh = self.cameraService.displayZoomUpscaleThreshold
                     let lowMem = self.isLivePhotoEnabled
                     _ = await NeuralSubjectIntelligenceEngine.shared.analyzeCompositionAsync(
                         pixelBuffer: detached,
                         frame: snap.1,
                         pose: pose,
                         allowedZooms: zooms,
+                        opticalZooms: optZooms,
+                        upscaleThreshold: upscaleThresh,
                         preferences: [:],
                         requestID: reqID,
                         lowMemoryBudget: lowMem,

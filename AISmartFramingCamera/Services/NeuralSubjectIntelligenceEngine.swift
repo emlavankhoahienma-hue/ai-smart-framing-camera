@@ -888,6 +888,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
     /// and exits immediately if cancelled while queued behind an earlier request.
     func analyzeCompositionAsync(pixelBuffer: CVPixelBuffer, frame: TrackingFrameContext,
                                  pose: simd_quatd, allowedZooms: [CGFloat],
+                                 opticalZooms: [CGFloat]? = nil,
+                                 upscaleThreshold: CGFloat? = nil,
                                  preferences: [String: Double], requestID: UUID,
                                  lowMemoryBudget: Bool = false,
                                  cancellation: CompositionAnalysisCancellation,
@@ -902,7 +904,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 let result: LocalCompositionAnalysis? = autoreleasepool {
                     self.analyzeComposition(
                         pixelBuffer: bufferBox.value, frame: frame, pose: pose,
-                        allowedZooms: allowedZooms, preferences: preferences,
+                        allowedZooms: allowedZooms, opticalZooms: opticalZooms,
+                        upscaleThreshold: upscaleThreshold, preferences: preferences,
                         requestID: requestID, lowMemoryBudget: lowMemoryBudget,
                         cancellation: cancellation, progress: progress
                     )
@@ -914,6 +917,8 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
 
     func analyzeComposition(pixelBuffer: CVPixelBuffer, frame: TrackingFrameContext,
                             pose: simd_quatd, allowedZooms: [CGFloat],
+                            opticalZooms: [CGFloat]? = nil,
+                            upscaleThreshold: CGFloat? = nil,
                             preferences: [String: Double], requestID: UUID,
                             lowMemoryBudget: Bool = false,
                             cancellation: CompositionAnalysisCancellation,
@@ -1350,16 +1355,26 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
             currentZoom: CGFloat(frame.displayZoom),
             allowedZooms: allowedZooms,
             portraitBounds: portraitBounds,
-            poseProfile: poseProfile
+            poseProfile: poseProfile,
+            opticalZooms: opticalZooms,
+            upscaleThreshold: upscaleThreshold
         )
+        let traceReason = directorDecision.zoomTrace?.reasonCode.rawValue ?? "NONE"
+        let traceClutBefore = directorDecision.zoomTrace?.clutterBefore ?? 0.0
+        let traceClutAfter = directorDecision.zoomTrace?.clutterAfter ?? 0.0
         CameraLogger.endTrace(
             s6Span,
             detail: String(
-                format: "hero=%@ role=%@ zoom=%.2fx state=%@ panFirst=%d",
+                format: "hero=%@ role=%@ zoom=%.2fx postPan=%.2fx state=%@ reason=%@ fill=%.2f clutter=%.2f->%.2f panFirst=%d",
                 directorDecision.heroLabel,
                 directorDecision.role.rawValue,
                 Double(directorDecision.recommendedZoom),
+                Double(directorDecision.idealZoomAfterPan),
                 directorDecision.zoomState.rawValue,
+                traceReason,
+                directorDecision.subjectFillMetric,
+                traceClutBefore,
+                traceClutAfter,
                 directorDecision.requiresPanBeforeZoom ? 1 : 0
             )
         )
@@ -1491,6 +1506,28 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 anchor: directorDecision.heroAnchor,
                 attentionRegion: false
             )
+            let debugSnapshot: ZoomDebugSnapshot? = directorDecision.zoomTrace.map { tr in
+                ZoomDebugSnapshot(
+                    role: directorDecision.role.rawValue,
+                    heroLabel: directorDecision.heroLocalizedLabel,
+                    heroBounds: directorDecision.heroBounds,
+                    distractorBoxes: tr.distractorBoxes,
+                    subjectFill: tr.subjectFill,
+                    projectedFill: tr.projectedFill,
+                    idealFill: tr.idealFill,
+                    clutterBefore: tr.clutterBefore,
+                    clutterAfter: tr.clutterAfter,
+                    partialEdgeCutsBefore: tr.partialEdgeCutsBefore,
+                    partialEdgeCutsAfter: tr.partialEdgeCutsAfter,
+                    zoomState: directorDecision.zoomState.rawValue,
+                    reasonCode: tr.reasonCode.rawValue,
+                    currentZoom: CGFloat(frame.displayZoom),
+                    immediateZoom: directorDecision.recommendedZoom,
+                    postPanZoom: directorDecision.idealZoomAfterPan,
+                    predictedPostZoomFrame: tr.predictedPostZoomFrame,
+                    scoreGain: tr.scoreGain
+                )
+            }
             let directedPlan = LocalFramingPlan(
                 subjectPoint: directorDecision.heroAnchor,
                 subjectRect: directorDecision.heroBounds,
@@ -1509,7 +1546,9 @@ public final class NeuralSubjectIntelligenceEngine: @unchecked Sendable {
                 compositionRule: mappedRule,
                 requiresPanBeforeZoom: directorDecision.requiresPanBeforeZoom,
                 postPanZoom: directorDecision.requiresPanBeforeZoom ? directorDecision.idealZoomAfterPan : nil,
-                zoomStateRaw: directorDecision.zoomState.rawValue
+                zoomStateRaw: directorDecision.zoomState.rawValue,
+                zoomReasonCode: directorDecision.zoomTrace?.reasonCode.rawValue ?? "",
+                zoomDebugSnapshot: debugSnapshot
             )
             choices.append(LocalCompositionChoice(
                 candidate: directedHero,

@@ -1,0 +1,57 @@
+index,file,category,aspect_tag,expected_label,expected_reason
+1,01_single_person_9x16_117744.jpg,single_person,9x16,NO_ZOOM,"Bé gái toàn thân chiếm ~78% khung, cân đối"
+2,02_single_person_16x9_051712.jpg,single_person,16x9,NO_ZOOM,"Người trượt tuyết chiếm ~75% chiều cao khung, vừa đẹp"
+3,03_single_person_3x4_017905.jpg,single_person,3x4,NO_ZOOM,"Người cùng biển đèn giao thông chiếm phần lớn khung, zoom sẽ cắt biển"
+4,04_single_person_4x3_029187.jpg,single_person,4x3,NO_ZOOM,Ngựa và xe đua đã lấp đầy ~78% chiều cao khung
+5,05_multi_person_9x16_536038.jpg,multi_person,9x16,NO_ZOOM,"Chủ thể nằm gọn trong khung dọc 9:16, không bị cắt hay quá nhỏ"
+6,06_multi_person_16x9_047740.jpg,multi_person,16x9,ZOOM_OUT,"Người nằm phía trước bị cắt mất đầu ở mép trái, khung quá chật"
+7,07_multi_person_3x4_006763.jpg,multi_person,3x4,NO_ZOOM,"Cặp đôi chiếm ~78% khung vừa đẹp, không bị cắt"
+8,08_multi_person_4x3_002153.jpg,multi_person,4x3,ZOOM_IN,"Nhóm cầu thủ chiếm ~38% khung ở dưới-giữa, mép trên có chân pitcher bị cắt dở"
+9,09_closeup_portrait_3x4_152214.jpg,closeup_portrait,3x4,NO_ZOOM,Chân dung bán thân đã lấp đầy khung tự nhiên
+10,10_closeup_portrait_16x9_553788.jpg,closeup_portrait,16x9,NO_ZOOM,Người và laptop đã chiếm ~80% khung 16:9 vừa vặn
+11,11_closeup_portrait_4x3_130599.jpg,closeup_portrait,4x3,NO_ZOOM,Người và tượng hươu đã lấp đầy khung hình cân đối
+12,12_closeup_portrait_3x4_257896.jpg,closeup_portrait,3x4,NO_ZOOM,"Chân dung bán thân đã vừa khung, đủ headroom"
+13,13_distant_fullbody_16x9_074457.jpg,distant_fullbody,16x9,ZOOM_IN,"Người cầm ván đứng xa (~28% chiều cao), nhiều nền trống thừa"
+14,14_distant_fullbody_3x4_252507.jpg,distant_fullbody,3x4,ZOOM_IN,"Người trượt tuyết nhỏ ở xa (~29% chiều cao), cần zoom lại gần"
+15,15_distant_fullbody_4x3_013774.jpg,distant_fullbody,4x3,ZOOM_IN,"Bóng người nhỏ ở xa (~18% chiều cao), cần zoom gần chủ thể"
+16,16_distant_fullbody_4x3_034452.jpg,distant_fullbody,4x3,ZOOM_IN,"Người chơi đĩa trong rừng đứng xa (~27% chiều cao), nền cây rối"
+17,17_small_distant_object_3x4_032811.jpg,small_distant_object,3x4,ZOOM_IN,"Con chim rất nhỏ trên bậu cửa (~11% chiều cao), cần zoom vào"
+18,18_small_distant_object_4x3_011122.jpg,small_distant_object,4x3,ZOOM_IN,Biển STOP nhỏ (~20% chiều cao) giữa hàng rào và nền rác rối
+19,19_small_distant_object_3x4_360943.jpg,small_distant_object,3x4,ZOOM_IN,Con mèo rất nhỏ (~9% chiều cao) trên mảng tường trắng trống lớn
+20,20_small_distant_object_3x4_427649.jpg,small_distant_object,3x4,ZOOM_IN,Con thuyền nhỏ ở xa trên mặt hồ (~10% chiều cao)
+21,21_animal_16x9_046378.jpg,animal,16x9,ZOOM_OUT,Mèo quá gần và bị cắt mất phần đầu/thân ở mép trên và mép trái
+22,22_animal_3x4_016502.jpg,animal,3x4,ZOOM_IN,"Con cừu nhỏ trên mỏm đá (~16% chiều cao), thừa nhiều trời trống"
+23,23_animal_4x3_022589.jpg,animal,4x3,NO_ZOOM,Cặp cừu đã chiếm ~65% khung hình cân đối
+24,24_animal_16x9_122927.jpg,animal,16x9,ZOOM_IN,"Chim trĩ ở bên phải hơi nhỏ (~38% chiều cao), bên trái trống và có chim mờ gây rối"
+25,25_food_9x16_348708.jpg,food,9x16,NO_ZOOM,Chuối và bát đã lấp vừa khung dọc
+26,26_food_16x9_005600.jpg,food,16x9,NO_ZOOM,"Cận cảnh 2 bát đồ ăn đã lấp đầy khung, giữ tự nhiên"
+27,27_food_3x4_029675.jpg,food,3x4,NO_ZOOM,Đĩa 3 hotdog đã đầy đặn cân đối trong khung
+28,28_food_9x16_084431.jpg,food,9x16,ZOOM_IN,"Miếng pizza ở nửa dưới, nửa trên có màn hình TV sáng gây rối mắt"
+29,29_landscape_4x3_023230.jpg,landscape,4x3,NO_SUBJECT,"Phong cảnh hồ và bụi cây rộng, không có chủ thể cận cảnh rõ"
+30,30_landscape_landscape_157847.jpg,landscape,landscape,NO_SUBJECT,"Toàn cảnh núi rừng rộng, không có chủ thể tách biệt"
+31,31_landscape_4x3_500663.jpg,landscape,4x3,NO_SUBJECT,Phong cảnh thung lũng sông và mây rộng
+32,32_landscape_4x3_548267.jpg,landscape,4x3,NO_SUBJECT,Phong cảnh núi non và đồng cỏ rộng với bầy cừu rất xa
+33,33_edge_subject_9x16_466339.jpg,edge_subject,9x16,ZOOM_IN,"Mèo nhỏ ở góc dưới-trái (~18% chiều cao), 80% tường và cửa trống"
+34,34_edge_subject_16x9_417085.jpg,edge_subject,16x9,ZOOM_IN,"Hai con bò ở nửa phải hơi nhỏ (~40% chiều cao), bên trái thừa nhiều đường trống"
+35,35_edge_subject_4x3_226883.jpg,edge_subject,4x3,ZOOM_IN,"Ngựa lệch phải nhỏ (~32% chiều cao), bên trái có bạt xanh và nhà kho gây rối"
+36,36_edge_subject_4x3_022969.jpg,edge_subject,4x3,NO_ZOOM,"Hai hươu cao cổ trải rộng ~68% ngang khung, zoom vào sẽ cắt mất 1 con"
+37,37_clipped_subject_9x16_505573.jpg,clipped_subject,9x16,ZOOM_OUT,"Chó quá lớn (~96% chiều cao), đỉnh tai bị cắt ở mép trên"
+38,38_clipped_subject_16x9_065485.jpg,clipped_subject,16x9,ZOOM_OUT,"Xe SUV đỏ quá lớn, bị cắt mất phần đầu xe ở mép phải"
+39,39_clipped_subject_3x4_131273.jpg,clipped_subject,3x4,ZOOM_OUT,"Chó Husky quá sát, bị cắt đỉnh tai và phần thân ở mép trên/phải"
+40,40_clipped_subject_4x3_001675.jpg,clipped_subject,4x3,ZOOM_OUT,"Mèo quá gần, bị cắt mất nửa thân bên phải"
+41,41_cluttered_objects_16x9_172595.jpg,cluttered_objects,16x9,NO_ZOOM,"Bàn làm việc nhiều vật đan xen kín khung, không có chủ thể nhỏ riêng biệt để zoom"
+42,42_cluttered_objects_3x4_177935.jpg,cluttered_objects,3x4,NO_ZOOM,"Bếp cổ là chủ thể chính chiếm ~70% khung, không nên zoom bừa vào vật nhỏ ở góc"
+43,43_cluttered_objects_3x4_097585.jpg,cluttered_objects,3x4,ZOOM_IN,Bình hoa trung tâm giữa tường kính có nhiều mảng bị cắt dở ở 4 mép
+44,44_dark_low_light_4x3_153343.jpg,dark_low_light,4x3,NO_ZOOM,Hai gấu bông lớn trong cảnh tối đã trải rộng ~72% ngang khung
+45,45_dark_low_light_4x3_396518.jpg,dark_low_light,4x3,NO_ZOOM,"Người chèo xuồng trong rừng dừa nước tối chiếm ~55% chiều cao, bố cục kể chuyện cân đối"
+46,46_dark_low_light_4x3_530099.jpg,dark_low_light,4x3,ZOOM_IN,"Mèo trên nóc xe ban đêm nhỏ (~28% chiều cao), thừa hơn nửa khung đen trống"
+47,47_no_clear_subject_3x4_17195809.jpg,no_clear_subject,3x4,NO_SUBJECT,"Mặt đất sỏi đá đồng nhất, không có chủ thể"
+48,48_no_clear_subject_landscape_195188620.jpg,no_clear_subject,landscape,NO_SUBJECT,"Thảm cỏ tối và đá phẳng, không có chủ thể rõ"
+49,49_no_clear_subject_landscape_113567306.jpg,no_clear_subject,landscape,NO_SUBJECT,"Tường gạch đỏ phẳng đồng nhất, không có chủ thể"
+50,50_distant_fullbody_3x4_002532.jpg,distant_fullbody,3x4,ZOOM_IN,"Người trượt tuyết đứng xa trên núi (~24% chiều cao), cần zoom lại gần"
+51,51_cluttered_objects_3x2_007816.jpg,cluttered_objects,3x2,ZOOM_IN,"Mô tô giữa khung nhưng mép trên có đám đông người xem bị cắt dở, zoom nhẹ làm sạch nền"
+52,52_edge_subject_4x3_009483.jpg,edge_subject,4x3,NO_ZOOM,"Người đứng lệch trái đã chiếm ~68% chiều cao, chỉ cần dịch máy không nên zoom cắt chân"
+53,53_small_distant_object_2x3_015746.jpg,small_distant_object,2x3,NO_ZOOM,Trụ cứu hỏa đỏ đã chiếm ~52% chiều cao trung tâm khung
+54,54_single_person_4x3_022935.jpg,single_person,4x3,NO_ZOOM,Cầu thủ bóng đá bán thân đã chiếm ~82% chiều cao khung
+55,55_distant_fullbody_3x2_031093.jpg,distant_fullbody,3x2,ZOOM_IN,"Người trượt ván nhỏ giữa lòng chảo bê tông trống, góc trên-phải có người/đồ gây rối"
+56,56_cluttered_objects_3x2_054593.jpg,cluttered_objects,3x2,ZOOM_IN,"Cầu thủ bóng chày nhỏ ở xa, nền sau nhiều xe đậu và người xem rối mắt"

@@ -39,6 +39,27 @@ public enum DetectedSceneType: String, CaseIterable, Sendable {
     case general = "Auto General"
 }
 
+public struct ZoomDebugSnapshot: Sendable {
+    public let role: String
+    public let heroLabel: String
+    public let heroBounds: CGRect
+    public let distractorBoxes: [CGRect]
+    public let subjectFill: Double
+    public let projectedFill: Double
+    public let idealFill: Double
+    public let clutterBefore: Double
+    public let clutterAfter: Double
+    public let partialEdgeCutsBefore: Int
+    public let partialEdgeCutsAfter: Int
+    public let zoomState: String
+    public let reasonCode: String
+    public let currentZoom: CGFloat
+    public let immediateZoom: CGFloat
+    public let postPanZoom: CGFloat
+    public let predictedPostZoomFrame: CGRect
+    public let scoreGain: Double
+}
+
 struct LocalFramingPlan: Sendable {
     let subjectPoint: CGPoint
     let subjectRect: CGRect
@@ -58,6 +79,8 @@ struct LocalFramingPlan: Sendable {
     var requiresPanBeforeZoom: Bool = false
     var postPanZoom: CGFloat? = nil
     var zoomStateRaw: String = "NO_ZOOM"
+    var zoomReasonCode: String = ""
+    var zoomDebugSnapshot: ZoomDebugSnapshot? = nil
 }
 
 enum LocalAutoselectCalibration {
@@ -96,6 +119,14 @@ enum RealPhotoPipelineBenchmark {
             }
             return 35
         }()
+        let groundTruthURL: URL = {
+            if let idx = args.firstIndex(of: "--ground-truth"), idx + 1 < args.count {
+                return URL(fileURLWithPath: args[idx + 1])
+            }
+            return testImagesDir.deletingLastPathComponent().appendingPathComponent("tests/zoom_ground_truth.csv")
+        }()
+        let groundTruthByFile = loadGroundTruthCSV(groundTruthURL)
+        print("Loaded \(groundTruthByFile.count) pre-labeled ground-truth entries from \(groundTruthURL.lastPathComponent)")
 
         let fm = FileManager.default
         try fm.createDirectory(at: outDir, withIntermediateDirectories: true)
@@ -300,15 +331,35 @@ enum RealPhotoPipelineBenchmark {
         }
 
         // =========================================================================
-        // PART 4: REAL PHOTO BENCHMARK (OLD LEGACY vs NEW PIPELINE ON ALL PHOTOS)
+        // PART 4: REAL PHOTO BENCHMARK (OLD build.740 vs NEW COMPOSITIONAL ZOOM ON ALL PHOTOS)
         // =========================================================================
-        print("=== Running Real-Photo Benchmark on \(imageFiles.count) Non-Square Photos (Old vs New) ===")
+        print("=== Running Real-Photo Benchmark on \(imageFiles.count) Non-Square Photos (Old build.740 vs New) ===")
         var csvRows: [String] = [
-            "index,file,category,aspect_tag,width,height," +
-            "num_detections,old_role,old_hero,old_conf,old_dest_x,old_dest_y,old_aim_x,old_aim_y,old_zoom,old_center_crop_safe,old_reason," +
-            "new_role,new_hero,new_conf,new_hero_box,new_fill,new_ideal_fill,new_dest_x,new_dest_y,new_aim_x,new_aim_y," +
-            "new_zoom_state,new_zoom,new_ideal_zoom_after_pan,new_center_max_zoom,new_pan_before_zoom,new_center_crop_safe,new_rule,new_reason"
+            "index,file,category,aspect_tag,width,height,expected_label," +
+            "num_detections,old_role,old_hero,old_conf,old_dest_x,old_dest_y,old_aim_x,old_aim_y,old_zoom,old_postpan_zoom,old_pred_postpan,old_pred_imm,old_reason_code,old_center_crop_safe,old_reason," +
+            "new_role,new_hero,new_conf,new_hero_box,new_fill,new_ideal_fill,new_clutter_before,new_clutter_after,new_distractors,new_score_gain," +
+            "new_dest_x,new_dest_y,new_aim_x,new_aim_y," +
+            "new_zoom_state,new_zoom,new_ideal_zoom_after_pan,new_center_max_zoom,new_pan_before_zoom,new_pred_postpan,new_pred_imm,new_reason_code,new_match,new_center_crop_safe,new_rule,new_reason"
         ]
+
+        let evalClasses = ["ZOOM_IN", "NO_ZOOM", "ZOOM_OUT", "NO_SUBJECT"]
+        var oldPostPanCorrect = 0
+        var oldImmCorrect = 0
+        var newPostPanCorrect = 0
+        var newImmCorrect = 0
+        var evaluatedCount = 0
+        var oldPerClassTotal: [String: Int] = [:]
+        var oldPerClassCorrect: [String: Int] = [:]
+        var newPerClassTotal: [String: Int] = [:]
+        var newPerClassCorrect: [String: Int] = [:]
+        var newConfusion: [String: [String: Int]] = [:]
+        var oldConfusion: [String: [String: Int]] = [:]
+        var newMisses: [[String: Any]] = []
+        var oldMisses: [[String: Any]] = []
+        var oldDirectorMsSum = 0.0
+        var newDirectorMsSum = 0.0
+        var oldCenterClipCount = 0
+        var newCenterClipCount = 0
 
         var aspectCounter: [String: Int] = [:]
         for (idx, file) in imageFiles.enumerated() {
@@ -323,6 +374,7 @@ enum RealPhotoPipelineBenchmark {
                 let category = meta?.category ?? inferCategory(from: file.lastPathComponent)
                 let arTag = meta?.aspect_tag ?? inferAspectTag(width: w, height: h)
                 aspectCounter[arTag, default: 0] += 1
+                let expectedLabel = groundTruthByFile[file.lastPathComponent]?.expectedLabel ?? ""
 
                 let pb = try makePixelBuffer(from: cgImg, context: ciContext)
                 let aspect = Double(w) / Double(h)
@@ -343,6 +395,8 @@ enum RealPhotoPipelineBenchmark {
                     frame: frameCtx,
                     pose: pose,
                     allowedZooms: allowedZooms,
+                    opticalZooms: allowedZooms,
+                    upscaleThreshold: 3.0,
                     preferences: [:],
                     requestID: UUID(),
                     lowMemoryBudget: false,
@@ -351,8 +405,32 @@ enum RealPhotoPipelineBenchmark {
                     throw BenchmarkError(description: "Production pipeline returned nil for \(file.lastPathComponent)")
                 }
 
-                // Re-run stateless New Director cleanly (enableTemporalHysteresis: false) so every photo is 100% independent
+                // Re-run stateless New Compositional Director cleanly on exact same model outputs
+                let tNew0 = ProcessInfo.processInfo.systemUptime
                 let newDec = CameraFramingDirector.direct(
+                    detections: diag.directorDetections,
+                    raster: diag.raster,
+                    sceneHints: diag.sceneHints,
+                    semanticAffinities: diag.semanticAffinities,
+                    neuralProposals: diag.evaluatedProposals,
+                    gaicProposals: diag.gaicProposals,
+                    incidentalBounds: diag.incidentalBounds,
+                    calibration: calib,
+                    pose: pose,
+                    currentZoom: 1.0,
+                    allowedZooms: allowedZooms,
+                    portraitBounds: diag.portraitBounds,
+                    poseProfile: diag.poseProfile,
+                    enableTemporalHysteresis: false,
+                    opticalZooms: allowedZooms,
+                    upscaleThreshold: 3.0
+                )
+                let newDirMs = (ProcessInfo.processInfo.systemUptime - tNew0) * 1000.0
+                newDirectorMsSum += newDirMs
+
+                // Run exact frozen build.740 baseline on the EXACT same detections & neural evidence
+                let tOld0 = ProcessInfo.processInfo.systemUptime
+                let oldDec = LegacyCameraFramingDirector.direct(
                     detections: diag.directorDetections,
                     raster: diag.raster,
                     sceneHints: diag.sceneHints,
@@ -368,44 +446,84 @@ enum RealPhotoPipelineBenchmark {
                     poseProfile: diag.poseProfile,
                     enableTemporalHysteresis: false
                 )
+                let oldDirMs = (ProcessInfo.processInfo.systemUptime - tOld0) * 1000.0
+                oldDirectorMsSum += oldDirMs
 
-                // Run exact OLD Legacy pre-overhaul pipeline (with old CompositionTuning box clamping: minDim 0.04, maxDim 0.95, minVis 0.75)
-                let legacyFilteredDetections = diag.directorDetections.filter { d in
-                    if d.domain == .wideNature || d.domain == .backgroundSurface { return true }
-                    let r = d.boundingBox
-                    guard r.width >= 0.04, r.height >= 0.04, r.width <= 0.95, r.height <= 0.95 else { return false }
-                    let vis = r.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-                    let visRatio = (vis.width * vis.height) / max(1e-6, r.width * r.height)
-                    return visRatio >= 0.75
+                let oldReasonCode = LegacyCameraFramingDirector.diagnoseReasonCode(for: oldDec, currentZoom: 1.0)
+                let newReasonCode = newDec.zoomTrace?.reasonCode.rawValue ?? "NONE"
+                let newClutBefore = newDec.zoomTrace?.clutterBefore ?? 0.0
+                let newClutAfter = newDec.zoomTrace?.clutterAfter ?? 0.0
+                let newScoreGain = newDec.zoomTrace?.scoreGain ?? 0.0
+                let newDistractors = newDec.zoomTrace?.distractorBoxes ?? []
+                let newPredCropFrame = newDec.zoomTrace?.predictedPostZoomFrame ?? newDec.centerCropVisibleFrame
+
+                let oldPredPostPan = classifyZoomBucket(decision: oldDec, evaluatePostPan: true)
+                let oldPredImm = classifyZoomBucket(decision: oldDec, evaluatePostPan: false)
+                let newPredPostPan = classifyZoomBucket(decision: newDec, evaluatePostPan: true)
+                let newPredImm = classifyZoomBucket(decision: newDec, evaluatePostPan: false)
+
+                let newMatch = !expectedLabel.isEmpty && (newPredPostPan == expectedLabel)
+                let oldMatch = !expectedLabel.isEmpty && (oldPredPostPan == expectedLabel)
+
+                if !expectedLabel.isEmpty {
+                    evaluatedCount += 1
+                    oldPerClassTotal[expectedLabel, default: 0] += 1
+                    newPerClassTotal[expectedLabel, default: 0] += 1
+                    oldConfusion[expectedLabel, default: [:]][oldPredPostPan, default: 0] += 1
+                    newConfusion[expectedLabel, default: [:]][newPredPostPan, default: 0] += 1
+                    if oldMatch {
+                        oldPostPanCorrect += 1
+                        oldPerClassCorrect[expectedLabel, default: 0] += 1
+                    } else {
+                        oldMisses.append([
+                            "file": file.lastPathComponent,
+                            "expected": expectedLabel,
+                            "predicted": oldPredPostPan,
+                            "hero": oldDec.heroLabel,
+                            "role": oldDec.role.rawValue,
+                            "zoom": round(Double(oldDec.recommendedZoom) * 100) / 100,
+                            "postPanZoom": round(Double(oldDec.idealZoomAfterPan) * 100) / 100,
+                            "reasonCode": oldReasonCode,
+                        ])
+                    }
+                    if oldPredImm == expectedLabel { oldImmCorrect += 1 }
+                    if newMatch {
+                        newPostPanCorrect += 1
+                        newPerClassCorrect[expectedLabel, default: 0] += 1
+                    } else {
+                        newMisses.append([
+                            "file": file.lastPathComponent,
+                            "expected": expectedLabel,
+                            "predicted": newPredPostPan,
+                            "hero": newDec.heroLabel,
+                            "role": newDec.role.rawValue,
+                            "fill": round(newDec.subjectFillMetric * 1000) / 1000,
+                            "clutterBefore": round(newClutBefore * 1000) / 1000,
+                            "clutterAfter": round(newClutAfter * 1000) / 1000,
+                            "scoreGain": round(newScoreGain * 1000) / 1000,
+                            "zoom": round(Double(newDec.recommendedZoom) * 100) / 100,
+                            "postPanZoom": round(Double(newDec.idealZoomAfterPan) * 100) / 100,
+                            "reasonCode": newReasonCode,
+                        ])
+                    }
+                    if newPredImm == expectedLabel { newImmCorrect += 1 }
                 }
-                let oldDec = LegacyCameraFramingDirector.direct(
-                    detections: legacyFilteredDetections,
-                    raster: diag.raster,
-                    sceneHints: diag.sceneHints,
-                    semanticAffinities: diag.semanticAffinities,
-                    neuralProposals: diag.evaluatedProposals,
-                    gaicProposals: diag.gaicProposals,
-                    incidentalBounds: diag.incidentalBounds,
-                    calibration: calib,
-                    pose: pose,
-                    currentZoom: 1.0,
-                    allowedZooms: allowedZooms,
-                    portraitBounds: diag.portraitBounds,
-                    poseProfile: diag.poseProfile
-                )
 
                 let oldCenterCrop = CameraFramingDirector.centerCropFrame(currentZoom: 1.0, targetZoom: oldDec.recommendedZoom)
                 let oldSafe = isSubjectSafeInCenterCrop(heroBox: oldDec.heroBounds, role: oldDec.role, zoom: oldDec.recommendedZoom)
                 let newSafe = isSubjectSafeInCenterCrop(heroBox: newDec.heroBounds, role: newDec.role, zoom: newDec.recommendedZoom)
+                if !oldSafe { oldCenterClipCount += 1 }
+                if !newSafe { newCenterClipCount += 1 }
 
-                // Render annotated images: Old, New, and Side-by-Side Comparison!
+                // Render annotated images: Old (build.740), New (+ distractors + crop preview!), and Side-by-Side Comparison!
                 let oldAnnotated = try renderAnnotatedImage(
                     source: cgImg,
-                    titlePrefix: "OLD LEGACY",
+                    titlePrefix: "OLD b740",
                     fileName: file.lastPathComponent,
                     category: category,
                     aspectTag: arTag,
-                    allDetections: legacyFilteredDetections,
+                    allDetections: oldDec.allDetections,
+                    distractorBoxes: [],
                     role: oldDec.role.rawValue,
                     heroLabel: "\(oldDec.heroLocalizedLabel) (\(oldDec.heroLabel))",
                     heroBounds: oldDec.heroBounds,
@@ -413,24 +531,32 @@ enum RealPhotoPipelineBenchmark {
                     destPoint: oldDec.destinationPoint,
                     aimPoint: oldDec.aimPointInSource,
                     recommendedZoom: oldDec.recommendedZoom,
-                    zoomState: oldDec.recommendedZoom > 1.10 ? "ZOOM_IN" : (oldDec.recommendedZoom < 0.90 ? "ZOOM_OUT" : "NO_ZOOM"),
-                    requiresPanBeforeZoom: false,
-                    idealZoomAfterPan: oldDec.recommendedZoom,
+                    zoomState: oldDec.zoomState.rawValue,
+                    reasonCode: oldReasonCode,
+                    expectedLabel: expectedLabel,
+                    isMatch: oldMatch,
+                    requiresPanBeforeZoom: oldDec.requiresPanBeforeZoom,
+                    idealZoomAfterPan: oldDec.idealZoomAfterPan,
                     centerCropFrame: oldCenterCrop,
+                    predictedPostZoomFrame: oldCenterCrop,
                     centerCropSafe: oldSafe,
-                    fillMetric: Double(max(oldDec.heroBounds.width, oldDec.heroBounds.height)),
-                    idealFill: 0.50,
+                    fillMetric: oldDec.subjectFillMetric,
+                    idealFill: oldDec.targetFillMetric,
+                    clutterBefore: 0.0,
+                    clutterAfter: 0.0,
+                    scoreGain: 0.0,
                     ruleName: oldDec.ruleName,
                     explanation: oldDec.explanation,
                     horizonY: oldDec.detectedHorizonY
                 )
-                let newAnnotated = try renderAnnotatedImage(
+                let newAnnotatedBase = try renderAnnotatedImage(
                     source: cgImg,
-                    titlePrefix: "NEW REBUILT",
+                    titlePrefix: "NEW COMP-ZOOM",
                     fileName: file.lastPathComponent,
                     category: category,
                     aspectTag: arTag,
                     allDetections: newDec.allDetections,
+                    distractorBoxes: newDistractors,
                     role: newDec.role.rawValue,
                     heroLabel: "\(newDec.heroLocalizedLabel) (\(newDec.heroLabel))",
                     heroBounds: newDec.heroBounds,
@@ -439,20 +565,35 @@ enum RealPhotoPipelineBenchmark {
                     aimPoint: newDec.aimPointInSource,
                     recommendedZoom: newDec.recommendedZoom,
                     zoomState: newDec.zoomState.rawValue,
+                    reasonCode: newReasonCode,
+                    expectedLabel: expectedLabel,
+                    isMatch: newMatch,
                     requiresPanBeforeZoom: newDec.requiresPanBeforeZoom,
                     idealZoomAfterPan: newDec.idealZoomAfterPan,
                     centerCropFrame: newDec.centerCropVisibleFrame,
+                    predictedPostZoomFrame: newPredCropFrame,
                     centerCropSafe: newSafe,
                     fillMetric: newDec.subjectFillMetric,
                     idealFill: newDec.targetFillMetric,
+                    clutterBefore: newClutBefore,
+                    clutterAfter: newClutAfter,
+                    scoreGain: newScoreGain,
                     ruleName: newDec.ruleName,
                     explanation: newDec.explanation,
                     horizonY: newDec.detectedHorizonY
                 )
-                let sideBySide = try renderSideBySide(left: oldAnnotated, right: newAnnotated)
+                let newWithCrop = try attachSimulatedCropPanel(
+                    annotated: newAnnotatedBase,
+                    source: cgImg,
+                    predictedCrop: newPredCropFrame,
+                    zoomState: newDec.zoomState.rawValue,
+                    postPanZoom: newDec.idealZoomAfterPan,
+                    immediateZoom: newDec.recommendedZoom
+                )
+                let sideBySide = try renderSideBySide(left: oldAnnotated, right: newWithCrop)
 
                 try saveJPEG(oldAnnotated, to: oldOutDir.appendingPathComponent(file.lastPathComponent))
-                try saveJPEG(newAnnotated, to: newOutDir.appendingPathComponent(file.lastPathComponent))
+                try saveJPEG(newWithCrop, to: newOutDir.appendingPathComponent(file.lastPathComponent))
                 try saveJPEG(sideBySide, to: compareOutDir.appendingPathComponent(file.lastPathComponent))
 
                 let heroBoxStr = String(
@@ -466,6 +607,7 @@ enum RealPhotoPipelineBenchmark {
                     csvEscape(arTag),
                     "\(w)",
                     "\(h)",
+                    csvEscape(expectedLabel),
                     "\(newDec.allDetections.count)",
                     csvEscape(oldDec.role.rawValue),
                     csvEscape(oldDec.heroLabel),
@@ -475,6 +617,10 @@ enum RealPhotoPipelineBenchmark {
                     String(format: "%.3f", oldDec.aimPointInSource.x),
                     String(format: "%.3f", oldDec.aimPointInSource.y),
                     String(format: "%.2f", oldDec.recommendedZoom),
+                    String(format: "%.2f", oldDec.idealZoomAfterPan),
+                    csvEscape(oldPredPostPan),
+                    csvEscape(oldPredImm),
+                    csvEscape(oldReasonCode),
                     oldSafe ? "YES" : "CLIPPED",
                     csvEscape(oldDec.explanation),
                     csvEscape(newDec.role.rawValue),
@@ -483,6 +629,10 @@ enum RealPhotoPipelineBenchmark {
                     csvEscape(heroBoxStr),
                     String(format: "%.3f", newDec.subjectFillMetric),
                     String(format: "%.3f", newDec.targetFillMetric),
+                    String(format: "%.3f", newClutBefore),
+                    String(format: "%.3f", newClutAfter),
+                    "\(newDistractors.count)",
+                    String(format: "%+.3f", newScoreGain),
                     String(format: "%.3f", newDec.destinationPoint.x),
                     String(format: "%.3f", newDec.destinationPoint.y),
                     String(format: "%.3f", newDec.aimPointInSource.x),
@@ -492,6 +642,10 @@ enum RealPhotoPipelineBenchmark {
                     String(format: "%.2f", newDec.idealZoomAfterPan),
                     String(format: "%.2f", newDec.centerCropMaxZoom),
                     newDec.requiresPanBeforeZoom ? "YES" : "NO",
+                    csvEscape(newPredPostPan),
+                    csvEscape(newPredImm),
+                    csvEscape(newReasonCode),
+                    newMatch ? "OK" : "MISS",
                     newSafe ? "YES" : "CLIPPED",
                     csvEscape(newDec.ruleName),
                     csvEscape(newDec.explanation),
@@ -499,12 +653,13 @@ enum RealPhotoPipelineBenchmark {
                 csvRows.append(line)
 
                 print(String(
-                    format: "  [%02d/%02d] %@ (%@, %dx%d) | OLD: %@ %.1fx (safe=%@) -> NEW: %@ [%@] %.1fx%@ (safe=%@)",
-                    idx + 1, imageFiles.count, file.lastPathComponent, category, w, h,
-                    oldDec.heroLabel, oldDec.recommendedZoom, oldSafe ? "Y" : "N",
-                    newDec.heroLabel, newDec.zoomState.rawValue, newDec.recommendedZoom,
-                    newDec.requiresPanBeforeZoom ? String(format: "->pan %.1fx", newDec.idealZoomAfterPan) : "",
-                    newSafe ? "Y" : "N"
+                    format: "  [%02d/%02d] %@ (GT=%@) | OLD: %@ %.1fx(%@) -> NEW: %@ [%@/%@] %.1fx%@ clut=%.2f->%.2f [%@]",
+                    idx + 1, imageFiles.count, file.lastPathComponent, expectedLabel,
+                    oldPredPostPan, oldDec.idealZoomAfterPan, oldReasonCode,
+                    newPredPostPan, newDec.zoomState.rawValue, newReasonCode, newDec.recommendedZoom,
+                    newDec.requiresPanBeforeZoom ? String(format: "->%.1fx", newDec.idealZoomAfterPan) : "",
+                    newClutBefore, newClutAfter,
+                    newMatch ? "OK" : "MISS"
                 ))
                 fflush(stdout)
             }
@@ -515,8 +670,147 @@ enum RealPhotoPipelineBenchmark {
             atomically: true,
             encoding: .utf8
         )
+
+        var perClassSummary: [String: Any] = [:]
+        for cls in evalClasses {
+            let tot = newPerClassTotal[cls] ?? 0
+            let oldOk = oldPerClassCorrect[cls] ?? 0
+            let newOk = newPerClassCorrect[cls] ?? 0
+            perClassSummary[cls] = [
+                "total": tot,
+                "oldCorrect": oldOk,
+                "oldAccuracyPct": tot > 0 ? round(Double(oldOk) * 1000.0 / Double(tot)) / 10.0 : 0.0,
+                "newCorrect": newOk,
+                "newAccuracyPct": tot > 0 ? round(Double(newOk) * 1000.0 / Double(tot)) / 10.0 : 0.0,
+            ]
+        }
+        let nPhotos = max(1, imageFiles.count)
+        let evalSummary: [String: Any] = [
+            "totalPhotos": imageFiles.count,
+            "evaluatedGroundTruthPhotos": evaluatedCount,
+            "aspectCounts": aspectCounter,
+            "oldBuild740": [
+                "postPanCorrect": oldPostPanCorrect,
+                "postPanAccuracyPct": evaluatedCount > 0 ? round(Double(oldPostPanCorrect) * 1000.0 / Double(evaluatedCount)) / 10.0 : 0.0,
+                "immediateCorrect": oldImmCorrect,
+                "immediateAccuracyPct": evaluatedCount > 0 ? round(Double(oldImmCorrect) * 1000.0 / Double(evaluatedCount)) / 10.0 : 0.0,
+                "centerClipViolations": oldCenterClipCount,
+                "avgDirectorMs": round((oldDirectorMsSum / Double(nPhotos)) * 1000.0) / 1000.0,
+                "confusion": oldConfusion,
+                "missesCount": oldMisses.count,
+                "misses": oldMisses,
+            ],
+            "newCompositionalZoom": [
+                "postPanCorrect": newPostPanCorrect,
+                "postPanAccuracyPct": evaluatedCount > 0 ? round(Double(newPostPanCorrect) * 1000.0 / Double(evaluatedCount)) / 10.0 : 0.0,
+                "immediateCorrect": newImmCorrect,
+                "immediateAccuracyPct": evaluatedCount > 0 ? round(Double(newImmCorrect) * 1000.0 / Double(evaluatedCount)) / 10.0 : 0.0,
+                "centerClipViolations": newCenterClipCount,
+                "avgDirectorMs": round((newDirectorMsSum / Double(nPhotos)) * 1000.0) / 1000.0,
+                "confusion": newConfusion,
+                "missesCount": newMisses.count,
+                "misses": newMisses,
+            ],
+            "perClass": perClassSummary,
+        ]
+        try JSONSerialization.data(withJSONObject: evalSummary, options: [.prettyPrinted, .sortedKeys])
+            .write(to: outDir.appendingPathComponent("zoom_evaluation_summary.json"))
+
+        print("=================================================================")
+        print(String(
+            format: "ZOOM BENCHMARK (%d photos) | OLD b740: %d/%d (%.1f%% postPan, %.1f%% imm) -> NEW: %d/%d (%.1f%% postPan, %.1f%% imm)",
+            evaluatedCount,
+            oldPostPanCorrect, evaluatedCount, evaluatedCount > 0 ? Double(oldPostPanCorrect) * 100.0 / Double(evaluatedCount) : 0,
+            evaluatedCount > 0 ? Double(oldImmCorrect) * 100.0 / Double(evaluatedCount) : 0,
+            newPostPanCorrect, evaluatedCount, evaluatedCount > 0 ? Double(newPostPanCorrect) * 100.0 / Double(evaluatedCount) : 0,
+            evaluatedCount > 0 ? Double(newImmCorrect) * 100.0 / Double(evaluatedCount) : 0
+        ))
+        for cls in evalClasses {
+            let tot = newPerClassTotal[cls] ?? 0
+            let oOk = oldPerClassCorrect[cls] ?? 0
+            let nOk = newPerClassCorrect[cls] ?? 0
+            print(String(
+                format: "  %-10s : OLD %2d/%2d (%5.1f%%)  ->  NEW %2d/%2d (%5.1f%%)",
+                (cls as NSString).utf8String!,
+                oOk, tot, tot > 0 ? Double(oOk) * 100.0 / Double(tot) : 0,
+                nOk, tot, tot > 0 ? Double(nOk) * 100.0 / Double(tot) : 0
+            ))
+        }
+        print(String(
+            format: "Director avg latency: OLD=%.3fms vs NEW=%.3fms | CenterCrop clips: OLD=%d NEW=%d",
+            oldDirectorMsSum / Double(nPhotos), newDirectorMsSum / Double(nPhotos), oldCenterClipCount, newCenterClipCount
+        ))
+        print("=================================================================")
         print("Aspect ratio coverage verified: \(aspectCounter)")
-        print("Benchmark complete! Wrote \(imageFiles.count) Old + New + Compare annotated images and summary_before_after.csv.")
+        print("Benchmark complete! Wrote \(imageFiles.count) Old + New(+Crop) + Compare images, summary_before_after.csv & zoom_evaluation_summary.json.")
+    }
+
+    // MARK: - Ground Truth Loader & Label Classifier
+
+    private struct GroundTruthEntry {
+        let file: String
+        let expectedLabel: String
+        let expectedReason: String
+    }
+
+    private static func loadGroundTruthCSV(_ url: URL) -> [String: GroundTruthEntry] {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
+        var map: [String: GroundTruthEntry] = [:]
+        let lines = text.split(whereSeparator: \.isNewline)
+        for lineSub in lines.dropFirst() {
+            let cols = parseCSVRow(String(lineSub))
+            guard cols.count >= 5 else { continue }
+            let file = cols[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = cols[4].trimmingCharacters(in: .whitespacesAndNewlines)
+            let reason = cols.count >= 6 ? cols[5].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            if !file.isEmpty && !label.isEmpty {
+                map[file] = GroundTruthEntry(file: file, expectedLabel: label, expectedReason: reason)
+            }
+        }
+        return map
+    }
+
+    private static func parseCSVRow(_ line: String) -> [String] {
+        var result: [String] = []
+        var cur = ""
+        var inQuotes = false
+        var chars = line.makeIterator()
+        while let ch = chars.next() {
+            if ch == "\"" {
+                inQuotes.toggle()
+            } else if ch == "," && !inQuotes {
+                result.append(cur)
+                cur = ""
+            } else {
+                cur.append(ch)
+            }
+        }
+        result.append(cur)
+        return result
+    }
+
+    private static func classifyZoomBucket(decision: DirectorDecision, evaluatePostPan: Bool) -> String {
+        if decision.zoomState == .noSubject {
+            return "NO_SUBJECT"
+        }
+        if (decision.role == .scene || decision.role == .skyLandscape) &&
+           abs(decision.recommendedZoom - 1.0) < 0.08 {
+            return "NO_SUBJECT"
+        }
+        if decision.zoomState == .zoomOut || decision.recommendedZoom < 0.92 {
+            return "ZOOM_OUT"
+        }
+        if evaluatePostPan {
+            if decision.zoomState.isZoomInFamily || decision.recommendedZoom > 1.12 ||
+               (decision.requiresPanBeforeZoom && decision.idealZoomAfterPan > 1.12) {
+                return "ZOOM_IN"
+            }
+        } else {
+            if decision.recommendedZoom > 1.12 {
+                return "ZOOM_IN"
+            }
+        }
+        return "NO_ZOOM"
     }
 
     // MARK: - Helpers & High-Clarity CoreGraphics/CoreText Annotation Renderer
@@ -611,6 +905,116 @@ enum RealPhotoPipelineBenchmark {
         return out
     }
 
+    /// Attaches an actual cropped post-zoom preview panel on the right side of the annotated image
+    /// so visual reviewers immediately see what the resulting zoomed photo looks like.
+    private static func attachSimulatedCropPanel(
+        annotated: CGImage,
+        source: CGImage,
+        predictedCrop: CGRect,
+        zoomState: String,
+        postPanZoom: CGFloat,
+        immediateZoom: CGFloat
+    ) throws -> CGImage {
+        let gap = 10
+        let panelW = max(240, Int(Double(annotated.width) * 0.56))
+        let outW = annotated.width + gap + panelW
+        let outH = annotated.height
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: nil, width: outW, height: outH, bitsPerComponent: 8, bytesPerRow: 0,
+            space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            throw BenchmarkError(description: "Cannot allocate crop-panel CGContext")
+        }
+        ctx.setFillColor(CGColor(red: 0.08, green: 0.09, blue: 0.11, alpha: 1.0))
+        ctx.fill(CGRect(x: 0, y: 0, width: outW, height: outH))
+        ctx.draw(annotated, in: CGRect(x: 0, y: 0, width: annotated.width, height: annotated.height))
+
+        let panelX = annotated.width + gap
+        let headerH = 34
+        let footerReserve = 166
+        let availH = max(120, outH - headerH - footerReserve)
+        let pad = 12
+        let boxW = CGFloat(panelW - pad * 2)
+        let boxH = CGFloat(availH - pad)
+
+        let hasCrop = (predictedCrop.width < 0.985 || predictedCrop.height < 0.985) &&
+            (zoomState == "ZOOM_IN" || zoomState == "GROUP_ZOOM" || zoomState == "PAN_BEFORE_ZOOM")
+        let cropPixelRect: CGRect = {
+            if hasCrop {
+                let cx = max(0, min(CGFloat(source.width - 2), (predictedCrop.minX * CGFloat(source.width)).rounded()))
+                let cy = max(0, min(CGFloat(source.height - 2), (predictedCrop.minY * CGFloat(source.height)).rounded()))
+                let cw = max(2, min(CGFloat(source.width) - cx, (predictedCrop.width * CGFloat(source.width)).rounded()))
+                let ch = max(2, min(CGFloat(source.height) - cy, (predictedCrop.height * CGFloat(source.height)).rounded()))
+                return CGRect(x: cx, y: cy, width: cw, height: ch)
+            }
+            return CGRect(x: 0, y: 0, width: CGFloat(source.width), height: CGFloat(source.height))
+        }()
+        let previewImg = source.cropping(to: cropPixelRect) ?? source
+        let srcAspect = CGFloat(previewImg.width) / max(1.0, CGFloat(previewImg.height))
+        let drawW: CGFloat
+        let drawH: CGFloat
+        if boxW / max(1.0, boxH) > srcAspect {
+            drawH = boxH
+            drawW = boxH * srcAspect
+        } else {
+            drawW = boxW
+            drawH = boxW / max(0.1, srcAspect)
+        }
+        let drawX = CGFloat(panelX + pad) + (boxW - drawW) * 0.5
+        let drawY = CGFloat(footerReserve) + (boxH - drawH) * 0.5
+        ctx.draw(previewImg, in: CGRect(x: drawX, y: drawY, width: drawW, height: drawH))
+
+        // Crisp border around simulated result
+        ctx.saveGState()
+        let borderColor: CGColor = hasCrop
+            ? CGColor(red: 0.25, green: 0.92, blue: 1.0, alpha: 0.95)
+            : (zoomState == "ZOOM_OUT"
+                ? CGColor(red: 0.78, green: 0.52, blue: 1.0, alpha: 0.95)
+                : CGColor(red: 0.45, green: 0.50, blue: 0.58, alpha: 0.80))
+        ctx.setStrokeColor(borderColor)
+        ctx.setLineWidth(2.4)
+        ctx.stroke(CGRect(x: drawX, y: drawY, width: drawW, height: drawH))
+        ctx.restoreGState()
+
+        let headerTitle: String = {
+            if hasCrop {
+                return String(format: "POST-ZOOM RESULT %.1fx", postPanZoom)
+            } else if zoomState == "ZOOM_OUT" {
+                return String(format: "ZOOM OUT %.1fx (WIDER)", immediateZoom)
+            } else if zoomState == "NO_SUBJECT" {
+                return "NO SUBJECT (1.0x)"
+            }
+            return "KEEP 1.0x (NO CROP)"
+        }()
+        drawFooterLine(
+            ctx: ctx,
+            text: headerTitle,
+            x: panelX + pad,
+            y: outH - 24,
+            fontSize: 12.0,
+            color: borderColor,
+            bold: true
+        )
+        let subLine = hasCrop
+            ? String(format: "Crop [%.2f,%.2f %.0f%%x%.0f%%]", predictedCrop.minX, predictedCrop.minY, predictedCrop.width * 100, predictedCrop.height * 100)
+            : String(format: "Imm=%.1fx Pan=%.1fx", immediateZoom, postPanZoom)
+        drawFooterLine(
+            ctx: ctx,
+            text: subLine,
+            x: panelX + pad,
+            y: footerReserve - 26,
+            fontSize: 10.5,
+            color: CGColor(red: 0.85, green: 0.90, blue: 0.96, alpha: 1.0),
+            bold: false
+        )
+
+        guard let out = ctx.makeImage() else {
+            throw BenchmarkError(description: "Failed creating crop-panel CGImage")
+        }
+        return out
+    }
+
     private static func renderAnnotatedImage(
         source: CGImage,
         titlePrefix: String,
@@ -618,6 +1022,7 @@ enum RealPhotoPipelineBenchmark {
         category: String,
         aspectTag: String,
         allDetections: [DirectorDetection],
+        distractorBoxes: [CGRect],
         role: String,
         heroLabel: String,
         heroBounds: CGRect,
@@ -626,12 +1031,19 @@ enum RealPhotoPipelineBenchmark {
         aimPoint: CGPoint,
         recommendedZoom: CGFloat,
         zoomState: String,
+        reasonCode: String,
+        expectedLabel: String,
+        isMatch: Bool,
         requiresPanBeforeZoom: Bool,
         idealZoomAfterPan: CGFloat,
         centerCropFrame: CGRect,
+        predictedPostZoomFrame: CGRect,
         centerCropSafe: Bool,
         fillMetric: Double,
         idealFill: Double,
+        clutterBefore: Double,
+        clutterAfter: Double,
+        scoreGain: Double,
         ruleName: String,
         explanation: String,
         horizonY: Double?
@@ -639,7 +1051,7 @@ enum RealPhotoPipelineBenchmark {
         let scale: CGFloat = source.width < 720 ? (720.0 / CGFloat(source.width)) : 1.0
         let imgW = Int((CGFloat(source.width) * scale).rounded())
         let imgH = Int((CGFloat(source.height) * scale).rounded())
-        let footerH = 148
+        let footerH = 166
         let canvasW = imgW
         let canvasH = imgH + footerH
 
@@ -737,6 +1149,27 @@ enum RealPhotoPipelineBenchmark {
             )
         }
 
+        // 1b) Draw detected distractor ("RAC") boxes in magenta dashed outline
+        for dBox in distractorBoxes {
+            guard dBox.width > 0.005, dBox.height > 0.005 else { continue }
+            let dr = mapRect(dBox)
+            ctx.saveGState()
+            ctx.setStrokeColor(CGColor(red: 1.0, green: 0.22, blue: 0.62, alpha: 0.92))
+            ctx.setLineWidth(2.2)
+            ctx.setLineDash(phase: 0, lengths: [6, 4])
+            ctx.stroke(dr)
+            ctx.restoreGState()
+            drawBadge(
+                ctx: ctx,
+                text: "RAC",
+                at: CGPoint(x: max(4, min(CGFloat(imgW - 44), dr.minX + 2)),
+                            y: max(CGFloat(footerH + 4), min(CGFloat(footerH + imgH - 18), dr.minY + 2))),
+                bg: CGColor(red: 0.42, green: 0.04, blue: 0.24, alpha: 0.85),
+                fg: CGColor(red: 1.0, green: 0.72, blue: 0.88, alpha: 1.0),
+                fontSize: 9.5
+            )
+        }
+
         // 2) Draw Post-Zoom Visible Center-Crop Frame around (0.5, 0.5)
         if recommendedZoom > 1.03 {
             let zRect = mapRect(centerCropFrame)
@@ -782,21 +1215,21 @@ enum RealPhotoPipelineBenchmark {
             )
         }
 
-        // Optional post-pan zoom preview box when off-center subject requires panning first
-        if requiresPanBeforeZoom && idealZoomAfterPan > recommendedZoom + 0.12 {
-            let span = CGFloat(min(1.0, 1.0 / Double(idealZoomAfterPan)))
-            let px0 = max(0.0, min(1.0 - span, heroAnchor.x - span * 0.5))
-            let py0 = max(0.0, min(1.0 - span, heroAnchor.y - span * 0.5))
-            let postPanRect = mapRect(CGRect(x: px0, y: py0, width: span, height: span))
+        // Optional post-alignment predicted zoom viewport preview box (cyan dashed)
+        if predictedPostZoomFrame.width < 0.985 && (requiresPanBeforeZoom || idealZoomAfterPan > 1.08) {
+            let postPanRect = mapRect(predictedPostZoomFrame)
             ctx.saveGState()
-            ctx.setStrokeColor(CGColor(red: 0.30, green: 0.90, blue: 1.0, alpha: 0.85))
-            ctx.setLineWidth(2.0)
-            ctx.setLineDash(phase: 0, lengths: [4, 4])
+            ctx.setStrokeColor(CGColor(red: 0.22, green: 0.92, blue: 1.0, alpha: 0.92))
+            ctx.setLineWidth(2.4)
+            ctx.setLineDash(phase: 0, lengths: [5, 4])
             ctx.stroke(postPanRect)
             ctx.restoreGState()
+            let cropTag = requiresPanBeforeZoom
+                ? String(format: "DICH MAY -> ZOOM %.1fx", idealZoomAfterPan)
+                : String(format: "POST-ALIGN %.1fx", idealZoomAfterPan)
             drawBadge(
                 ctx: ctx,
-                text: String(format: "DICH MAY -> ZOOM %.1fx", idealZoomAfterPan),
+                text: cropTag,
                 at: CGPoint(x: max(6, min(CGFloat(imgW - 165), postPanRect.minX + 4)),
                             y: max(CGFloat(footerH + 26), postPanRect.minY + 4)),
                 bg: CGColor(red: 0.04, green: 0.20, blue: 0.28, alpha: 0.88),
@@ -866,29 +1299,36 @@ enum RealPhotoPipelineBenchmark {
         drawCrosshair(ctx: ctx, center: aimPt, radius: 9, color: CGColor(red: 1.0, green: 0.35, blue: 0.80, alpha: 1.0))
 
         // 5) Draw Telemetry Footer Panel (never occludes image content)
+        let gtBadge = expectedLabel.isEmpty ? "" : "  |  GT=\(expectedLabel) [\(isMatch ? "OK" : "MISS")]"
         let line1 = String(
-            format: "[%@] %@  |  cat=%@  |  %dx%d (%@)  |  boxes=%d",
-            titlePrefix, fileName, category, source.width, source.height, aspectTag, allDetections.count
+            format: "[%@] %@  |  %@ (%dx%d)%@",
+            titlePrefix, fileName, aspectTag, source.width, source.height, gtBadge
         )
         let panSuffix = requiresPanBeforeZoom ? String(format: " -> pan %.1fx", idealZoomAfterPan) : ""
         let line2 = String(
-            format: "Hero: %@ [%@]  |  Fill: %.2f (ideal %.2f)  |  Zoom: %@ %.1fx%@  |  CenterSafe: %@",
-            heroLabel, role, fillMetric, idealFill, zoomState, recommendedZoom, panSuffix, centerCropSafe ? "YES" : "CLIPPED!"
+            format: "Hero: %@ [%@]  |  Fill: %.2f/%.2f  |  Zoom: %@ %.1fx%@  |  Safe:%@",
+            heroLabel, role, fillMetric, idealFill, zoomState, recommendedZoom, panSuffix, centerCropSafe ? "Y" : "CLIP!"
         )
         let line3 = String(
-            format: "Rule: %@  |  Target=(%.2f, %.2f)  Aim=(%.2f, %.2f)",
-            ruleName, destPoint.x, destPoint.y, aimPoint.x, aimPoint.y
+            format: "Code: %@  |  Clutter: %.2f->%.2f (rac=%d)  |  Gain: %+.3f",
+            reasonCode, clutterBefore, clutterAfter, distractorBoxes.count, scoreGain
         )
-        let line4 = "Reason: \(explanation)"
+        let line4 = String(
+            format: "Rule: %@  |  Target=(%.2f,%.2f) Aim=(%.2f,%.2f)  |  %@",
+            ruleName, destPoint.x, destPoint.y, aimPoint.x, aimPoint.y, explanation
+        )
 
-        drawFooterLine(ctx: ctx, text: line1, x: 12, y: footerH - 28, fontSize: 12.5,
-                       color: CGColor(red: 0.96, green: 0.97, blue: 1.0, alpha: 1.0), bold: true)
-        drawFooterLine(ctx: ctx, text: line2, x: 12, y: footerH - 58, fontSize: 12.0,
+        let l1Color = expectedLabel.isEmpty
+            ? CGColor(red: 0.96, green: 0.97, blue: 1.0, alpha: 1.0)
+            : (isMatch ? CGColor(red: 0.45, green: 1.0, blue: 0.62, alpha: 1.0) : CGColor(red: 1.0, green: 0.42, blue: 0.42, alpha: 1.0))
+        drawFooterLine(ctx: ctx, text: line1, x: 12, y: footerH - 28, fontSize: 12.2, color: l1Color, bold: true)
+        drawFooterLine(ctx: ctx, text: line2, x: 12, y: footerH - 58, fontSize: 11.6,
                        color: CGColor(red: 0.42, green: 0.98, blue: 0.62, alpha: 1.0), bold: true)
-        drawFooterLine(ctx: ctx, text: line3, x: 12, y: footerH - 88, fontSize: 11.5,
-                       color: CGColor(red: 1.0, green: 0.86, blue: 0.38, alpha: 1.0), bold: false)
-        drawFooterLine(ctx: ctx, text: line4, x: 12, y: footerH - 120, fontSize: 11.5,
-                       color: CGColor(red: 0.85, green: 0.90, blue: 0.96, alpha: 1.0), bold: false)
+        drawFooterLine(ctx: ctx, text: line3, x: 12, y: footerH - 88, fontSize: 11.2,
+                       color: CGColor(red: 0.55, green: 0.92, blue: 1.0, alpha: 1.0), bold: true)
+        drawFooterLine(ctx: ctx, text: line4, x: 12, y: footerH - 122, fontSize: 10.8,
+                       color: CGColor(red: 0.88, green: 0.91, blue: 0.96, alpha: 1.0), bold: false)
+        _ = category
 
         guard let out = ctx.makeImage() else {
             throw BenchmarkError(description: "Failed creating annotated CGImage")

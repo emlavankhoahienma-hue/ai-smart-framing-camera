@@ -183,6 +183,11 @@ public struct CameraMainView: View {
                             // AR AI Framing Lines & Reticle
                             ARFramingOverlayView(viewModel: viewModel)
 
+                            // Optional Zoom Debug Overlay (default OFF in Settings -> Bố cục)
+                            if viewModel.isZoomDebugOverlayEnabled {
+                                ZoomDebugOverlayView(viewModel: viewModel)
+                            }
+
                             // Rangefinder Windowed Zoom Overlay (Khớp trực tiếp 1:1 khung ngắm 3:4 Photo hoặc 9:16 Video)
                             if viewModel.isWindowedZoomActive {
                                 GeometryReader { proxy in

@@ -112,3 +112,124 @@ public struct AIStatusHUDView: View {
         }
     }
 }
+
+/// Optional on-device Zoom Debug Overlay (default OFF, toggled in Settings -> Bố cục).
+/// Renders hero box, detected distractor ("rác") boxes, predicted post-zoom viewport frame,
+/// and live decision telemetry (role, fill ratio, clutter score, zoom state & reasonCode).
+public struct ZoomDebugOverlayView: View {
+    @ObservedObject var viewModel: CameraViewModel
+
+    public init(viewModel: CameraViewModel) {
+        self.viewModel = viewModel
+    }
+
+    public var body: some View {
+        GeometryReader { proxy in
+            let w = proxy.size.width
+            let h = proxy.size.height
+            ZStack(alignment: .topLeading) {
+                if let snap = viewModel.zoomDebugSnapshot {
+                    // 1. Predicted post-zoom crop frame (cyan/amber dashed)
+                    if snap.predictedPostZoomFrame.width < 0.985 || snap.predictedPostZoomFrame.height < 0.985 {
+                        let pf = snap.predictedPostZoomFrame
+                        Rectangle()
+                            .stroke(
+                                Color.cyan.opacity(0.92),
+                                style: StrokeStyle(lineWidth: 1.8, dash: [6, 4])
+                            )
+                            .frame(width: max(4, pf.width * w), height: max(4, pf.height * h))
+                            .position(x: pf.midX * w, y: pf.midY * h)
+                    }
+
+                    // 2. Detected clutter / distractor boxes (magenta dashed)
+                    ForEach(Array(snap.distractorBoxes.prefix(12).enumerated()), id: \.offset) { _, dBox in
+                        Rectangle()
+                            .stroke(
+                                Color(red: 1.0, green: 0.25, blue: 0.65).opacity(0.88),
+                                style: StrokeStyle(lineWidth: 1.4, dash: [4, 3])
+                            )
+                            .frame(width: max(4, dBox.width * w), height: max(4, dBox.height * h))
+                            .position(x: dBox.midX * w, y: dBox.midY * h)
+                    }
+
+                    // 3. Primary hero bounding box (emerald green)
+                    let hb = snap.heroBounds
+                    Rectangle()
+                        .stroke(Color.green.opacity(0.95), lineWidth: 2.0)
+                        .frame(width: max(6, hb.width * w), height: max(6, hb.height * h))
+                        .position(x: hb.midX * w, y: hb.midY * h)
+
+                    // 4. Compact telemetry card (top-left)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(stateBadgeColor(snap.zoomState))
+                                .frame(width: 7, height: 7)
+                            Text("ZOOM DEBUG · \(snap.zoomState)")
+                                .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white)
+                        }
+                        Text("Hero: \(snap.heroLabel) [\(snap.role)]")
+                            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(.green)
+                        Text(String(
+                            format: "Fill: %.0f%%→%.0f%% (ideal %.0f%%) · Gain %+.2f",
+                            snap.subjectFill * 100, snap.projectedFill * 100, snap.idealFill * 100, snap.scoreGain
+                        ))
+                            .font(.system(size: 9.0, weight: .regular, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.92))
+                        Text(String(
+                            format: "Clutter: %.0f%%→%.0f%% · Rác: %d · Cuts: %d→%d",
+                            snap.clutterBefore * 100, snap.clutterAfter * 100,
+                            snap.distractorBoxes.count, snap.partialEdgeCutsBefore, snap.partialEdgeCutsAfter
+                        ))
+                            .font(.system(size: 9.0, weight: .regular, design: .monospaced))
+                            .foregroundColor(Color(red: 1.0, green: 0.65, blue: 0.85))
+                        Text(String(
+                            format: "Zoom: %.1fx → imm %.1fx / pan %.1fx",
+                            Double(snap.currentZoom), Double(snap.immediateZoom), Double(snap.postPanZoom)
+                        ))
+                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.cyan)
+                        Text("Reason: \(snap.reasonCode)")
+                            .font(.system(size: 9.0, weight: .bold, design: .monospaced))
+                            .foregroundColor(.yellow)
+                            .lineLimit(2)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.black.opacity(0.72))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .stroke(Color.white.opacity(0.18), lineWidth: 0.6)
+                            )
+                    )
+                    .padding(.top, 52)
+                    .padding(.leading, 8)
+                } else {
+                    Text("ZOOM DEBUG ON · Bấm AI để phân tích")
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.yellow)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.black.opacity(0.68)))
+                        .padding(.top, 52)
+                        .padding(.leading, 8)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func stateBadgeColor(_ state: String) -> Color {
+        switch state {
+        case "ZOOM_IN", "GROUP_ZOOM": return .cyan
+        case "PAN_BEFORE_ZOOM": return .orange
+        case "ZOOM_OUT": return .purple
+        case "NO_SUBJECT": return .gray
+        default: return .green
+        }
+    }
+}

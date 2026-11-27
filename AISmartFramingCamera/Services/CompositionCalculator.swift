@@ -3,6 +3,68 @@ import Foundation
 import CoreGraphics
 import simd
 
+/// Live diagnostic telemetry snapshot for the optional on-device Zoom Debug Overlay (default OFF).
+public struct ZoomDebugSnapshot: Sendable {
+    public let role: String
+    public let heroLabel: String
+    public let heroBounds: CGRect
+    public let distractorBoxes: [CGRect]
+    public let subjectFill: Double
+    public let projectedFill: Double
+    public let idealFill: Double
+    public let clutterBefore: Double
+    public let clutterAfter: Double
+    public let partialEdgeCutsBefore: Int
+    public let partialEdgeCutsAfter: Int
+    public let zoomState: String
+    public let reasonCode: String
+    public let currentZoom: CGFloat
+    public let immediateZoom: CGFloat
+    public let postPanZoom: CGFloat
+    public let predictedPostZoomFrame: CGRect
+    public let scoreGain: Double
+
+    public init(
+        role: String,
+        heroLabel: String,
+        heroBounds: CGRect,
+        distractorBoxes: [CGRect],
+        subjectFill: Double,
+        projectedFill: Double,
+        idealFill: Double,
+        clutterBefore: Double,
+        clutterAfter: Double,
+        partialEdgeCutsBefore: Int,
+        partialEdgeCutsAfter: Int,
+        zoomState: String,
+        reasonCode: String,
+        currentZoom: CGFloat,
+        immediateZoom: CGFloat,
+        postPanZoom: CGFloat,
+        predictedPostZoomFrame: CGRect,
+        scoreGain: Double
+    ) {
+        self.role = role
+        self.heroLabel = heroLabel
+        self.heroBounds = heroBounds
+        self.distractorBoxes = distractorBoxes
+        self.subjectFill = subjectFill
+        self.projectedFill = projectedFill
+        self.idealFill = idealFill
+        self.clutterBefore = clutterBefore
+        self.clutterAfter = clutterAfter
+        self.partialEdgeCutsBefore = partialEdgeCutsBefore
+        self.partialEdgeCutsAfter = partialEdgeCutsAfter
+        self.zoomState = zoomState
+        self.reasonCode = reasonCode
+        self.currentZoom = currentZoom
+        self.immediateZoom = immediateZoom
+        self.postPanZoom = postPanZoom
+        self.predictedPostZoomFrame = predictedPostZoomFrame
+        self.scoreGain = scoreGain
+    }
+}
+
 /// The optical tracker follows subjectPoint. The composition guide follows aimWorldRay.
 /// These are different bearings whenever the requested composition is off centre.
 struct LocalFramingPlan: Sendable {
@@ -24,6 +86,8 @@ struct LocalFramingPlan: Sendable {
     var requiresPanBeforeZoom: Bool = false
     var postPanZoom: CGFloat? = nil
     var zoomStateRaw: String = "NO_ZOOM"
+    var zoomReasonCode: String = ""
+    var zoomDebugSnapshot: ZoomDebugSnapshot? = nil
 
     init(
         subjectPoint: CGPoint,
@@ -43,7 +107,9 @@ struct LocalFramingPlan: Sendable {
         compositionRule: CompositionRule? = nil,
         requiresPanBeforeZoom: Bool = false,
         postPanZoom: CGFloat? = nil,
-        zoomStateRaw: String = "NO_ZOOM"
+        zoomStateRaw: String = "NO_ZOOM",
+        zoomReasonCode: String = "",
+        zoomDebugSnapshot: ZoomDebugSnapshot? = nil
     ) {
         self.subjectPoint = subjectPoint
         self.subjectRect = subjectRect
@@ -63,6 +129,8 @@ struct LocalFramingPlan: Sendable {
         self.requiresPanBeforeZoom = requiresPanBeforeZoom
         self.postPanZoom = postPanZoom
         self.zoomStateRaw = zoomStateRaw
+        self.zoomReasonCode = zoomReasonCode
+        self.zoomDebugSnapshot = zoomDebugSnapshot
     }
 }
 

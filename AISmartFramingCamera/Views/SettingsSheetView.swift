@@ -1203,6 +1203,15 @@ struct AIFramingSettingsSection: View {
                 dividerLine
 
                 SettingsToggleRow(
+                    title: "Lớp gỡ lỗi AI Zoom (Debug)",
+                    subtitle: "Hiện khung chủ thể, vùng rác, điểm clutter, zoom dự kiến & reason code",
+                    icon: "ladybug",
+                    isOn: $viewModel.isZoomDebugOverlayEnabled
+                )
+
+                dividerLine
+
+                SettingsToggleRow(
                     title: "Tự động cân chỉnh màu AI",
                     subtitle: "Tối ưu tương phản và tone màu theo ánh sáng thực tế",
                     icon: "slider.horizontal.3",

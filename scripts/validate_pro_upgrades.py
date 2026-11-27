@@ -201,7 +201,9 @@ class ProCameraUpgradesContracts(unittest.TestCase):
         self.assertIn("enum CameraFramingDirector", director)
         self.assertIn("let solvedRotation = simd_quatd(from: targetRay, to: sourceRay)", director)
         self.assertIn("isCornerHeadless", director)
-        self.assertIn("isSeverelyCramped", director)
+        self.assertIn("isSeverelyClipped", director)
+        self.assertIn("solveCompositionalZoom", director)
+        self.assertIn("struct ZoomDecisionTrace", director)
         self.assertIn("extractSharpForegroundClusters", director)
 
         ow = source("Services/OpenWorldSubjectDetector.swift")

@@ -355,6 +355,7 @@ jobs:
         run: |
           "$RUNNER_TEMP/real-photo-benchmark" \
             --test-images "${{ github.workspace }}/test-images" \
+            --ground-truth "${{ github.workspace }}/tests/zoom_ground_truth.csv" \
             --out "${{ github.workspace }}/benchmark-output" \
             --stress-cycles 35
 

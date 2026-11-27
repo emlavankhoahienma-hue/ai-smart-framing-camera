@@ -21,12 +21,77 @@ enum DirectorSubjectDomain: String, Sendable {
     case foregroundMask
 }
 
-/// Explicit 3-state optical zoom decision driven by subject fill, category comfort band,
-/// and center-crop hardware optics.
+/// Explicit 6-state compositional zoom decision driven by multi-candidate scene scoring,
+/// clutter reduction, subject/group margins, and center-crop hardware optics.
 enum DirectorZoomState: String, Sendable {
     case zoomIn = "ZOOM_IN"
     case noZoomNeeded = "NO_ZOOM"
     case zoomOut = "ZOOM_OUT"
+    case noSubject = "NO_SUBJECT"
+    case groupZoom = "GROUP_ZOOM"
+    case panBeforeZoom = "PAN_BEFORE_ZOOM"
+
+    var isZoomInFamily: Bool {
+        self == .zoomIn || self == .groupZoom || self == .panBeforeZoom
+    }
+}
+
+/// Diagnostic reason code recorded for every zoom decision (live debug HUD, logs, and CI benchmark).
+enum ZoomReasonCode: String, Sendable {
+    case zoomInSmallDistant = "ZOOM_IN_SMALL_DISTANT"
+    case zoomInTrimClutter = "ZOOM_IN_TRIM_CLUTTER"
+    case zoomInGroupTighten = "ZOOM_IN_GROUP_TIGHTEN"
+    case panFirstOffCenter = "PAN_FIRST_OFFCENTER_CAP"
+    case zoomOutBorderClipped = "ZOOM_OUT_BORDER_CLIPPED"
+    case zoomOutOversized = "ZOOM_OUT_OVERSIZED"
+    case zoomOutWideScene = "ZOOM_OUT_WIDE_SCENE"
+    case noZoomIdealFraming = "NO_ZOOM_IDEAL_FRAMING"
+    case noZoomInsufficientGain = "NO_ZOOM_INSUFFICIENT_GAIN"
+    case noZoomNoClearSubject = "NO_ZOOM_NO_CLEAR_SUBJECT"
+    case noZoomWideLandscape = "NO_ZOOM_WIDE_LANDSCAPE"
+    case noZoomEdgeCutRisk = "NO_ZOOM_EDGE_CUT_RISK"
+    case noZoomGroupTooWide = "NO_ZOOM_GROUP_TOO_WIDE"
+    case noZoomClutteredScene = "NO_ZOOM_CLUTTERED_SCENE"
+    case noZoomUpscaleCeiling = "NO_ZOOM_UPSCALE_CEILING"
+    case noZoomDeadBand = "NO_ZOOM_DEADBAND"
+    case noZoomTemporalHold = "NO_ZOOM_TEMPORAL_HOLD"
+}
+
+/// Per-rung candidate evaluation trace emitted by the compositional zoom optimizer.
+struct ZoomCandidateTrace: Sendable {
+    let zoom: CGFloat
+    let totalScore: Double
+    let fillScore: Double
+    let clutterAfter: Double
+    let clutterGain: Double
+    let edgeCutPenalty: Double
+    let qualityPenalty: Double
+    let marginSafe: Bool
+    let projectedFill: Double
+}
+
+/// Complete decision trace for why a zoom level was chosen or rejected.
+struct ZoomDecisionTrace: Sendable {
+    let state: DirectorZoomState
+    let reasonCode: ZoomReasonCode
+    let subjectFill: Double
+    let projectedFill: Double
+    let idealFill: Double
+    let clutterBefore: Double
+    let clutterAfter: Double
+    let clutterRemoved: Double
+    let distractorBoxes: [CGRect]
+    let partialEdgeCutsBefore: Int
+    let partialEdgeCutsAfter: Int
+    let baselineScore: Double
+    let bestScore: Double
+    let scoreGain: Double
+    let immediateSafeZoom: CGFloat
+    let postPanZoom: CGFloat
+    let centerCropMaxZoom: CGFloat
+    let upscaleCeiling: CGFloat
+    let predictedPostZoomFrame: CGRect
+    let candidates: [ZoomCandidateTrace]
 }
 
 /// Unified detection entry passed into `CameraFramingDirector`.
@@ -131,9 +196,10 @@ struct DirectorDecision: Sendable {
     var subjectFillMetric: Double = 0.0
     var targetFillMetric: Double = 0.0
     var allDetections: [DirectorDetection] = []
+    var zoomTrace: ZoomDecisionTrace? = nil
 }
 
-/// Thread-safe multi-frame hysteresis & adaptive smoothing memory for live camera re-evaluations.
+/// Thread-safe multi-frame hysteresis, EMA scale smoothing, dead-band, and dwell stability for live camera re-evaluations.
 /// Disabled by default for stateless single-photo benchmarks and unit tests so independent photos never cross-contaminate.
 private final class DirectorTemporalState: @unchecked Sendable {
     static let shared = DirectorTemporalState()
@@ -146,6 +212,11 @@ private final class DirectorTemporalState: @unchecked Sendable {
     private var lastZoom: CGFloat?
     private var lastZoomState: DirectorZoomState?
     private var lastTimestamp: TimeInterval = 0
+    private var emaSubjectFill: Double?
+    private var pendingZoomState: DirectorZoomState?
+    private var pendingZoomTarget: CGFloat?
+    private var pendingSinceTime: TimeInterval = 0
+    private var pendingConsistentFrames: Int = 0
 
     func reset() {
         lock.lock()
@@ -157,7 +228,35 @@ private final class DirectorTemporalState: @unchecked Sendable {
         lastZoom = nil
         lastZoomState = nil
         lastTimestamp = 0
+        emaSubjectFill = nil
+        pendingZoomState = nil
+        pendingZoomTarget = nil
+        pendingSinceTime = 0
+        pendingConsistentFrames = 0
         lock.unlock()
+    }
+
+    /// EMA smoothing (alpha = 0.28) on measured subject fill to damp frame-to-frame box jitter.
+    func smoothSubjectFill(_ rawFill: Double, heroBounds: CGRect, domain: DirectorSubjectDomain, now: TimeInterval) -> Double {
+        lock.lock()
+        defer { lock.unlock() }
+        guard now - lastTimestamp <= 4.5,
+              let prevFill = emaSubjectFill,
+              let prevBox = lastHeroBounds,
+              let prevDom = lastDomain,
+              (prevDom == domain || (prevDom == .human && domain == .face)) else {
+            emaSubjectFill = rawFill
+            return rawFill
+        }
+        let dCenter = hypot(Double(prevBox.midX - heroBounds.midX), Double(prevBox.midY - heroBounds.midY))
+        guard dCenter <= 0.18 else {
+            emaSubjectFill = rawFill
+            return rawFill
+        }
+        let alpha = 0.28
+        let next = prevFill * (1.0 - alpha) + rawFill * alpha
+        emaSubjectFill = next
+        return next
     }
 
     func heroBonus(for candidate: DirectorDetection, now: TimeInterval) -> Double {
@@ -183,26 +282,56 @@ private final class DirectorTemporalState: @unchecked Sendable {
         return 1.0
     }
 
+    /// Applies zoom dead-band (0.18x), state hysteresis, and dwell confirmation (0.55s or >= 4 consecutive frames)
+    /// so zoom never flickers between zoom-in / no-zoom / zoom-out on live camera streams.
     func stabilizeZoom(
         proposedZoom: CGFloat,
         proposedState: DirectorZoomState,
         centerCropMax: CGFloat,
         now: TimeInterval
-    ) -> CGFloat {
+    ) -> (zoom: CGFloat, heldByDwell: Bool) {
         lock.lock()
         defer { lock.unlock() }
         guard now - lastTimestamp <= 4.5,
               let prevZoom = lastZoom,
               let prevState = lastZoomState else {
-            return proposedZoom
+            pendingZoomState = nil
+            pendingZoomTarget = nil
+            pendingConsistentFrames = 0
+            return (proposedZoom, false)
         }
-        if prevState == proposedState && abs(proposedZoom - prevZoom) < 0.18 {
-            if proposedState == .zoomIn {
-                return min(prevZoom, centerCropMax)
+        // 1. Dead-band: ignore sub-0.18x zoom fluctuations inside the same zoom family
+        let sameFamily = (prevState == proposedState) || (prevState.isZoomInFamily && proposedState.isZoomInFamily)
+        if sameFamily && abs(proposedZoom - prevZoom) < 0.18 {
+            pendingZoomState = nil
+            pendingZoomTarget = nil
+            pendingConsistentFrames = 0
+            if proposedState.isZoomInFamily {
+                return (min(prevZoom, centerCropMax), false)
             }
-            return prevZoom
+            return (prevZoom, false)
         }
-        return proposedZoom
+        // 2. Hysteresis & dwell confirmation before switching zoom state or jumping rungs
+        let matchesPending = (pendingZoomState == proposedState) &&
+            (pendingZoomTarget.map { abs($0 - proposedZoom) < 0.22 } ?? false)
+        if matchesPending {
+            pendingConsistentFrames += 1
+        } else {
+            pendingZoomState = proposedState
+            pendingZoomTarget = proposedZoom
+            pendingSinceTime = now
+            pendingConsistentFrames = 1
+        }
+        let elapsed = now - pendingSinceTime
+        let dwellSatisfied = (elapsed >= 0.55 && pendingConsistentFrames >= 2) || pendingConsistentFrames >= 5
+        if !dwellSatisfied {
+            let held = prevState.isZoomInFamily ? min(prevZoom, centerCropMax) : prevZoom
+            return (held, true)
+        }
+        pendingZoomState = nil
+        pendingZoomTarget = nil
+        pendingConsistentFrames = 0
+        return (proposedZoom, false)
     }
 
     func smoothDestination(
@@ -448,7 +577,8 @@ enum CameraFramingDirector {
     static func fillSpec(
         for role: DirectorPhotographicRole,
         isFaceOnlyHero: Bool,
-        isMinimalist: Bool
+        isMinimalist: Bool,
+        isWaistUpPortrait: Bool = false
     ) -> SubjectFillSpec {
         if role == .portrait && isFaceOnlyHero {
             // Face-only close-up box (head without torso): face height should fill 20%-40% of frame height (ideal 28%)
@@ -456,33 +586,37 @@ enum CameraFramingDirector {
         }
         switch role {
         case .portrait:
-            // Single person portrait: height fill 48%-84%, ideal 62%
-            return SubjectFillSpec(minFill: 0.48, idealFill: 0.62, maxFill: 0.84, isWideContextual: false)
+            if isWaistUpPortrait {
+                // Half-body / waist-up portrait: comfortable height 55%-86%, ideal 68%
+                return SubjectFillSpec(minFill: 0.55, idealFill: 0.68, maxFill: 0.86, isWideContextual: false)
+            }
+            // Full-body solo portrait: comfortable height 58%-86%, ideal 72% (with 5-8% top/bottom margin)
+            return SubjectFillSpec(minFill: 0.58, idealFill: 0.72, maxFill: 0.86, isWideContextual: false)
         case .environmentalPortrait:
-            // Person in grand landscape/landmark: height fill 33%-66%, ideal 45% (zooms in when distant < 33% height!)
-            return SubjectFillSpec(minFill: 0.33, idealFill: 0.45, maxFill: 0.66, isWideContextual: false)
+            // Person in grand landscape/landmark: height fill 36%-65%, ideal 48%
+            return SubjectFillSpec(minFill: 0.36, idealFill: 0.48, maxFill: 0.65, isWideContextual: false)
         case .group:
-            // Multi-person group: union span 46%-84%, ideal 62%
-            return SubjectFillSpec(minFill: 0.46, idealFill: 0.62, maxFill: 0.84, isWideContextual: false)
+            // Multi-person group: comfortable union span 52%-84%, ideal 66% (preserving all members + margin)
+            return SubjectFillSpec(minFill: 0.52, idealFill: 0.66, maxFill: 0.84, isWideContextual: false)
         case .animal:
-            // Pet / wildlife: effective span 34%-80%, ideal 48%
-            return SubjectFillSpec(minFill: 0.34, idealFill: 0.48, maxFill: 0.80, isWideContextual: false)
+            // Pet / wildlife: effective area-balanced fill 44%-78%, ideal 58%
+            return SubjectFillSpec(minFill: 0.44, idealFill: 0.58, maxFill: 0.78, isWideContextual: false)
         case .flower:
-            // Blossom / botanical close-up: effective span 34%-76%, ideal 46%
-            return SubjectFillSpec(minFill: 0.34, idealFill: 0.46, maxFill: 0.76, isWideContextual: false)
+            // Blossom / botanical close-up: effective fill 40%-76%, ideal 52%
+            return SubjectFillSpec(minFill: 0.40, idealFill: 0.52, maxFill: 0.76, isWideContextual: false)
         case .food:
-            // Dish / drink / tabletop: effective span 38%-88%, ideal 52% (close-up food shots naturally fill 75-86%!)
-            return SubjectFillSpec(minFill: 0.38, idealFill: 0.52, maxFill: 0.88, isWideContextual: false)
+            // Dish / drink / tabletop: effective fill 42%-86%, ideal 54%
+            return SubjectFillSpec(minFill: 0.42, idealFill: 0.54, maxFill: 0.86, isWideContextual: false)
         case .object, .vehicle:
             if isMinimalist {
-                return SubjectFillSpec(minFill: 0.25, idealFill: 0.36, maxFill: 0.72, isWideContextual: false)
+                return SubjectFillSpec(minFill: 0.30, idealFill: 0.42, maxFill: 0.72, isWideContextual: false)
             }
-            // Small/foreground object or vehicle: effective span 34%-78%, ideal 46%
-            return SubjectFillSpec(minFill: 0.34, idealFill: 0.46, maxFill: 0.78, isWideContextual: false)
+            // Small/foreground object or vehicle: effective fill 42%-78%, ideal 54%
+            return SubjectFillSpec(minFill: 0.42, idealFill: 0.54, maxFill: 0.78, isWideContextual: false)
         case .architecture:
-            return SubjectFillSpec(minFill: 0.44, idealFill: 0.66, maxFill: 0.88, isWideContextual: false)
+            return SubjectFillSpec(minFill: 0.48, idealFill: 0.66, maxFill: 0.88, isWideContextual: false)
         case .street:
-            return SubjectFillSpec(minFill: 0.40, idealFill: 0.58, maxFill: 0.86, isWideContextual: true)
+            return SubjectFillSpec(minFill: 0.42, idealFill: 0.56, maxFill: 0.84, isWideContextual: false)
         case .foliage, .aperture, .indoorRoom, .skyLandscape, .scene:
             return SubjectFillSpec(minFill: 0.50, idealFill: 0.75, maxFill: 0.96, isWideContextual: true)
         }
@@ -491,23 +625,29 @@ enum CameraFramingDirector {
     static func measureSubjectFill(
         box: CGRect,
         role: DirectorPhotographicRole,
-        isFaceOnlyHero: Bool
+        isFaceOnlyHero: Bool,
+        frameAspect: Double = 0.75
     ) -> Double {
         let bw = max(0.012, Double(box.width))
         let bh = max(0.012, Double(box.height))
         let bArea = bw * bh
+        let sqrtA = sqrt(bArea)
         if role == .portrait {
-            return bh
+            if isFaceOnlyHero { return bh }
+            // In wide landscape frames (16:9 / 3:2), blend a small area factor so tall-narrow full-body subjects aren't misread as 100% oversized
+            return frameAspect > 1.18 ? (0.82 * bh + 0.18 * sqrtA) : bh
         }
         switch role {
         case .portrait, .environmentalPortrait:
-            return max(bh, 0.75 * sqrt(bArea) + 0.35 * bw)
+            return max(bh, 0.72 * sqrtA + 0.32 * bw)
         case .group:
-            return max(bw, bh * 0.86)
+            return 0.55 * max(bw, bh * 0.90) + 0.45 * sqrtA
         case .animal:
-            return 0.50 * max(bw, bh) + 0.50 * sqrt(bArea)
-        case .flower, .food, .object, .vehicle, .architecture, .street:
-            return 0.55 * max(bw, bh) + 0.45 * sqrt(bArea)
+            return 0.42 * max(bw, bh) + 0.58 * sqrtA
+        case .flower, .food, .object, .vehicle:
+            return 0.42 * max(bw, bh) + 0.58 * sqrtA
+        case .architecture, .street:
+            return 0.50 * max(bw, bh) + 0.50 * sqrtA
         case .foliage, .aperture, .indoorRoom, .skyLandscape, .scene:
             return max(bw, bh)
         }
@@ -515,12 +655,14 @@ enum CameraFramingDirector {
 
     private struct OpticalZoomSolution {
         let state: DirectorZoomState
+        let reasonCode: ZoomReasonCode
         let recommendedZoom: CGFloat
         let idealZoomAfterPan: CGFloat
         let centerCropMaxZoom: CGFloat
         let requiresPanBeforeZoom: Bool
         let measuredFill: Double
         let spec: SubjectFillSpec
+        let trace: ZoomDecisionTrace
     }
 
     /// Exact center-crop visible frame around `(0.5, 0.5)` at `targetZoom` relative to `currentZoom`.
@@ -594,173 +736,665 @@ enum CameraFramingDirector {
         return max(minZoom, min(maxAllowed, rounded))
     }
 
-    private static func solveOpticalZoom(
+    /// Mean normalized edge sharpness inside `rect` on the 64x64 raster (used to reject blurry background decoys).
+    private static func meanEdgeSharpness(in rect: CGRect, raster: CompositionRaster) -> Double {
+        guard raster.side > 0, raster.edges.count == raster.side * raster.side else { return 0.5 }
+        let s = raster.side
+        let x0 = max(0, min(s - 1, Int(Double(rect.minX) * Double(s))))
+        let x1 = max(x0 + 1, min(s, Int(ceil(Double(rect.maxX) * Double(s)))))
+        let y0 = max(0, min(s - 1, Int(Double(rect.minY) * Double(s))))
+        let y1 = max(y0 + 1, min(s, Int(ceil(Double(rect.maxY) * Double(s)))))
+        var sum = 0.0
+        var count = 0
+        for y in y0..<y1 {
+            let row = y * s
+            for x in x0..<x1 {
+                sum += raster.edges[row + x]
+                count += 1
+            }
+        }
+        return count > 0 ? sum / Double(count) : 0.0
+    }
+
+    /// Collects non-hero secondary detections and incidentals that act as visual distractors ("rác") outside the hero.
+    private static func extractDistractorBoxes(
+        fused: [DirectorDetection],
+        incidentalBounds: [CGRect],
         heroBox: CGRect,
+        protectedBoxes: [CGRect]
+    ) -> [CGRect] {
+        var distractors: [CGRect] = []
+        let heroExpanded = heroBox.insetBy(dx: -0.02, dy: -0.02)
+        for d in fused {
+            if d.isAttentionOnly || d.domain == .wideNature || d.domain == .backgroundSurface { continue }
+            guard d.confidence >= 0.20, d.area >= 0.004, d.area <= 0.62 else { continue }
+            let box = d.boundingBox
+            if rectIoU(box, heroBox) >= 0.30 || rectContainment(box, inside: heroExpanded) >= 0.58 { continue }
+            if protectedBoxes.contains(where: { rectIoU(box, $0) >= 0.30 || rectContainment(box, inside: $0) >= 0.58 }) {
+                continue
+            }
+            if !distractors.contains(where: { rectIoU($0, box) >= 0.55 }) {
+                distractors.append(box)
+            }
+        }
+        for inc in incidentalBounds {
+            let area = Double(max(0, inc.width) * max(0, inc.height))
+            guard area >= 0.004, area <= 0.60 else { continue }
+            if rectIoU(inc, heroBox) >= 0.30 || rectContainment(inc, inside: heroExpanded) >= 0.58 { continue }
+            if !distractors.contains(where: { rectIoU($0, inc) >= 0.50 }) {
+                distractors.append(inc)
+            }
+        }
+        return distractors
+    }
+
+    /// Evaluates visual clutter, dead background void, and border-sliced distractors inside a simulated post-alignment viewport `vp`.
+    private static func evaluateViewportClutter(
+        viewport vp: CGRect,
+        heroBox: CGRect,
+        distractors: [CGRect],
+        raster: CompositionRaster,
+        sceneHints: CompositionSceneHints
+    ) -> (clutterScore: Double, partialEdgeCuts: Int, deadVoidFraction: Double) {
+        let vpArea = Double(max(1e-5, vp.width * vp.height))
+        var distractorWeightedArea = 0.0
+        var partialCuts = 0
+        for d in distractors {
+            let inter = d.intersection(vp)
+            guard !inter.isNull, !inter.isEmpty else { continue }
+            let dArea = Double(max(1e-6, d.width * d.height))
+            let iArea = Double(inter.width * inter.height)
+            let visInVP = iArea / dArea
+            // Secondary object awkwardly sliced right across the viewport edge
+            if visInVP > 0.08 && visInVP < 0.82 {
+                partialCuts += 1
+            }
+            // Project distractor into viewport coordinates to measure peripheral prominence
+            let relCx = Double((inter.midX - vp.minX) / max(1e-4, vp.width))
+            let relCy = Double((inter.midY - vp.minY) / max(1e-4, vp.height))
+            let edgeDist = min(relCx, min(1.0 - relCx, min(relCy, 1.0 - relCy)))
+            let edgeMultiplier = edgeDist < 0.16 ? 1.45 : 1.0
+            distractorWeightedArea += (iArea / vpArea) * edgeMultiplier
+        }
+
+        // Raster-based peripheral attention / edge clutter and empty monochrome void outside hero
+        var rasterClutter = 0.0
+        var deadVoidFraction = 0.0
+        if raster.side >= 8, raster.attention.count == raster.side * raster.side,
+           raster.edges.count == raster.side * raster.side {
+            let s = raster.side
+            let x0 = max(0, min(s - 1, Int(Double(vp.minX) * Double(s))))
+            let x1 = max(x0 + 1, min(s, Int(ceil(Double(vp.maxX) * Double(s)))))
+            let y0 = max(0, min(s - 1, Int(Double(vp.minY) * Double(s))))
+            let y1 = max(y0 + 1, min(s, Int(ceil(Double(vp.maxY) * Double(s)))))
+            let heroPad = heroBox.insetBy(dx: -0.035, dy: -0.035)
+            let hasClutterMap = sceneHints.clutterMap.count == s * s
+            var bgCount = 0
+            var bgClutterSum = 0.0
+            var bgVoidCount = 0
+            for y in y0..<y1 {
+                let py = (Double(y) + 0.5) / Double(s)
+                let row = y * s
+                for x in x0..<x1 {
+                    let px = (Double(x) + 0.5) / Double(s)
+                    if heroPad.contains(CGPoint(x: px, y: py)) { continue }
+                    let idx = row + x
+                    let att = raster.attention[idx]
+                    let edg = raster.edges[idx]
+                    let lum = raster.luminance.count == s * s ? raster.luminance[idx] : 0.45
+                    let hintClut = hasClutterMap ? sceneHints.clutterMap[idx] : 0.0
+                    let localClut = max(hintClut, 0.55 * att + 0.45 * min(1.0, edg * 1.4))
+                    bgClutterSum += localClut
+                    bgCount += 1
+                    // Empty dead margin: dark night void (<0.12), flat bright sky/wall (>0.78 low edge), or low-detail empty expanse
+                    if (lum < 0.12 && edg < 0.06) || (edg < 0.045 && att < 0.14) {
+                        bgVoidCount += 1
+                    }
+                }
+            }
+            if bgCount > 0 {
+                rasterClutter = bgClutterSum / Double(bgCount)
+                deadVoidFraction = Double(bgVoidCount) / Double(max(1, (x1 - x0) * (y1 - y0)))
+            }
+        }
+
+        // Remaining directional border clutter from SigLIP/structural edge avoidance
+        let avoid = sceneHints.avoid
+        let keepL = max(0.0, 1.0 - Double(vp.minX) / 0.28)
+        let keepR = max(0.0, 1.0 - Double(1.0 - vp.maxX) / 0.28)
+        let keepT = max(0.0, 1.0 - Double(vp.minY) / 0.28)
+        let keepB = max(0.0, 1.0 - Double(1.0 - vp.maxY) / 0.28)
+        let borderAvoidRemaining = (avoid.left * keepL + avoid.right * keepR + avoid.top * keepT + avoid.bottom * keepB) * 0.25
+
+        let combined = min(1.0, 0.46 * min(1.0, distractorWeightedArea * 2.2) + 0.36 * rasterClutter + 0.18 * min(1.0, borderAvoidRemaining))
+        return (combined, partialCuts, deadVoidFraction)
+    }
+
+    /// Computes the optimal post-alignment viewport of size `(span, span)` inside `[0, 1]^2`
+    /// centered around the hero's natural composed anchor so zoom is evaluated on the POST-PAN frame!
+    private static func simulatedPostAlignmentViewport(
+        heroBox: CGRect,
+        heroAnchor: CGPoint,
+        role: DirectorPhotographicRole,
+        portraitBustBox: CGRect?,
+        relZoom: Double
+    ) -> CGRect {
+        let span = CGFloat(min(1.0, max(0.15, 1.0 / max(1.0, relZoom))))
+        if span >= 0.995 {
+            return CGRect(x: 0, y: 0, width: 1, height: 1)
+        }
+        let targetCx: CGFloat
+        let targetCy: CGFloat
+        if role == .portrait, let bust = portraitBustBox, Double(heroBox.height) * relZoom > 0.92 {
+            targetCx = bust.midX
+            targetCy = max(bust.minY + span * 0.40, bust.midY)
+        } else if role == .portrait || role == .environmentalPortrait || role == .group {
+            // Place eyes/upper-body slightly above center with comfortable headroom
+            targetCx = heroBox.midX
+            let eyeBasedCy = heroAnchor.y + span * 0.12
+            let boxBasedCy = heroBox.midY
+            targetCy = 0.45 * eyeBasedCy + 0.55 * boxBasedCy
+        } else {
+            targetCx = heroBox.midX
+            targetCy = heroBox.midY
+        }
+        var vx0 = targetCx - span * 0.5
+        var vy0 = targetCy - span * 0.5
+        // Keep viewport inside sensor bounds [0, 1]^2
+        vx0 = max(0.0, min(1.0 - span, vx0))
+        vy0 = max(0.0, min(1.0 - span, vy0))
+        return CGRect(x: vx0, y: vy0, width: span, height: span)
+    }
+
+    /// Projects a source-normalized rect into the `[0, 1]^2` coordinates of a simulated post-alignment viewport `vp`.
+    private static func projectIntoViewport(_ rect: CGRect, viewport vp: CGRect) -> CGRect {
+        let w = max(1e-5, vp.width)
+        let h = max(1e-5, vp.height)
+        return CGRect(
+            x: (rect.minX - vp.minX) / w,
+            y: (rect.minY - vp.minY) / h,
+            width: rect.width / w,
+            height: rect.height / h
+        )
+    }
+
+    /// Multi-candidate post-alignment compositional zoom engine.
+    /// Evaluates candidate zoom rungs from min to upscale-safe ceiling on the simulated POST-PAN viewport,
+    /// balancing (1) subject/group safe margins, (2) ideal fill ratio, (3) clutter & distractor reduction,
+    /// (4) zero awkward partial edge cuts, and (5) optical lens quality vs digital upscale penalty.
+    private static func solveCompositionalZoom(
+        heroBox: CGRect,
+        heroAnchor: CGPoint,
+        protectedBoxes: [CGRect],
+        portraitBustBox: CGRect?,
+        distractors: [CGRect],
+        raster: CompositionRaster,
+        sceneHints: CompositionSceneHints,
         role: DirectorPhotographicRole,
         isFaceOnlyHero: Bool,
-        faceBounds: CGRect? = nil,
+        faceBounds: CGRect?,
         isMinimalist: Bool,
         noClearSubject: Bool,
+        isClutteredMultiObjectScene: Bool,
+        frameAspect: Double,
         currentZoom: CGFloat,
-        allowedZooms: [CGFloat]
+        allowedZooms: [CGFloat],
+        opticalZooms: [CGFloat]? = nil,
+        upscaleThreshold: CGFloat? = nil,
+        smoothedFillOverride: Double? = nil
     ) -> OpticalZoomSolution {
-        let spec = fillSpec(for: role, isFaceOnlyHero: isFaceOnlyHero, isMinimalist: isMinimalist)
-        let measured = measureSubjectFill(box: heroBox, role: role, isFaceOnlyHero: isFaceOnlyHero)
-        let minHW = allowedZooms.min() ?? 1.0
-        let maxHW = max(currentZoom, allowedZooms.max() ?? 4.0)
-        let hasUltraWide = minHW <= 0.60
-        let maxOptical = allowedZooms.filter { $0 <= 5.0 }.max() ?? 1.0
-        // Digital zoom quality ceiling: never recommend mushy extreme digital zoom
-        let qualityCeiling = min(maxHW, max(2.4, maxOptical * 1.35))
-
         let bw = Double(heroBox.width)
         let bh = Double(heroBox.height)
         let bArea = bw * bh
+        let isWaistUpPortrait = (role == .portrait && !isFaceOnlyHero && heroBox.maxY >= 0.94 && (faceBounds != nil || bh >= 0.56))
+        let spec = fillSpec(for: role, isFaceOnlyHero: isFaceOnlyHero, isMinimalist: isMinimalist, isWaistUpPortrait: isWaistUpPortrait)
+        let rawMeasured = measureSubjectFill(box: heroBox, role: role, isFaceOnlyHero: isFaceOnlyHero, frameAspect: frameAspect)
+        let measured = smoothedFillOverride ?? rawMeasured
 
-        // Close-up / waist-up / knee-up portraits at 1.0x with a cleanly framed face (headroom >= 3.6%, head <= 40% height)
-        // are already properly scaled — never distort faces with 0.5x Ultra-Wide just because shoulders/elbows touch a border!
-        let isWellFramedWaistUpPortrait: Bool = {
+        let minHW = allowedZooms.min() ?? 1.0
+        let maxHW = max(currentZoom, allowedZooms.max() ?? 4.0)
+        let effectiveOptical = (opticalZooms?.isEmpty == false) ? opticalZooms! : allowedZooms.filter { $0 <= 5.0 }
+        let hasUltraWide = effectiveOptical.contains { $0 <= 0.60 } || (opticalZooms == nil && minHW <= 0.60)
+        let maxOptical = effectiveOptical.max() ?? 1.0
+        let hardwareUpscaleCap = upscaleThreshold.map { max(maxOptical, $0) } ?? max(2.6, maxOptical * 1.35)
+        let qualityCeiling = min(maxHW, min(4.0, max(2.4, min(hardwareUpscaleCap, maxOptical * 1.45))))
+
+        let fullFrame = CGRect(x: 0, y: 0, width: 1, height: 1)
+        let baseClutter = evaluateViewportClutter(
+            viewport: fullFrame,
+            heroBox: heroBox,
+            distractors: distractors,
+            raster: raster,
+            sceneHints: sceneHints
+        )
+
+        func makeTrace(
+            state: DirectorZoomState,
+            reason: ZoomReasonCode,
+            immediateZoom: CGFloat,
+            postPanZoom: CGFloat,
+            cMax: CGFloat,
+            projFill: Double,
+            clutterAfter: Double,
+            cutsAfter: Int,
+            baseScore: Double,
+            bestScore: Double,
+            predictedFrame: CGRect,
+            candidates: [ZoomCandidateTrace]
+        ) -> ZoomDecisionTrace {
+            ZoomDecisionTrace(
+                state: state,
+                reasonCode: reason,
+                subjectFill: measured,
+                projectedFill: projFill,
+                idealFill: spec.idealFill,
+                clutterBefore: baseClutter.clutterScore,
+                clutterAfter: clutterAfter,
+                clutterRemoved: max(-1.0, baseClutter.clutterScore - clutterAfter),
+                distractorBoxes: distractors,
+                partialEdgeCutsBefore: baseClutter.partialEdgeCuts,
+                partialEdgeCutsAfter: cutsAfter,
+                baselineScore: baseScore,
+                bestScore: bestScore,
+                scoreGain: bestScore - baseScore,
+                immediateSafeZoom: immediateZoom,
+                postPanZoom: postPanZoom,
+                centerCropMaxZoom: cMax,
+                upscaleCeiling: qualityCeiling,
+                predictedPostZoomFrame: predictedFrame,
+                candidates: candidates
+            )
+        }
+
+        // STATE 1: NO CLEAR SUBJECT OR WIDE CONTEXTUAL SCENE
+        if noClearSubject || spec.isWideContextual {
+            if currentZoom > 1.14 {
+                let targetOut = max(1.0, minHW)
+                let trace = makeTrace(
+                    state: .zoomOut, reason: .zoomOutWideScene,
+                    immediateZoom: targetOut, postPanZoom: targetOut, cMax: targetOut,
+                    projFill: measured * Double(targetOut / currentZoom),
+                    clutterAfter: baseClutter.clutterScore, cutsAfter: baseClutter.partialEdgeCuts,
+                    baseScore: 0.5, bestScore: 0.8, predictedFrame: fullFrame, candidates: []
+                )
+                return OpticalZoomSolution(
+                    state: .zoomOut, reasonCode: .zoomOutWideScene,
+                    recommendedZoom: targetOut, idealZoomAfterPan: targetOut, centerCropMaxZoom: targetOut,
+                    requiresPanBeforeZoom: false, measuredFill: measured, spec: spec, trace: trace
+                )
+            }
+            let st: DirectorZoomState = (noClearSubject || role == .skyLandscape || role == .scene) ? .noSubject : .noZoomNeeded
+            let rsn: ZoomReasonCode = noClearSubject ? .noZoomNoClearSubject : .noZoomWideLandscape
+            let trace = makeTrace(
+                state: st, reason: rsn,
+                immediateZoom: currentZoom, postPanZoom: currentZoom, cMax: currentZoom,
+                projFill: measured,
+                clutterAfter: baseClutter.clutterScore, cutsAfter: baseClutter.partialEdgeCuts,
+                baseScore: 1.0, bestScore: 1.0, predictedFrame: fullFrame, candidates: []
+            )
+            return OpticalZoomSolution(
+                state: st, reasonCode: rsn,
+                recommendedZoom: currentZoom, idealZoomAfterPan: currentZoom, centerCropMaxZoom: currentZoom,
+                requiresPanBeforeZoom: false, measuredFill: measured, spec: spec, trace: trace
+            )
+        }
+
+        // STATE 2: DENSE MULTI-OBJECT CLUTTERED SCENE WITHOUT SINGLE ISOLATED FOCAL SUBJECT
+        if isClutteredMultiObjectScene {
+            let cMax = computeCenterCropMaxZoom(subjectBox: heroBox, currentZoom: currentZoom, qualityCeiling: qualityCeiling)
+            let trace = makeTrace(
+                state: .noZoomNeeded, reason: .noZoomClutteredScene,
+                immediateZoom: currentZoom, postPanZoom: currentZoom, cMax: cMax,
+                projFill: measured,
+                clutterAfter: baseClutter.clutterScore, cutsAfter: baseClutter.partialEdgeCuts,
+                baseScore: 0.85, bestScore: 0.85, predictedFrame: fullFrame, candidates: []
+            )
+            return OpticalZoomSolution(
+                state: .noZoomNeeded, reasonCode: .noZoomClutteredScene,
+                recommendedZoom: currentZoom, idealZoomAfterPan: currentZoom, centerCropMaxZoom: cMax,
+                requiresPanBeforeZoom: false, measuredFill: measured, spec: spec, trace: trace
+            )
+        }
+
+        // STATE 3: ZOOM OUT (GENUINELY SEVERELY CLIPPED OR OVERSIZED SUBJECT — ZERO FALSE POSITIVES ON CLEAN PORTRAITS!)
+        let isWellFramedWaistUp: Bool = {
             guard role == .portrait, currentZoom <= 1.14, let fb = faceBounds else { return false }
-            guard heroBox.minY >= 0.020 || fb.minY >= 0.045 else { return false }
-            return Double(fb.height) <= 0.40 &&
-                fb.minY >= 0.036 &&
-                fb.minX >= 0.015 &&
-                fb.maxX <= 0.985
+            guard heroBox.minY >= 0.018 || fb.minY >= 0.042 else { return false }
+            // Never mark a person whose head/torso is chopped off horizontally on a side border as well-framed
+            if (heroBox.minX <= 0.010 || heroBox.maxX >= 0.990) && bw >= 0.72 && fb.minX <= 0.05 { return false }
+            return Double(fb.height) <= 0.40 && fb.minY >= 0.032 && fb.minX >= 0.015 && fb.maxX <= 0.985
         }()
+        // Tall-narrow full-body person in wide landscape (e.g. 16:9 skier filling 26% width x 95% height cleanly) is NOT oversized!
+        let isTallNarrowLandscapeFullBody: Bool = (role == .portrait || role == .environmentalPortrait) &&
+            frameAspect > 1.18 && bw <= 0.44 && bArea <= 0.38 &&
+            (faceBounds.map { $0.minY >= 0.015 && Double($0.height) <= 0.30 } ?? (heroBox.minY >= 0.005 || bh <= 0.98))
 
         let topFaceClipped: Bool = {
-            guard (role == .portrait || role == .group), !isWellFramedWaistUpPortrait else { return false }
+            guard (role == .portrait || role == .group), !isWellFramedWaistUp, !isTallNarrowLandscapeFullBody else { return false }
             if let fb = faceBounds, role == .portrait {
-                return (heroBox.minY <= 0.015 && fb.minY <= 0.035 && (bArea >= 0.45 || bh >= 0.64)) ||
-                    Double(fb.height) > 0.42 ||
-                    fb.minY <= 0.012
+                return (heroBox.minY <= 0.012 && fb.minY <= 0.030 && (bArea >= 0.44 || bh >= 0.74)) ||
+                    Double(fb.height) > 0.42 || fb.minY <= 0.010
             }
-            return (heroBox.minY <= 0.015 && (bArea >= 0.45 || bh >= 0.64)) ||
+            return (heroBox.minY <= 0.012 && (bArea >= 0.46 || bh >= 0.76)) ||
                 (isFaceOnlyHero && bh > 0.40) ||
-                (isFaceOnlyHero && heroBox.minY <= 0.025 && bh >= 0.32)
+                (isFaceOnlyHero && heroBox.minY <= 0.020 && bh >= 0.32)
         }()
-        let archCramped = (role == .architecture || role == .indoorRoom) &&
-            ((heroBox.minY <= 0.015 && heroBox.maxY >= 0.985 && bw >= 0.72) || (bw >= 0.86 && bh >= 0.84))
+        // Horizontal body/head slicing at left/right frame edge (e.g. headless reclining person or half-cut cat/dog)
+        let sideBodyClipped: Bool = !isWellFramedWaistUp && !isTallNarrowLandscapeFullBody &&
+            (role == .portrait || role == .group || role == .animal || role == .vehicle) &&
+            ((heroBox.minX <= 0.010 || heroBox.maxX >= 0.990) && bw >= 0.68 && bArea >= 0.36)
+        let animalOrObjectClipped: Bool = {
+            guard role == .animal || role == .object || role == .flower || role == .vehicle else { return false }
+            let topTight = heroBox.minY <= 0.012 && bh >= 0.84 && bArea >= 0.42
+            let sideTight = (heroBox.minX <= 0.010 || heroBox.maxX >= 0.990) && bw >= 0.80 && bh >= 0.54 && bArea >= 0.44
+            let bothLR = heroBox.minX <= 0.012 && heroBox.maxX >= 0.988 && bw >= 0.92 && bArea >= 0.52
+            return topTight || sideTight || bothLR
+        }()
+        let archCramped = role == .architecture &&
+            ((heroBox.minY <= 0.012 && heroBox.maxY >= 0.988 && bw >= 0.76) || (bw >= 0.88 && bh >= 0.86))
         let groupCramped = role == .group &&
-            ((heroBox.minY <= 0.015 && (bArea >= 0.48 || bh >= 0.70)) ||
-             (heroBox.minX <= 0.008 && heroBox.maxX >= 0.992 && bh >= 0.82))
-        let oppositeClipped = ((heroBox.minX <= 0.012 && heroBox.maxX >= 0.988) ||
-                               (heroBox.minY <= 0.012 && heroBox.maxY >= 0.988 && role != .portrait)) &&
-            max(bw, bh) >= 0.54
-        let borderClippedSubject: Bool = {
-            guard !spec.isWideContextual, !noClearSubject, !isWellFramedWaistUpPortrait else { return false }
-            if role == .portrait && currentZoom <= 1.14 && faceBounds == nil {
-                return oppositeClipped || (heroBox.minY <= 0.008 && bh >= 0.72)
-            }
-            if role == .food && currentZoom <= 1.14 {
-                return oppositeClipped
-            }
-            return (((heroBox.minX <= 0.010 || heroBox.maxX >= 0.990 || heroBox.minY <= 0.010) &&
-                     measured >= spec.idealFill * 0.92 && max(bw, bh) >= 0.44) ||
-                    oppositeClipped)
-        }()
-        let isSeverelyCramped = topFaceClipped || archCramped || groupCramped || borderClippedSubject
-        let isOversized = !spec.isWideContextual && !noClearSubject && !isWellFramedWaistUpPortrait && measured > spec.maxFill
-        let isZoomedInWideScene = currentZoom > 1.14 && (spec.isWideContextual || noClearSubject)
+            ((heroBox.minY <= 0.012 && (bArea >= 0.50 || bh >= 0.76)) ||
+             (heroBox.minX <= 0.008 && heroBox.maxX >= 0.992 && bArea >= 0.58))
 
-        // STATE 1: ZOOM OUT (subject too large, border-clipped, or zoomed-in wide landscape)
-        if isSeverelyCramped || isOversized || isZoomedInWideScene {
+        let isSeverelyClipped = topFaceClipped || sideBodyClipped || animalOrObjectClipped || archCramped || groupCramped
+        let isOversized = !isWellFramedWaistUp && !isTallNarrowLandscapeFullBody && role != .food &&
+            measured > spec.maxFill && bArea >= 0.48
+
+        if isSeverelyClipped || isOversized {
             let targetOut: CGFloat
-            if isZoomedInWideScene {
-                targetOut = (isSeverelyCramped && hasUltraWide) ? 0.5 : max(1.0, minHW)
-            } else if currentZoom > 1.14 {
-                let scaleBack = CGFloat(spec.idealFill / max(0.30, measured))
+            if currentZoom > 1.14 {
+                let comfortableFill = spec.minFill + 0.35 * (spec.idealFill - spec.minFill)
+                let scaleBack = CGFloat(comfortableFill / max(0.32, measured))
                 let rawOut = min(currentZoom - 0.20, currentZoom * scaleBack)
-                let floorZoom: CGFloat = (isSeverelyCramped && hasUltraWide) ? 0.5 : max(1.0, minHW)
+                let floorZoom: CGFloat = (isSeverelyClipped && hasUltraWide) ? 0.5 : max(1.0, minHW)
                 targetOut = snapZoomToLensRungs(
                     rawZoom: max(floorZoom, rawOut),
-                    minZoom: minHW,
+                    minZoom: hasUltraWide ? minHW : max(1.0, minHW),
                     maxAllowed: max(minHW, currentZoom - 0.15),
-                    opticalSwitchovers: allowedZooms,
+                    opticalSwitchovers: effectiveOptical,
                     mustNotExceedCeiling: false
                 )
             } else if hasUltraWide {
                 targetOut = 0.5
             } else {
-                targetOut = minHW
+                targetOut = max(1.0, minHW)
             }
+            let rsn: ZoomReasonCode = isSeverelyClipped ? .zoomOutBorderClipped : .zoomOutOversized
+            let trace = makeTrace(
+                state: .zoomOut, reason: rsn,
+                immediateZoom: targetOut, postPanZoom: targetOut, cMax: targetOut,
+                projFill: measured * Double(targetOut / max(0.5, currentZoom)),
+                clutterAfter: baseClutter.clutterScore, cutsAfter: baseClutter.partialEdgeCuts,
+                baseScore: 0.35, bestScore: 0.82, predictedFrame: fullFrame, candidates: []
+            )
             return OpticalZoomSolution(
-                state: .zoomOut,
-                recommendedZoom: targetOut,
-                idealZoomAfterPan: targetOut,
-                centerCropMaxZoom: targetOut,
-                requiresPanBeforeZoom: false,
-                measuredFill: measured,
-                spec: spec
+                state: .zoomOut, reasonCode: rsn,
+                recommendedZoom: targetOut, idealZoomAfterPan: targetOut, centerCropMaxZoom: targetOut,
+                requiresPanBeforeZoom: false, measuredFill: measured, spec: spec, trace: trace
             )
         }
 
-        // STATE 2: NO ZOOM NEEDED (wide scene, no clear subject, or already inside comfort band)
-        if noClearSubject || spec.isWideContextual || measured >= spec.minFill {
-            let cMax = computeCenterCropMaxZoom(subjectBox: heroBox, currentZoom: currentZoom, qualityCeiling: qualityCeiling)
+        // STATE 4: MULTI-CANDIDATE POST-ALIGNMENT COMPOSITIONAL ZOOM OPTIMIZATION
+        var candidateZooms: [CGFloat] = [currentZoom]
+        let fineSteps: [CGFloat] = [1.2, 1.3, 1.4, 1.5, 1.7, 1.8, 2.0, 2.2, 2.5, 2.8, 3.0, 3.5, 4.0]
+        for z in (effectiveOptical + fineSteps) {
+            guard z > currentZoom + 0.08 && z <= qualityCeiling + 0.01 else { continue }
+            let clampedZ = min(qualityCeiling, z)
+            if !candidateZooms.contains(where: { abs($0 - clampedZ) < 0.05 }) {
+                candidateZooms.append(clampedZ)
+            }
+        }
+        candidateZooms.sort()
+
+        let marginX: CGFloat = (role == .group) ? 0.055 : 0.050
+        let marginY: CGFloat = (role == .portrait && isWaistUpPortrait) ? 0.045 : 0.050
+
+        func fillUtility(_ f: Double) -> Double {
+            let err = f - spec.idealFill
+            let sigma = err < 0 ? 0.23 : 0.19
+            return exp(-(err * err) / (2.0 * sigma * sigma))
+        }
+
+        func opticalQualityPenalty(for z: CGFloat) -> Double {
+            if abs(z - currentZoom) <= 0.03 { return 0.0 }
+            if effectiveOptical.contains(where: { abs($0 - z) <= 0.06 }) {
+                return -0.022 // Small preference for native optical switchover lenses
+            }
+            if abs(z - 1.2) <= 0.05 || abs(z - 1.5) <= 0.05 {
+                return 0.008 // Lossless sensor-crop 28mm / 35mm primes
+            }
+            let lowerOpt = effectiveOptical.filter { $0 <= z + 0.02 }.max() ?? 1.0
+            let digitalRatio = Double(z / max(0.5, lowerOpt)) - 1.0
+            let upscalePen = z > hardwareUpscaleCap ? 0.18 : 0.0
+            return 0.020 + 0.040 * max(0.0, digitalRatio) + upscalePen
+        }
+
+        var evaluated: [ZoomCandidateTrace] = []
+        evaluated.reserveCapacity(candidateZooms.count)
+
+        var baselineCand = ZoomCandidateTrace(
+            zoom: currentZoom, totalScore: 0.0, fillScore: fillUtility(measured),
+            clutterAfter: baseClutter.clutterScore, clutterGain: 0.0,
+            edgeCutPenalty: 0.0, qualityPenalty: 0.0, marginSafe: true, projectedFill: measured
+        )
+        var bestZoomInCand: ZoomCandidateTrace? = nil
+        var bestZoomInVP = fullFrame
+        var anyZoomInMarginSafe = false
+        var anyZoomInBlockedByUpscale = false
+
+        for z in candidateZooms {
+            let relZ = Double(z / max(0.5, currentZoom))
+            let isBase = abs(z - currentZoom) <= 0.03
+            let vp = isBase
+                ? fullFrame
+                : simulatedPostAlignmentViewport(
+                    heroBox: heroBox, heroAnchor: heroAnchor, role: role,
+                    portraitBustBox: portraitBustBox, relZoom: relZ
+                )
+            let projHero = isBase ? heroBox : projectIntoViewport(heroBox, viewport: vp)
+
+            // Criterion 1: Hard subject & group containment with 5-8% safe margin
+            var marginSafe = true
+            if !isBase {
+                let allowPortraitBustCrop = (role == .portrait && isWaistUpPortrait && portraitBustBox != nil && !isFaceOnlyHero)
+                if allowPortraitBustCrop, let bust = portraitBustBox {
+                    let projBust = projectIntoViewport(bust, viewport: vp)
+                    if projBust.minX < marginX || projBust.maxX > (1.0 - marginX) ||
+                       projBust.minY < 0.045 || projBust.maxY > 0.97 {
+                        marginSafe = false
+                    }
+                } else {
+                    let minAllowedX = marginX
+                    let maxAllowedX = 1.0 - marginX
+                    let minAllowedY = marginY
+                    let maxAllowedY = (role == .portrait && isWaistUpPortrait) ? 1.02 : (1.0 - marginY)
+                    if projHero.minX < minAllowedX - 0.008 || projHero.maxX > maxAllowedX + 0.008 ||
+                       projHero.minY < minAllowedY - 0.008 || projHero.maxY > maxAllowedY + 0.008 {
+                        marginSafe = false
+                    }
+                }
+                if marginSafe && !protectedBoxes.isEmpty {
+                    let reqVis: Double = (role == .group) ? 0.96 : 0.92
+                    let protMargin: CGFloat = (role == .group) ? 0.045 : 0.030
+                    for pBox in protectedBoxes {
+                        let pp = projectIntoViewport(pBox, viewport: vp)
+                        if visibleFraction(pp, margin: protMargin) < reqVis {
+                            marginSafe = false
+                            break
+                        }
+                    }
+                }
+            }
+
+            // Criterion 2: Post-zoom fill utility
+            let projFill = isBase
+                ? measured
+                : measureSubjectFill(box: projHero, role: role, isFaceOnlyHero: isFaceOnlyHero, frameAspect: frameAspect)
+            let fScore = fillUtility(projFill)
+
+            // Criterion 3: Clutter & distractor reduction + empty dead-void trimming
+            let vpClut = isBase
+                ? baseClutter
+                : evaluateViewportClutter(viewport: vp, heroBox: heroBox, distractors: distractors, raster: raster, sceneHints: sceneHints)
+            let clutGain = max(-0.20, baseClutter.clutterScore - vpClut.clutterScore)
+            let voidGain: Double = (!isBase && !isMinimalist && projFill <= spec.idealFill + 0.10 && baseClutter.deadVoidFraction >= 0.42)
+                ? max(0.0, (baseClutter.deadVoidFraction - vpClut.deadVoidFraction) * 0.45 + 0.06 * min(1.0, (relZ - 1.0)))
+                : 0.0
+
+            // Criterion 4: Border partial-cut penalty on secondary objects
+            let deltaCuts = Double(vpClut.partialEdgeCuts - baseClutter.partialEdgeCuts)
+            let edgeCutPen = deltaCuts > 0 ? (deltaCuts * 0.085) : (deltaCuts * 0.055) // Negative penalty = bonus when removing sliced border clutter!
+
+            // Criterion 5: Optical quality preference vs digital upscale penalty
+            let qualPen = opticalQualityPenalty(for: z)
+
+            let total = 0.56 * fScore + 0.34 * clutGain + 0.14 * voidGain - edgeCutPen - qualPen
+            let candTrace = ZoomCandidateTrace(
+                zoom: z,
+                totalScore: total,
+                fillScore: fScore,
+                clutterAfter: vpClut.clutterScore,
+                clutterGain: clutGain,
+                edgeCutPenalty: edgeCutPen,
+                qualityPenalty: qualPen,
+                marginSafe: marginSafe,
+                projectedFill: projFill
+            )
+            evaluated.append(candTrace)
+
+            if isBase {
+                baselineCand = candTrace
+            } else if marginSafe {
+                anyZoomInMarginSafe = true
+                if z > hardwareUpscaleCap { anyZoomInBlockedByUpscale = true }
+                if let curBest = bestZoomInCand {
+                    if total > curBest.totalScore {
+                        bestZoomInCand = candTrace
+                        bestZoomInVP = vp
+                    }
+                } else {
+                    bestZoomInCand = candTrace
+                    bestZoomInVP = vp
+                }
+            }
+        }
+
+        let centerMax = computeCenterCropMaxZoom(subjectBox: heroBox, currentZoom: currentZoom, qualityCeiling: qualityCeiling)
+
+        // Require a clear compositional improvement AND dead-band (>= 0.16x) to avoid forced/micro zooming
+        let minImprovementGain = 0.060
+        guard let bestIn = bestZoomInCand else {
+            let rsn: ZoomReasonCode = (role == .group) ? .noZoomGroupTooWide : (anyZoomInBlockedByUpscale ? .noZoomUpscaleCeiling : .noZoomEdgeCutRisk)
+            let trace = makeTrace(
+                state: .noZoomNeeded, reason: rsn,
+                immediateZoom: currentZoom, postPanZoom: currentZoom, cMax: centerMax,
+                projFill: measured, clutterAfter: baseClutter.clutterScore, cutsAfter: baseClutter.partialEdgeCuts,
+                baseScore: baselineCand.totalScore, bestScore: baselineCand.totalScore,
+                predictedFrame: fullFrame, candidates: evaluated
+            )
             return OpticalZoomSolution(
-                state: .noZoomNeeded,
-                recommendedZoom: currentZoom,
-                idealZoomAfterPan: currentZoom,
-                centerCropMaxZoom: cMax,
-                requiresPanBeforeZoom: false,
-                measuredFill: measured,
-                spec: spec
+                state: .noZoomNeeded, reasonCode: rsn,
+                recommendedZoom: currentZoom, idealZoomAfterPan: currentZoom, centerCropMaxZoom: centerMax,
+                requiresPanBeforeZoom: false, measuredFill: measured, spec: spec, trace: trace
             )
         }
 
-        // STATE 3: ZOOM IN (subject smaller than comfort band)
-        let rawGain = min(3.5, spec.idealFill / max(0.05, measured))
-        let rawIdeal = currentZoom * CGFloat(rawGain)
-        let snappedIdeal = snapZoomToLensRungs(
-            rawZoom: rawIdeal,
+        let gain = bestIn.totalScore - baselineCand.totalScore
+        if gain < minImprovementGain || bestIn.zoom < currentZoom + 0.15 {
+            let rsn: ZoomReasonCode
+            if !anyZoomInMarginSafe {
+                rsn = (role == .group) ? .noZoomGroupTooWide : .noZoomEdgeCutRisk
+            } else if bestIn.zoom < currentZoom + 0.15 && gain >= minImprovementGain {
+                rsn = .noZoomDeadBand
+            } else if baselineCand.fillScore >= 0.78 && baseClutter.clutterScore < 0.35 {
+                rsn = .noZoomIdealFraming
+            } else {
+                rsn = .noZoomInsufficientGain
+            }
+            let trace = makeTrace(
+                state: .noZoomNeeded, reason: rsn,
+                immediateZoom: currentZoom, postPanZoom: currentZoom, cMax: centerMax,
+                projFill: measured, clutterAfter: baseClutter.clutterScore, cutsAfter: baseClutter.partialEdgeCuts,
+                baseScore: baselineCand.totalScore, bestScore: bestIn.totalScore,
+                predictedFrame: fullFrame, candidates: evaluated
+            )
+            return OpticalZoomSolution(
+                state: .noZoomNeeded, reasonCode: rsn,
+                recommendedZoom: currentZoom, idealZoomAfterPan: currentZoom, centerCropMaxZoom: centerMax,
+                requiresPanBeforeZoom: false, measuredFill: measured, spec: spec, trace: trace
+            )
+        }
+
+        // Snap chosen post-pan zoom to lens rungs cleanly while respecting quality ceiling
+        let postPanZoom = snapZoomToLensRungs(
+            rawZoom: bestIn.zoom,
             minZoom: currentZoom,
             maxAllowed: qualityCeiling,
-            opticalSwitchovers: allowedZooms,
-            mustNotExceedCeiling: false
+            opticalSwitchovers: effectiveOptical,
+            mustNotExceedCeiling: true
         )
-        // Dead-band: suppress tiny <0.13x micro-zooms
-        if snappedIdeal < currentZoom + 0.13 {
-            let cMax = computeCenterCropMaxZoom(subjectBox: heroBox, currentZoom: currentZoom, qualityCeiling: qualityCeiling)
-            return OpticalZoomSolution(
-                state: .noZoomNeeded,
-                recommendedZoom: currentZoom,
-                idealZoomAfterPan: currentZoom,
-                centerCropMaxZoom: cMax,
-                requiresPanBeforeZoom: false,
-                measuredFill: measured,
-                spec: spec
-            )
-        }
 
-        // Enforce strict hardware center-crop geometry around (0.5, 0.5): heroBox + margin MUST stay inside [0, 1]^2
-        let centerMax = computeCenterCropMaxZoom(
-            subjectBox: heroBox,
-            currentZoom: currentZoom,
-            qualityCeiling: qualityCeiling
-        )
-        let cappedRaw = min(snappedIdeal, centerMax)
+        // Enforce strict pre-pan center-crop safety around (0.5, 0.5):
+        // if subject is off-center so immediate center zoom would clip it, emit `.panBeforeZoom`
+        // (`immediateZoom <= centerMax`, `idealZoomAfterPan = postPanZoom`) so app guides user to pan first then ramps zoom!
+        let cappedImmediateRaw = min(postPanZoom, centerMax)
         let immediateZoom: CGFloat
-        if cappedRaw < currentZoom + 0.12 {
+        if cappedImmediateRaw < currentZoom + 0.12 {
             immediateZoom = currentZoom
         } else {
             immediateZoom = snapZoomToLensRungs(
-                rawZoom: cappedRaw,
+                rawZoom: cappedImmediateRaw,
                 minZoom: currentZoom,
                 maxAllowed: centerMax,
-                opticalSwitchovers: allowedZooms,
+                opticalSwitchovers: effectiveOptical,
                 mustNotExceedCeiling: true
             )
         }
-        let panLimited = snappedIdeal > immediateZoom + 0.15
+        let panLimited = postPanZoom > immediateZoom + 0.15
+
+        let finalState: DirectorZoomState
+        let finalReason: ZoomReasonCode
+        if panLimited {
+            finalState = .panBeforeZoom
+            finalReason = .panFirstOffCenter
+        } else if role == .group {
+            finalState = .groupZoom
+            finalReason = .zoomInGroupTighten
+        } else if bestIn.clutterGain >= 0.08 && baselineCand.fillScore >= 0.62 {
+            finalState = .zoomIn
+            finalReason = .zoomInTrimClutter
+        } else {
+            finalState = .zoomIn
+            finalReason = .zoomInSmallDistant
+        }
+
+        let bestVPStats = evaluateViewportClutter(
+            viewport: bestZoomInVP, heroBox: heroBox, distractors: distractors, raster: raster, sceneHints: sceneHints
+        )
+        let trace = makeTrace(
+            state: finalState,
+            reason: finalReason,
+            immediateZoom: immediateZoom,
+            postPanZoom: postPanZoom,
+            cMax: centerMax,
+            projFill: bestIn.projectedFill,
+            clutterAfter: bestVPStats.clutterScore,
+            cutsAfter: bestVPStats.partialEdgeCuts,
+            baseScore: baselineCand.totalScore,
+            bestScore: bestIn.totalScore,
+            predictedFrame: bestZoomInVP,
+            candidates: evaluated
+        )
         return OpticalZoomSolution(
-            state: .zoomIn,
+            state: finalState,
+            reasonCode: finalReason,
             recommendedZoom: immediateZoom,
-            idealZoomAfterPan: snappedIdeal,
+            idealZoomAfterPan: postPanZoom,
             centerCropMaxZoom: centerMax,
             requiresPanBeforeZoom: panLimited,
             measuredFill: measured,
-            spec: spec
+            spec: spec,
+            trace: trace
         )
     }
 
@@ -779,7 +1413,9 @@ enum CameraFramingDirector {
         allowedZooms: [CGFloat],
         portraitBounds: CGRect? = nil,
         poseProfile: AnatomicalPoseProfile? = nil,
-        enableTemporalHysteresis: Bool = false
+        enableTemporalHysteresis: Bool = false,
+        opticalZooms: [CGFloat]? = nil,
+        upscaleThreshold: CGFloat? = nil
     ) -> DirectorDecision {
         let now = ProcessInfo.processInfo.systemUptime
         let safeZoom = max(0.5, currentZoom)
@@ -899,9 +1535,23 @@ enum CameraFramingDirector {
                     (siglipScene == "architecture" || siglipScene == "street" || siglipScene == "landscape" || siglipScene == "foliage")
             }()
 
+            // Texture hallucination guard for rare animals falsely fired on flat grass/gravel/stone patterns
+            let isTextureAnimalFalsePositive: Bool = {
+                guard d.domain == .animal, d.confidence < 0.56 else { return false }
+                let rareAnimalTokens: Set<String> = [
+                    "snake", "lizard", "frog", "insect", "beetle", "spider", "bear", "elephant", "zebra", "giraffe",
+                    "rắn", "thằn lằn", "ếch", "côn trùng", "nhện", "gấu", "voi", "ngựa vằn", "hươu cao cổ"
+                ]
+                guard rareAnimalTokens.contains(lower) else { return false }
+                let animalAff = max(semanticAffinities["animal"] ?? 0.0, semanticAffinities["pet_portrait"] ?? 0.0)
+                guard animalAff < 0.025 && siglipScene != "animal" else { return false }
+                let frameDepthMean = raster.foregroundDepth.isEmpty ? 0.5 : (raster.foregroundDepth.reduce(0.0, +) / Double(raster.foregroundDepth.count))
+                return !(raster.hasCoreMLDepth && (dep - frameDepthMean) > 0.12)
+            }()
+
             let catW: Double
-            if isCornerHeadless || isHandHoldingObject || isPlantConfusableFood || isTextureFoodFalsePositive {
-                catW = 0.18
+            if isCornerHeadless || isHandHoldingObject || isPlantConfusableFood || isTextureFoodFalsePositive || isTextureAnimalFalsePositive {
+                catW = 0.16
             } else {
                 switch d.domain {
                 case .human: catW = hasFace ? 1.55 : 1.28
@@ -945,7 +1595,7 @@ enum CameraFramingDirector {
                 det: d, depth: dep, dAim: dAim, hasFace: hasFace,
                 isCornerHeadless: isCornerHeadless || isHandHoldingObject,
                 isEdgeSliver: edgeSliver,
-                isSuppressedFood: isPlantConfusableFood || isTextureFoodFalsePositive,
+                isSuppressedFood: isPlantConfusableFood || isTextureFoodFalsePositive || isTextureAnimalFalsePositive,
                 heroScore: score
             ))
         }
@@ -1009,7 +1659,7 @@ enum CameraFramingDirector {
         let isGrandVistaScene = !strongWideNature.isEmpty &&
             (siglipScene == "landscape" || siglipScene == "sky_clouds" || siglipScene == "sunset")
         let validAnimals = fgCandidates.filter {
-            $0.det.domain == .animal && !$0.isEdgeSliver && $0.det.confidence >= 0.22 &&
+            $0.det.domain == .animal && !$0.isEdgeSliver && !$0.isSuppressedFood && $0.det.confidence >= 0.22 &&
             (!isGrandVistaScene || $0.det.area >= 0.006)
         }
         let namedNonPerson = fgCandidates.filter {
@@ -1037,12 +1687,17 @@ enum CameraFramingDirector {
                 obj.det.area >= p0.det.area * 1.6 && obj.heroScore >= p0.heroScore * 1.15
         }()
 
-        // Cohesive tabletop / cluttered multi-object companion clustering (excludes background chairs/tables)
+        // Cohesive tabletop ensemble clustering (same-domain food/flower spreads, or identical items — never merges unrelated desk clutter!)
         let clusterableObjects = namedNonPerson.filter { $0.det.domain != .furniture && $0.det.domain != .pottedPlant }
         var companionBoxes: [CGRect] = []
         if clusterableObjects.count >= 2 {
             let lead = clusterableObjects[0]
+            let allowEnsemble = (lead.det.domain == .food || lead.det.domain == .pureFlower)
             for nxt in clusterableObjects.dropFirst().prefix(5) {
+                let compatibleDomain = allowEnsemble
+                    ? (nxt.det.domain == lead.det.domain)
+                    : (nxt.det.label.lowercased() == lead.det.label.lowercased())
+                guard compatibleDomain else { continue }
                 let gapX = max(0.0, max(lead.det.boundingBox.minX, nxt.det.boundingBox.minX) - min(lead.det.boundingBox.maxX, nxt.det.boundingBox.maxX))
                 let gapY = max(0.0, max(lead.det.boundingBox.minY, nxt.det.boundingBox.minY) - min(lead.det.boundingBox.maxY, nxt.det.boundingBox.maxY))
                 if nxt.heroScore >= 0.42 * lead.heroScore && abs(nxt.depth - lead.depth) < 0.20 && gapX < 0.28 && gapY < 0.28 {
@@ -1053,6 +1708,17 @@ enum CameraFramingDirector {
                 }
             }
         }
+
+        // Dense multi-object cluttered scene (e.g. crowded desk/workspace with >= 5 competing non-food objects spanning the frame)
+        let isClutteredMultiObjectScene: Bool = {
+            guard validPeople.isEmpty && validAnimals.isEmpty, clusterableObjects.count >= 5 else { return false }
+            let lead = clusterableObjects[0]
+            guard lead.det.domain != .food && lead.det.domain != .pureFlower && lead.det.area < 0.22 else { return false }
+            guard clusterableObjects[1].heroScore >= 0.55 * lead.heroScore &&
+                  clusterableObjects[2].heroScore >= 0.45 * lead.heroScore else { return false }
+            let spread = unionRects(clusterableObjects.prefix(6).map(\.det.boundingBox))
+            return spread.width >= 0.58 && spread.height >= 0.44
+        }()
 
         let furnitureHits = fgCandidates.filter { $0.det.domain == .furniture && !$0.isEdgeSliver && $0.det.confidence >= 0.30 }
         let isIndoorRoomCue = siglipScene == "indoor_room" || sceneHints.role == .indoorRoom
@@ -1069,7 +1735,16 @@ enum CameraFramingDirector {
              $0.det.confidence >= 0.68 && $0.dAim <= 0.26 && $0.det.area >= 0.008 && !$0.isEdgeSliver && !$0.isSuppressedFood)
         }
         let dominantWideNature = !strongWideNature.isEmpty && validPeople.isEmpty && validAnimals.isEmpty && !hasStrongFocalSubject
-        let dominantArchitecture = validPeople.isEmpty && validAnimals.isEmpty &&
+        let hasArchVP = (sceneHints.refinedVanishingPoint?.confidence ?? raster.measuredVanishingPoint?.confidence ?? 0.0) >= 0.38
+        let hasArchRoof = (sceneHints.archRoofTopY ?? raster.structuralArchRoofTopY) != nil
+        let hasDepthRelief: Bool = {
+            guard raster.hasCoreMLDepth, raster.foregroundDepth.count >= 16 else { return true }
+            let sd = raster.foregroundDepth.sorted()
+            return sd[Int(Double(sd.count - 1) * 0.95)] - sd[Int(Double(sd.count - 1) * 0.15)] >= 0.18
+        }()
+        let isPlainFlatTextureWall = strongArchitecture.isEmpty && !hasArchVP && !hasArchRoof &&
+            raster.hasCoreMLDepth && !hasDepthRelief && raster.subjectAttentionDominance < 0.38
+        let dominantArchitecture = validPeople.isEmpty && validAnimals.isEmpty && !isPlainFlatTextureWall &&
             (!strongArchitecture.isEmpty || siglipScene == "architecture" || siglipScene == "street" ||
              sceneHints.role == .architecture || sceneHints.role == .streetLeading) &&
             (topNamed.map { $0.det.area < 0.12 && ($0.dAim > 0.22 || $0.isEdgeSliver) } ?? true)
@@ -1094,6 +1769,10 @@ enum CameraFramingDirector {
             if let leadP = validPeople.first {
                 distinctGroupMembers.append(leadP)
                 for cand in validPeople.dropFirst() {
+                    let candTouchesEdge = cand.det.boundingBox.minX <= 0.015 || cand.det.boundingBox.maxX >= 0.985
+                    let isEdgeBystander = candTouchesEdge && !cand.hasFace &&
+                        (cand.det.boundingBox.width < 0.15 || cand.det.area < 0.16 * leadP.det.area)
+                    if isEdgeBystander { continue }
                     guard cand.heroScore >= 0.30 * leadP.heroScore,
                           abs(cand.depth - leadP.depth) < 0.35 else { continue }
                     let overlapsExisting = distinctGroupMembers.contains { m in
@@ -1214,9 +1893,18 @@ enum CameraFramingDirector {
             }
         } else if let a0 = validAnimals.first,
                   topNamed.map({ $0.det.domain == .animal || a0.heroScore >= $0.heroScore * 0.72 }) ?? true {
-            // Multi-animal group support when two pets stand together
-            if validAnimals.count >= 2 && validAnimals[1].heroScore >= 0.48 * a0.heroScore {
-                let pets = Array(validAnimals.filter { $0.heroScore >= 0.42 * a0.heroScore }.prefix(4))
+            // Multi-animal group support ONLY when peers share the same depth plane, proximity, and focal sharpness
+            let leadSharp = max(0.02, meanEdgeSharpness(in: a0.det.boundingBox, raster: raster))
+            let coherentPeers = validAnimals.dropFirst().filter { nxt in
+                guard nxt.heroScore >= 0.42 * a0.heroScore, abs(nxt.depth - a0.depth) < 0.22 else { return false }
+                let gapX = max(0.0, max(a0.det.boundingBox.minX, nxt.det.boundingBox.minX) - min(a0.det.boundingBox.maxX, nxt.det.boundingBox.maxX))
+                let gapY = max(0.0, max(a0.det.boundingBox.minY, nxt.det.boundingBox.minY) - min(a0.det.boundingBox.maxY, nxt.det.boundingBox.maxY))
+                guard gapX < 0.24 && gapY < 0.24 else { return false }
+                let nxtSharp = meanEdgeSharpness(in: nxt.det.boundingBox, raster: raster)
+                return nxtSharp >= 0.48 * leadSharp
+            }
+            if !coherentPeers.isEmpty && coherentPeers[0].heroScore >= 0.48 * a0.heroScore {
+                let pets = [a0] + Array(coherentPeers.prefix(3))
                 let uBox = unionRects(pets.map(\.det.boundingBox))
                 if uBox.width <= 0.86 && uBox.height <= 0.84 {
                     role = .animal
@@ -1373,6 +2061,8 @@ enum CameraFramingDirector {
         } else if let obj0 = topNamed,
                   obj0.det.domain != .furniture && obj0.det.domain != .pottedPlant &&
                   !(obj0.det.confidence < 0.42 && obj0.dAim > 0.36 && (maskInstances.first?.heroScore ?? 0) > obj0.heroScore * 1.6) &&
+                  !(obj0.det.domain == .object && obj0.det.area < 0.032 && obj0.dAim > 0.28 &&
+                    (maskInstances.first.map { $0.det.area >= 0.16 && $0.dAim <= 0.24 && $0.heroScore > obj0.heroScore * 1.15 } ?? false)) &&
                   (obj0.dAim <= 0.42 || obj0.det.confidence >= 0.45 || obj0.det.domain == .pureFlower ||
                    (siglipScene != "flower" && siglipScene != "foliage" && siglipScene != "sky_clouds" && siglipScene != "sunset" && siglipScene != "landscape")) {
             role = obj0.det.domain == .animal ? .animal : (obj0.det.domain == .vehicle ? .vehicle : (obj0.det.domain == .pureFlower ? .flower : .object))
@@ -1453,29 +2143,75 @@ enum CameraFramingDirector {
             heroConf = 0.58
         }
 
-        // 6. Solve 3-State Optical Zoom with Center-Crop Geometric Constraint
+        // 6. Solve Multi-Candidate Compositional Zoom (Post-Alignment Scoring + Center-Crop Constraint)
         let isMinimalist = (semanticAffinities["minimalist_space"] ?? 0.0) > 0.032 ||
             (semanticAffinities["single_product"] ?? 0.0) > 0.040
         let isWaterReflection = (semanticAffinities["water_reflection"] ?? 0.0) > 0.045
+        let sensorAspect = calibration.aspect.isFinite && calibration.aspect > 0.1 ? calibration.aspect : 0.75
+        let distractorBoxes = extractDistractorBoxes(
+            fused: fused, incidentalBounds: incidentalBounds, heroBox: heroBox, protectedBoxes: protectedBoxes
+        )
+        let rawFillForSmoothing = measureSubjectFill(
+            box: heroBox, role: role, isFaceOnlyHero: isFaceOnlyHero, frameAspect: sensorAspect
+        )
+        let smoothedFillOverride: Double? = enableTemporalHysteresis
+            ? DirectorTemporalState.shared.smoothSubjectFill(rawFillForSmoothing, heroBounds: heroBox, domain: heroDomain, now: now)
+            : nil
 
-        let zoomSolution = solveOpticalZoom(
+        let zoomSolution = solveCompositionalZoom(
             heroBox: heroBox,
+            heroAnchor: heroAnchor,
+            protectedBoxes: protectedBoxes,
+            portraitBustBox: portraitBustBox,
+            distractors: distractorBoxes,
+            raster: raster,
+            sceneHints: sceneHints,
             role: role,
             isFaceOnlyHero: isFaceOnlyHero,
             faceBounds: heroFaceBounds,
             isMinimalist: isMinimalist,
             noClearSubject: noClearSubject,
+            isClutteredMultiObjectScene: isClutteredMultiObjectScene,
+            frameAspect: sensorAspect,
             currentZoom: safeZoom,
-            allowedZooms: allowedZooms
+            allowedZooms: allowedZooms,
+            opticalZooms: opticalZooms,
+            upscaleThreshold: upscaleThreshold,
+            smoothedFillOverride: smoothedFillOverride
         )
-        let stabilizedZoom = enableTemporalHysteresis
+        let stabilizedResult = enableTemporalHysteresis
             ? DirectorTemporalState.shared.stabilizeZoom(
                 proposedZoom: zoomSolution.recommendedZoom,
                 proposedState: zoomSolution.state,
                 centerCropMax: zoomSolution.centerCropMaxZoom,
                 now: now
             )
-            : zoomSolution.recommendedZoom
+            : (zoom: zoomSolution.recommendedZoom, heldByDwell: false)
+        let stabilizedZoom = stabilizedResult.zoom
+        let resolvedZoomTrace: ZoomDecisionTrace = stabilizedResult.heldByDwell
+            ? ZoomDecisionTrace(
+                state: zoomSolution.trace.state,
+                reasonCode: .noZoomTemporalHold,
+                subjectFill: zoomSolution.trace.subjectFill,
+                projectedFill: zoomSolution.trace.projectedFill,
+                idealFill: zoomSolution.trace.idealFill,
+                clutterBefore: zoomSolution.trace.clutterBefore,
+                clutterAfter: zoomSolution.trace.clutterAfter,
+                clutterRemoved: zoomSolution.trace.clutterRemoved,
+                distractorBoxes: zoomSolution.trace.distractorBoxes,
+                partialEdgeCutsBefore: zoomSolution.trace.partialEdgeCutsBefore,
+                partialEdgeCutsAfter: zoomSolution.trace.partialEdgeCutsAfter,
+                baselineScore: zoomSolution.trace.baselineScore,
+                bestScore: zoomSolution.trace.bestScore,
+                scoreGain: zoomSolution.trace.scoreGain,
+                immediateSafeZoom: stabilizedZoom,
+                postPanZoom: zoomSolution.trace.postPanZoom,
+                centerCropMaxZoom: zoomSolution.trace.centerCropMaxZoom,
+                upscaleCeiling: zoomSolution.trace.upscaleCeiling,
+                predictedPostZoomFrame: zoomSolution.trace.predictedPostZoomFrame,
+                candidates: zoomSolution.trace.candidates
+            )
+            : zoomSolution.trace
 
         // Fast-return for No-Clear-Subject scenes: keep centered equilibrium (or zoom back out to 1.0x if zoomed in)
         if noClearSubject {
@@ -1515,7 +2251,8 @@ enum CameraFramingDirector {
                 centerCropVisibleFrame: centerCropFrame(currentZoom: safeZoom, targetZoom: stabilizedZoom),
                 subjectFillMetric: zoomSolution.measuredFill,
                 targetFillMetric: zoomSolution.spec.idealFill,
-                allDetections: fused
+                allDetections: fused,
+                zoomTrace: resolvedZoomTrace
             )
         }
 
@@ -1573,11 +2310,12 @@ enum CameraFramingDirector {
                 centerCropVisibleFrame: centerCropFrame(currentZoom: safeZoom, targetZoom: stabilizedZoom),
                 subjectFillMetric: zoomSolution.measuredFill,
                 targetFillMetric: zoomSolution.spec.idealFill,
-                allDetections: fused
+                allDetections: fused,
+                zoomTrace: resolvedZoomTrace
             )
         }
 
-        // 7. Build Zoom Rungs strictly faithful to the 3-State Zoom Solution & Center-Crop Constraint
+        // 7. Build Zoom Rungs strictly faithful to the Compositional Zoom Solution & Center-Crop Constraint
         let bw = max(0.015, Double(heroBox.width))
         let bh = max(0.015, Double(heroBox.height))
         let minHardwareZoom = allowedZooms.min() ?? 1.0
@@ -1588,7 +2326,7 @@ enum CameraFramingDirector {
             guard candidateZoom.isFinite,
                   candidateZoom >= min(0.5, minHardwareZoom) - 0.02,
                   candidateZoom <= max(safeZoom, maxHardwareZoom) + 0.02 else { return }
-            if zoomSolution.state == .zoomIn && candidateZoom > zoomSolution.centerCropMaxZoom + 1e-4 {
+            if zoomSolution.state.isZoomInFamily && candidateZoom > zoomSolution.centerCropMaxZoom + 1e-4 {
                 return
             }
             if !zoomRungs.contains(where: { abs($0 - candidateZoom) < 0.04 }) {
@@ -1597,7 +2335,7 @@ enum CameraFramingDirector {
         }
 
         appendZoomRung(stabilizedZoom)
-        if zoomSolution.state == .zoomIn && stabilizedZoom > safeZoom + 0.12 {
+        if zoomSolution.state.isZoomInFamily && stabilizedZoom > safeZoom + 0.12 {
             // Only evaluate valid zoomed rungs near stabilizedZoom (never let 1x steal a required optical zoom!)
             for opt in [CGFloat(1.2), 1.5, 2.0, 2.5, 3.0, 4.0] + allowedZooms {
                 if opt >= max(safeZoom + 0.14, stabilizedZoom * 0.86) &&
@@ -1617,12 +2355,11 @@ enum CameraFramingDirector {
             effectiveAnchor = CGPoint(x: sunX, y: hy)
         }
 
-        let sensorAspect = calibration.aspect.isFinite && calibration.aspect > 0.1 ? calibration.aspect : 0.75
         let isPortraitSensor = sensorAspect < 0.88
         let isSquareSensor = sensorAspect >= 0.88 && sensorAspect <= 1.12
 
         var candidates: [FramingCandidate] = []
-        if zoomSolution.state == .noZoomNeeded && !zoomSolution.requiresPanBeforeZoom {
+        if (zoomSolution.state == .noZoomNeeded || zoomSolution.state == .noSubject) && !zoomSolution.requiresPanBeforeZoom {
             candidates.append(FramingCandidate(
                 destG: effectiveAnchor, zoom: safeZoom, style: .keepNatural,
                 aim: CGPoint(x: 0.5, y: 0.5), rotation: simd_quatd(ix: 0, iy: 0, iz: 0, r: 1),
@@ -1833,7 +2570,7 @@ enum CameraFramingDirector {
         let rawGazeAlreadyAligned = abs(heroGazeX) < 0.14 ||
             (heroGazeX > 0 && Double(effectiveAnchor.x) >= 0.26 && Double(effectiveAnchor.x) <= 0.43) ||
             (heroGazeX < 0 && Double(effectiveAnchor.x) >= 0.57 && Double(effectiveAnchor.x) <= 0.74)
-        let rawAlreadyStrong = (zoomSolution.state == .noZoomNeeded) && !zoomSolution.requiresPanBeforeZoom &&
+        let rawAlreadyStrong = (zoomSolution.state == .noZoomNeeded || zoomSolution.state == .noSubject) && !zoomSolution.requiresPanBeforeZoom &&
             (gaicHeadroom < 0.025) && rawEdgeDist >= 0.27 && !heroCrampedSide && rawHorizonOK &&
             rawGazeAlreadyAligned && clutterSum < 0.28
 
@@ -2104,6 +2841,43 @@ enum CameraFramingDirector {
             idealZoomAfterPan: zoomSolution.idealZoomAfterPan
         )
 
+        // Update final trace's predictedPostZoomFrame to match the exact solved post-alignment crop box
+        let finalPredictedFrame: CGRect = {
+            if zoomSolution.requiresPanBeforeZoom {
+                return resolvedZoomTrace.predictedPostZoomFrame
+            }
+            if finalZoom > safeZoom + 0.08 {
+                let relZ = max(1.0, Double(finalZoom / safeZoom))
+                let span = CGFloat(min(1.0, 1.0 / relZ))
+                let vx0 = max(0.0, min(1.0 - span, finalAim.x - span * 0.5))
+                let vy0 = max(0.0, min(1.0 - span, finalAim.y - span * 0.5))
+                return CGRect(x: vx0, y: vy0, width: span, height: span)
+            }
+            return resolvedZoomTrace.predictedPostZoomFrame
+        }()
+        let finalZoomTrace = ZoomDecisionTrace(
+            state: resolvedZoomTrace.state,
+            reasonCode: resolvedZoomTrace.reasonCode,
+            subjectFill: resolvedZoomTrace.subjectFill,
+            projectedFill: resolvedZoomTrace.projectedFill,
+            idealFill: resolvedZoomTrace.idealFill,
+            clutterBefore: resolvedZoomTrace.clutterBefore,
+            clutterAfter: resolvedZoomTrace.clutterAfter,
+            clutterRemoved: resolvedZoomTrace.clutterRemoved,
+            distractorBoxes: resolvedZoomTrace.distractorBoxes,
+            partialEdgeCutsBefore: resolvedZoomTrace.partialEdgeCutsBefore,
+            partialEdgeCutsAfter: resolvedZoomTrace.partialEdgeCutsAfter,
+            baselineScore: resolvedZoomTrace.baselineScore,
+            bestScore: resolvedZoomTrace.bestScore,
+            scoreGain: resolvedZoomTrace.scoreGain,
+            immediateSafeZoom: finalZoom,
+            postPanZoom: zoomSolution.idealZoomAfterPan,
+            centerCropMaxZoom: zoomSolution.centerCropMaxZoom,
+            upscaleCeiling: resolvedZoomTrace.upscaleCeiling,
+            predictedPostZoomFrame: finalPredictedFrame,
+            candidates: resolvedZoomTrace.candidates
+        )
+
         return DirectorDecision(
             role: role,
             heroLabel: heroLabel,
@@ -2129,7 +2903,8 @@ enum CameraFramingDirector {
             centerCropVisibleFrame: centerCropFrame(currentZoom: safeZoom, targetZoom: finalZoom),
             subjectFillMetric: zoomSolution.measuredFill,
             targetFillMetric: zoomSolution.spec.idealFill,
-            allDetections: fused
+            allDetections: fused,
+            zoomTrace: finalZoomTrace
         )
     }
 
@@ -2530,6 +3305,20 @@ enum CameraFramingDirector {
         let s = raster.side
         let n = s * s
         guard s >= 8, raster.foregroundDepth.count == n, raster.edges.count == n else { return [] }
+        // Uniform-texture guard: flat ground/gravel/wall with no 3D CoreML depth relief and diffuse saliency has no isolated foreground subject
+        if raster.hasCoreMLDepth {
+            let sortedDepth = raster.foregroundDepth.sorted()
+            let depthSpread = sortedDepth[Int(Double(n - 1) * 0.95)] - sortedDepth[Int(Double(n - 1) * 0.15)]
+            if depthSpread < 0.14 && raster.subjectAttentionDominance < 0.34 {
+                return []
+            }
+            if raster.structuralBlankSurface.count == n {
+                let blankMean = raster.structuralBlankSurface.reduce(0.0, +) / Double(n)
+                if blankMean > 0.65 && depthSpread < 0.18 {
+                    return []
+                }
+            }
+        }
         let sortedEdges = raster.edges.sorted()
         let e96 = max(1e-4, sortedEdges[Int(Double(n - 1) * 0.96)])
         var edgeNorm = [Double](repeating: 0.0, count: n)

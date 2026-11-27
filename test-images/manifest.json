@@ -488,5 +488,75 @@
     "height": 640,
     "aspect_tag": "landscape",
     "aspect_ratio": 1.5
+  },
+  {
+    "index": 50,
+    "file": "50_distant_fullbody_3x4_002532.jpg",
+    "category": "distant_fullbody",
+    "coco_id": 2532,
+    "width": 480,
+    "height": 640,
+    "aspect_tag": "3x4",
+    "aspect_ratio": 0.75
+  },
+  {
+    "index": 51,
+    "file": "51_cluttered_objects_3x2_007816.jpg",
+    "category": "cluttered_objects",
+    "coco_id": 7816,
+    "width": 640,
+    "height": 427,
+    "aspect_tag": "3x2",
+    "aspect_ratio": 1.4988
+  },
+  {
+    "index": 52,
+    "file": "52_edge_subject_4x3_009483.jpg",
+    "category": "edge_subject",
+    "coco_id": 9483,
+    "width": 640,
+    "height": 480,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 53,
+    "file": "53_small_distant_object_2x3_015746.jpg",
+    "category": "small_distant_object",
+    "coco_id": 15746,
+    "width": 427,
+    "height": 640,
+    "aspect_tag": "2x3",
+    "aspect_ratio": 0.6672
+  },
+  {
+    "index": 54,
+    "file": "54_single_person_4x3_022935.jpg",
+    "category": "single_person",
+    "coco_id": 22935,
+    "width": 640,
+    "height": 480,
+    "aspect_tag": "4x3",
+    "aspect_ratio": 1.3333
+  },
+  {
+    "index": 55,
+    "file": "55_distant_fullbody_3x2_031093.jpg",
+    "category": "distant_fullbody",
+    "coco_id": 31093,
+    "width": 640,
+    "height": 426,
+    "aspect_tag": "3x2",
+    "aspect_ratio": 1.5023
+  },
+  {
+    "index": 56,
+    "file": "56_cluttered_objects_3x2_054593.jpg",
+    "category": "cluttered_objects",
+    "coco_id": 54593,
+    "width": 640,
+    "height": 427,
+    "aspect_tag": "3x2",
+    "aspect_ratio": 1.4988
   }
 ]
