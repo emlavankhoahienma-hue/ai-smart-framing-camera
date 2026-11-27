@@ -685,32 +685,40 @@ enum RealPhotoPipelineBenchmark {
             ]
         }
         let nPhotos = max(1, imageFiles.count)
+        let oldPostPct = evaluatedCount > 0 ? round(Double(oldPostPanCorrect) * 1000.0 / Double(evaluatedCount)) / 10.0 : 0.0
+        let oldImmPct = evaluatedCount > 0 ? round(Double(oldImmCorrect) * 1000.0 / Double(evaluatedCount)) / 10.0 : 0.0
+        let oldAvgMs = round((oldDirectorMsSum / Double(nPhotos)) * 1000.0) / 1000.0
+        let oldSummaryDict: [String: Any] = [
+            "postPanCorrect": oldPostPanCorrect,
+            "postPanAccuracyPct": oldPostPct,
+            "immediateCorrect": oldImmCorrect,
+            "immediateAccuracyPct": oldImmPct,
+            "centerClipViolations": oldCenterClipCount,
+            "avgDirectorMs": oldAvgMs,
+            "confusion": oldConfusion,
+            "missesCount": oldMisses.count,
+            "misses": oldMisses,
+        ]
+        let newPostPct = evaluatedCount > 0 ? round(Double(newPostPanCorrect) * 1000.0 / Double(evaluatedCount)) / 10.0 : 0.0
+        let newImmPct = evaluatedCount > 0 ? round(Double(newImmCorrect) * 1000.0 / Double(evaluatedCount)) / 10.0 : 0.0
+        let newAvgMs = round((newDirectorMsSum / Double(nPhotos)) * 1000.0) / 1000.0
+        let newSummaryDict: [String: Any] = [
+            "postPanCorrect": newPostPanCorrect,
+            "postPanAccuracyPct": newPostPct,
+            "immediateCorrect": newImmCorrect,
+            "immediateAccuracyPct": newImmPct,
+            "centerClipViolations": newCenterClipCount,
+            "avgDirectorMs": newAvgMs,
+            "confusion": newConfusion,
+            "missesCount": newMisses.count,
+            "misses": newMisses,
+        ]
         let evalSummary: [String: Any] = [
             "totalPhotos": imageFiles.count,
             "evaluatedGroundTruthPhotos": evaluatedCount,
             "aspectCounts": aspectCounter,
-            "oldBuild740": [
-                "postPanCorrect": oldPostPanCorrect,
-                "postPanAccuracyPct": evaluatedCount > 0 ? round(Double(oldPostPanCorrect) * 1000.0 / Double(evaluatedCount)) / 10.0 : 0.0,
-                "immediateCorrect": oldImmCorrect,
-                "immediateAccuracyPct": evaluatedCount > 0 ? round(Double(oldImmCorrect) * 1000.0 / Double(evaluatedCount)) / 10.0 : 0.0,
-                "centerClipViolations": oldCenterClipCount,
-                "avgDirectorMs": round((oldDirectorMsSum / Double(nPhotos)) * 1000.0) / 1000.0,
-                "confusion": oldConfusion,
-                "missesCount": oldMisses.count,
-                "misses": oldMisses,
-            ],
-            "newCompositionalZoom": [
-                "postPanCorrect": newPostPanCorrect,
-                "postPanAccuracyPct": evaluatedCount > 0 ? round(Double(newPostPanCorrect) * 1000.0 / Double(evaluatedCount)) / 10.0 : 0.0,
-                "immediateCorrect": newImmCorrect,
-                "immediateAccuracyPct": evaluatedCount > 0 ? round(Double(newImmCorrect) * 1000.0 / Double(evaluatedCount)) / 10.0 : 0.0,
-                "centerClipViolations": newCenterClipCount,
-                "avgDirectorMs": round((newDirectorMsSum / Double(nPhotos)) * 1000.0) / 1000.0,
-                "confusion": newConfusion,
-                "missesCount": newMisses.count,
-                "misses": newMisses,
-            ],
+            "oldBuild740": oldSummaryDict,
+            "newCompositionalZoom": newSummaryDict,
             "perClass": perClassSummary,
         ]
         try JSONSerialization.data(withJSONObject: evalSummary, options: [.prettyPrinted, .sortedKeys])
