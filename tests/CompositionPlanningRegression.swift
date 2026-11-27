@@ -1308,7 +1308,7 @@ enum CompositionPlanningRegression {
                         "temporal zoom hysteresis flickered across jittered frames: \(jitterZooms)")
 
             // 25. Target 3D world-ray projection stability across zoom changes (1.0x -> 1.5x -> 2.0x -> 3.0x -> 1.0x)
-            let baseK = TrackingCalibration.fallback(aspect: 0.75, zoom: 1.0)
+            let baseK = TrackingCalibration.fallback(zoom: 1.0, aspect: 0.75)
             let alignedRay = baseK.deviceRay(at: CGPoint(x: 0.5, y: 0.5))
             let offCenterRay = baseK.deviceRay(at: CGPoint(x: 0.60, y: 0.42))
             for zStep in [1.0, 1.5, 2.0, 3.0, 1.0] {
