@@ -871,13 +871,16 @@ enum CameraFramingDirector {
     }
 
     /// Computes the optimal post-alignment viewport of size `(span, span)` inside `[0, 1]^2`
-    /// centered around the hero's natural composed anchor so zoom is evaluated on the POST-PAN frame!
+    /// around the hero's natural composed anchor, shifting away from one-sided border distractors
+    /// while keeping the hero inside safe margins so pan + zoom collaborate to strip edge clutter!
     private static func simulatedPostAlignmentViewport(
         heroBox: CGRect,
         heroAnchor: CGPoint,
         role: DirectorPhotographicRole,
         portraitBustBox: CGRect?,
-        relZoom: Double
+        relZoom: Double,
+        distractors: [CGRect] = [],
+        marginX: CGFloat = 0.05
     ) -> CGRect {
         let span = CGFloat(min(1.0, max(0.15, 1.0 / max(1.0, relZoom))))
         if span >= 0.995 {
@@ -898,12 +901,38 @@ enum CameraFramingDirector {
             targetCx = heroBox.midX
             targetCy = heroBox.midY
         }
-        var vx0 = targetCx - span * 0.5
-        var vy0 = targetCy - span * 0.5
-        // Keep viewport inside sensor bounds [0, 1]^2
-        vx0 = max(0.0, min(1.0 - span, vx0))
-        vy0 = max(0.0, min(1.0 - span, vy0))
-        return CGRect(x: vx0, y: vy0, width: span, height: span)
+        let centerVx0 = max(0.0, min(1.0 - span, targetCx - span * 0.5))
+        let vy0 = max(0.0, min(1.0 - span, targetCy - span * 0.5))
+        let centerVP = CGRect(x: centerVx0, y: vy0, width: span, height: span)
+        guard !distractors.isEmpty else { return centerVP }
+
+        // Test shifting viewport left/right within safe hero margins to push one-sided border clutter out of frame
+        let padX = span * marginX
+        let minSafeVx0 = max(0.0, heroBox.maxX - (span - padX))
+        let maxSafeVx0 = min(1.0 - span, heroBox.minX - padX)
+        guard maxSafeVx0 > minSafeVx0 + 0.02 else { return centerVP }
+
+        let candidatesX: [CGFloat] = [centerVx0, minSafeVx0, maxSafeVx0]
+        func distractorCost(for vp: CGRect) -> Double {
+            var cost = 0.0
+            for d in distractors {
+                let inter = d.intersection(vp)
+                guard !inter.isNull, !inter.isEmpty else { continue }
+                cost += Double(inter.width * inter.height)
+            }
+            return cost
+        }
+        var bestVP = centerVP
+        var bestCost = distractorCost(for: centerVP)
+        for candX in candidatesX.dropFirst() {
+            let candVP = CGRect(x: candX, y: vy0, width: span, height: span)
+            let c = distractorCost(for: candVP)
+            if c < bestCost - 0.008 {
+                bestCost = c
+                bestVP = candVP
+            }
+        }
+        return bestVP
     }
 
     /// Projects a source-normalized rect into the `[0, 1]^2` coordinates of a simulated post-alignment viewport `vp`.
@@ -1024,7 +1053,7 @@ enum CameraFramingDirector {
                     requiresPanBeforeZoom: false, measuredFill: measured, spec: spec, trace: trace
                 )
             }
-            let st: DirectorZoomState = (noClearSubject || role == .skyLandscape || role == .scene) ? .noSubject : .noZoomNeeded
+            let st: DirectorZoomState = (noClearSubject || role == .skyLandscape || role == .scene || role == .foliage) ? .noSubject : .noZoomNeeded
             let rsn: ZoomReasonCode = noClearSubject ? .noZoomNoClearSubject : .noZoomWideLandscape
             let trace = makeTrace(
                 state: st, reason: rsn,
@@ -1221,7 +1250,8 @@ enum CameraFramingDirector {
                 ? fullFrame
                 : simulatedPostAlignmentViewport(
                     heroBox: heroBox, heroAnchor: heroAnchor, role: role,
-                    portraitBustBox: portraitBustBox, relZoom: relZ
+                    portraitBustBox: portraitBustBox, relZoom: relZ,
+                    distractors: distractors, marginX: marginX
                 )
             // Physical post-pan viewport centered freely on the hero (real 3D camera pans to center the subject
             // even if it currently sits near x=0 or y=1 in the pre-pan frame!).
@@ -1298,7 +1328,12 @@ enum CameraFramingDirector {
             // Criterion 5: Optical quality preference vs digital upscale penalty
             let qualPen = opticalQualityPenalty(for: z)
 
-            let total = 0.50 * fScore + 0.42 * clutGain + distractorClearBonus + 0.16 * voidGain - edgeCutPen - qualPen
+            // Guard: never zoom into heavier severe clutter on multi-object scenes
+            let clutterWorsenedPen: Double = (!isBase && vpClut.clutterScore > baseClutter.clutterScore + 0.02 && vpClut.clutterScore >= 0.50)
+                ? 0.22
+                : 0.0
+
+            let total = 0.50 * fScore + 0.42 * clutGain + distractorClearBonus + 0.16 * voidGain - edgeCutPen - qualPen - clutterWorsenedPen
             let candTrace = ZoomCandidateTrace(
                 zoom: z,
                 totalScore: total,
@@ -1331,8 +1366,8 @@ enum CameraFramingDirector {
 
         let centerMax = computeCenterCropMaxZoom(subjectBox: heroBox, currentZoom: currentZoom, qualityCeiling: qualityCeiling)
 
-        // Require a clear compositional improvement AND dead-band (>= 0.16x) to avoid forced/micro zooming
-        let minImprovementGain = 0.060
+        // Require a clear compositional improvement AND dead-band (>= 0.15x) to avoid forced/micro zooming
+        let minImprovementGain = 0.048
         guard let bestIn = bestZoomInCand else {
             let rsn: ZoomReasonCode = (role == .group) ? .noZoomGroupTooWide : (anyZoomInBlockedByUpscale ? .noZoomUpscaleCeiling : .noZoomEdgeCutRisk)
             let trace = makeTrace(
@@ -1772,11 +1807,26 @@ enum CameraFramingDirector {
         let isClutteredMultiObjectScene: Bool = {
             guard validPeople.isEmpty && validAnimals.isEmpty, clusterableObjects.count >= 5 else { return false }
             let lead = clusterableObjects[0]
-            guard lead.det.domain != .food && lead.det.domain != .pureFlower && lead.det.area < 0.22 else { return false }
-            guard clusterableObjects[1].heroScore >= 0.55 * lead.heroScore &&
-                  clusterableObjects[2].heroScore >= 0.45 * lead.heroScore else { return false }
+            guard lead.det.domain != .food && lead.det.domain != .pureFlower && lead.det.area < 0.24 else { return false }
+            guard clusterableObjects[1].heroScore >= 0.42 * lead.heroScore &&
+                  clusterableObjects[2].heroScore >= 0.32 * lead.heroScore else { return false }
             let spread = unionRects(clusterableObjects.prefix(6).map(\.det.boundingBox))
-            return spread.width >= 0.58 && spread.height >= 0.44
+            return spread.width >= 0.55 && spread.height >= 0.42
+        }()
+
+        // Prominent centered Vision Objectness / Foreground Mask (e.g. centered vintage stove or red fire hydrant not in COCO)
+        let centeredVisualObject: DirectorDetection? = {
+            if let m0 = maskInstances.first(where: { $0.det.area >= 0.16 && $0.det.area <= 0.72 && $0.dAim <= 0.22 && $0.det.confidence >= 0.52 }) {
+                return m0.det
+            }
+            return fused
+                .filter { d in
+                    d.isAttentionOnly && d.label == "Chủ thể tiền cảnh" &&
+                    d.confidence >= 0.50 && d.area >= 0.16 && d.area <= 0.72 &&
+                    !isBottomStrip(d.boundingBox, center: d.center) && !isSideWall(d.boundingBox) &&
+                    hypot(Double(d.center.x) - 0.50, Double(d.center.y) - 0.48) <= 0.22
+                }
+                .max { $0.confidence * sqrt($0.area) < $1.confidence * sqrt($1.area) }
         }()
 
         let furnitureHits = fgCandidates.filter { $0.det.domain == .furniture && !$0.isEdgeSliver && $0.det.confidence >= 0.30 }
@@ -1788,7 +1838,10 @@ enum CameraFramingDirector {
             (furnitureHits.count >= 2 || (furnitureHits.count == 1 && clusterableObjects.isEmpty) || weakCornerItemOnly)
         let isFrameAperture = (semanticAffinities["frame_aperture"] ?? 0.0) > 0.034 &&
             (sceneHints.role == .apertureView || siglipScene == "aperture" || (clusterableObjects.isEmpty && isIndoorRoomCue))
-        let hasStrongFocalSubject = fgCandidates.contains {
+        let hasRealVistaNature = strongWideNature.contains { !groundCoverTokens.contains($0.label.lowercased()) }
+        let hasStrongCenteredMask = !isGrandVistaScene && !hasRealVistaNature &&
+            (centeredVisualObject.map { $0.confidence >= 0.60 && $0.area >= 0.18 && hypot(Double($0.center.x) - 0.50, Double($0.center.y) - 0.48) <= 0.18 } ?? false)
+        let hasStrongFocalSubject = hasStrongCenteredMask || fgCandidates.contains {
             (($0.det.domain == .pureFlower || $0.det.domain == .food) && $0.det.confidence >= 0.35 && !$0.isEdgeSliver && !$0.isSuppressedFood) ||
             (($0.det.domain == .vehicle || $0.det.domain == .object) &&
              $0.det.confidence >= 0.68 && $0.dAim <= 0.26 && $0.det.area >= 0.008 && !$0.isEdgeSliver && !$0.isSuppressedFood)
@@ -1961,22 +2014,24 @@ enum CameraFramingDirector {
         } else if let a0 = validAnimals.first,
                   topNamed.map({ $0.det.domain == .animal || a0.heroScore >= $0.heroScore * 0.72 }) ?? true {
             // Multi-animal group support: always preserve touching/overlapping same-species peers;
-            // for separated animals, require shared depth plane and focal sharpness (excludes distant bokeh decoys)
+            // for separated animals, keep crisp same-species peers in the same depth plane (excludes distant bokeh decoys)
             let leadSharp = max(0.02, meanEdgeSharpness(in: a0.det.boundingBox, raster: raster))
             let coherentPeers = validAnimals.dropFirst().filter { nxt in
-                guard nxt.heroScore >= 0.42 * a0.heroScore else { return false }
                 let gapX = max(0.0, max(a0.det.boundingBox.minX, nxt.det.boundingBox.minX) - min(a0.det.boundingBox.maxX, nxt.det.boundingBox.maxX))
                 let gapY = max(0.0, max(a0.det.boundingBox.minY, nxt.det.boundingBox.minY) - min(a0.det.boundingBox.maxY, nxt.det.boundingBox.maxY))
-                let isTouchingSameSpecies = gapX <= 0.04 && gapY <= 0.04 &&
-                    nxt.det.localizedLabel.lowercased() == a0.det.localizedLabel.lowercased()
+                let sameSpecies = nxt.det.localizedLabel.lowercased() == a0.det.localizedLabel.lowercased()
+                let isTouchingSameSpecies = sameSpecies && gapX <= 0.04 && gapY <= 0.04
                 if isTouchingSameSpecies {
-                    return abs(nxt.depth - a0.depth) < 0.32
+                    return nxt.heroScore >= 0.28 * a0.heroScore && abs(nxt.depth - a0.depth) < 0.45
                 }
-                guard abs(nxt.depth - a0.depth) < 0.22, gapX < 0.24 && gapY < 0.24 else { return false }
+                guard nxt.heroScore >= 0.38 * a0.heroScore else { return false }
+                let maxGapX: CGFloat = (sameSpecies && nxt.det.confidence >= 0.68) ? 0.36 : 0.24
+                let maxGapY: CGFloat = (sameSpecies && nxt.det.confidence >= 0.68) ? 0.28 : 0.24
+                guard abs(nxt.depth - a0.depth) < 0.22, gapX < maxGapX && gapY < maxGapY else { return false }
                 let nxtSharp = meanEdgeSharpness(in: nxt.det.boundingBox, raster: raster)
                 return nxtSharp >= 0.48 * leadSharp
             }
-            if !coherentPeers.isEmpty && coherentPeers[0].heroScore >= 0.48 * a0.heroScore {
+            if !coherentPeers.isEmpty && (coherentPeers[0].heroScore >= 0.35 * a0.heroScore) {
                 let pets = [a0] + Array(coherentPeers.prefix(3))
                 let uBox = unionRects(pets.map(\.det.boundingBox))
                 if uBox.width <= 0.86 && uBox.height <= 0.84 {
@@ -2113,6 +2168,27 @@ enum CameraFramingDirector {
                 heroLocalized = role == .street ? "Góc phố" : "Công trình kiến trúc"
                 heroConf = 0.74
             }
+        } else if isPlainFlatTextureWall && (topNamed?.det.confidence ?? 0.0) < 0.55 {
+            // Plain flat wall texture (brick/concrete/tile) with no architecture structure and no confident subject
+            role = .scene
+            heroDomain = .wideNature
+            noClearSubject = true
+            heroBox = CGRect(x: 0.15, y: 0.15, width: 0.70, height: 0.70)
+            heroAnchor = CGPoint(x: 0.50, y: 0.50)
+            heroLabel = "flat_wall_texture"
+            heroLocalized = "Bề mặt phẳng đồng nhất"
+            heroConf = 0.56
+        } else if let visCenter = centeredVisualObject,
+                  (topNamed == nil || (topNamed!.det.area < 0.032 && topNamed!.dAim > 0.28 && topNamed!.det.confidence < 0.65)) {
+            // Prominent centered unlabeled foreground object (e.g. vintage stove, fire hydrant, sculpture) beats tiny corner decoys
+            role = .object
+            heroDomain = .foregroundMask
+            heroBox = visCenter.boundingBox
+            heroAnchor = visCenter.anchor ?? visCenter.center
+            heroLabel = "foreground_centered_object"
+            heroLocalized = "Chủ thể nổi bật"
+            heroConf = visCenter.confidence
+            protectedBoxes = [heroBox]
         } else if let food0 = topNamed, food0.det.domain == .food,
                   !(food0.det.area < 0.032 && food0.dAim > 0.28 &&
                     (maskInstances.first.map { $0.det.area >= 0.16 && $0.dAim <= 0.24 && $0.heroScore > food0.heroScore * 1.05 } ?? false)) {
@@ -3397,6 +3473,7 @@ enum CameraFramingDirector {
         }
         let sortedEdges = raster.edges.sorted()
         let e96 = max(1e-4, sortedEdges[Int(Double(n - 1) * 0.96)])
+        let medianEdgeNorm = min(1.0, max(0.0, sortedEdges[n / 2] / e96))
         var edgeNorm = [Double](repeating: 0.0, count: n)
         for i in 0..<n {
             edgeNorm[i] = min(1.0, max(0.0, raster.edges[i] / e96))
@@ -3516,6 +3593,8 @@ enum CameraFramingDirector {
                         let rowBgDepth = rowBgSum / Double(rowBgCnt)
                         let depthPop = meanD - rowBgDepth
                         if depthPop < 0.055 && meanC < 0.50 { continue }
+                        // Uniform noisy textures (gravel/soil/brick) have high edges EVERYWHERE and ~0 same-row depth pop
+                        if depthPop < 0.08 && meanS < 1.42 * max(0.05, medianEdgeNorm) { continue }
                     }
                 }
                 let dAim = hypot(cx - 0.50, cy - 0.46)
