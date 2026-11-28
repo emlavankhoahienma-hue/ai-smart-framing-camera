@@ -925,7 +925,7 @@ enum CompositionPlanningRegression {
             try require(pizzaRes.role == .food && pizzaRes.heroLabel == "pizza",
                         "corner headless shoulder stole dominant pizza: got \(pizzaRes.role) / \(pizzaRes.heroLabel)")
 
-            // 5. Severely cramped close-up portrait -> 0.5x Ultra-Wide zoom-out; balanced group -> stays 1.0x
+            // 5. Severely cramped close-up portrait at 1.0x -> reports .zoomOut guidance while NEVER auto-dropping below 1.0x; balanced group -> stays 1.0x
             let crampedPerson = DirectorDetection(
                 label: "person", localizedLabel: "Người",
                 boundingBox: CGRect(x: 0.01, y: 0.0, width: 0.85, height: 0.96),
@@ -937,7 +937,8 @@ enum CompositionPlanningRegression {
                 semanticAffinities: ["person": 0.09], neuralProposals: [],
                 calibration: k, pose: identityPose, currentZoom: 1.0, allowedZooms: [0.5, 1.0, 2.0, 3.0]
             )
-            try require(abs(crampedRes.recommendedZoom - 0.5) < 0.05, "severely cramped portrait should trigger 0.5x, got \(crampedRes.recommendedZoom)")
+            try require(crampedRes.zoomState == .zoomOut && abs(crampedRes.recommendedZoom - 1.0) < 0.05,
+                        "severely cramped portrait at 1.0x must report .zoomOut without auto-dropping below 1.0x, got state=\(crampedRes.zoomState) zoom=\(crampedRes.recommendedZoom)")
 
             let groupA = DirectorDetection(label: "person", localizedLabel: "Người", boundingBox: CGRect(x: 0.16, y: 0.20, width: 0.26, height: 0.58), anchor: nil, confidence: 0.90, domain: .human)
             let groupB = DirectorDetection(label: "person", localizedLabel: "Người", boundingBox: CGRect(x: 0.52, y: 0.22, width: 0.26, height: 0.56), anchor: nil, confidence: 0.88, domain: .human)
