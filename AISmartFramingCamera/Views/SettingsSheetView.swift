@@ -730,6 +730,15 @@ struct PhotoCaptureSettingsSection: View {
                 dividerLine
 
                 SettingsToggleRow(
+                    title: "Quét mã QR thông minh",
+                    subtitle: "Tự nhận diện mọi mã QR, VietQR, Wi-Fi (kể cả mã nhỏ, thiếu sáng hoặc đảo màu)",
+                    icon: "qrcode.viewfinder",
+                    isOn: $viewModel.isQRScannerEnabled
+                )
+
+                dividerLine
+
+                SettingsToggleRow(
                     title: "Thước đo âm thanh (VU)",
                     subtitle: "Hiển thị thanh đo mức tín hiệu stereo kèm biểu tượng mic khi quay video",
                     icon: "waveform",

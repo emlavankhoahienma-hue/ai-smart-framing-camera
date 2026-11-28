@@ -4,27 +4,39 @@ import CoreMotion
 import QuartzCore
 import simd
 
-/// Động cơ Thước Cân Bằng Chân Trời & Cân Phẳng 2 Trục (Virtual Horizon & Flatlay Bubble Level).
+/// Động cơ Thước Cân Bằng Chân Trời & Cân Phẳng 2 Trục chuẩn Apple Camera (60 Hz, độ chính xác < 0.55°).
 ///
-/// Tái sử dụng duy nhất `DeviceMotionService.shared` (1 `CMMotionManager` toàn app theo khuyến nghị Apple CoreMotion)
-/// thay vì tạo thêm `CMMotionManager` cạnh tranh, tự tạm dừng khi app ẩn/ngủ đông và hỗ trợ đầy đủ:
-/// - Cân bằng ngang/dọc toàn vòng 360° (Portrait 0°, Landscape ±90°, Upside-down 180°)
-/// - Cân phẳng 2 trục chụp từ trên xuống / hướng lên trời (Overhead / Flatlay khi |gz| >= 0.80)
+/// Tái sử dụng duy nhất `DeviceMotionService.shared` (1 `CMMotionManager` toàn app theo khuyến nghị Apple CoreMotion),
+/// lọc trọng lực thích ứng theo vận tốc xoay cổ tay (nhạy tức thì khi xoay, cực đầm khi giữ tĩnh),
+/// tự ẩn mượt khi nghiêng quá ±22° giống Camera gốc iPhone và hỗ trợ cân phẳng 2 trục Overhead.
 public final class HorizonLevelerService: ObservableObject {
     public static let shared = HorizonLevelerService()
 
+    public struct Evaluation: Equatable, Sendable {
+        public let rollDegrees: Double
+        public let nearestCardinalDegrees: Double
+        public let cardinalDeviationDegrees: Double
+        public let isOverhead: Bool
+        public let overheadOffsetX: Double
+        public let overheadOffsetY: Double
+        public let isLevel: Bool
+        public let isVisible: Bool
+    }
+
     @Published public private(set) var rollDegrees: Double = 0.0
-    /// Độ lệch góc so với phương ngang/dọc gần nhất (0°, ±90°, 180°), luôn nằm trong [-45°, +45°].
+    /// Độ lệch góc so với phương ngang/dọc gần nhất (0°, ±90°, 180°), nằm trong [-45°, +45°].
     @Published public private(set) var cardinalDeviationDegrees: Double = 0.0
     /// Mốc trục chính gần nhất (0°, +90°, -90°, 180°).
     @Published public private(set) var nearestCardinalDegrees: Double = 0.0
-    /// `true` khi máy hướng thẳng xuống mặt bàn (chụp flatlay/đồ ăn) hoặc thẳng lên trời.
+    /// `true` khi máy hướng thẳng xuống mặt bàn (flat-lay) hoặc thẳng lên trời.
     @Published public private(set) var isOverheadMode: Bool = false
     /// Độ lệch 2 trục chuẩn hóa [-1, +1] khi ở chế độ cân phẳng Overhead.
     @Published public private(set) var overheadOffsetX: Double = 0.0
     @Published public private(set) var overheadOffsetY: Double = 0.0
-    /// `true` khi máy đã cân bằng chuẩn trong ngưỡng trễ (hysteresis).
+    /// `true` khi máy đã cân bằng chuẩn trong ngưỡng hẹp chuẩn Apple Camera.
     @Published public private(set) var isLevel: Bool = false
+    /// `true` khi góc nghiêng nằm trong vùng cân bằng hữu ích (±20° chân trời hoặc ±24° chụp phẳng); tự ẩn khi nghiêng mạnh.
+    @Published public private(set) var isVisible: Bool = false
     @Published public private(set) var isReceivingMotion: Bool = false
 
     public var isHapticsEnabled: Bool = true
@@ -37,7 +49,10 @@ public final class HorizonLevelerService: ObservableObject {
     private var hasSeededGravity: Bool = false
     private var internalIsOverhead: Bool = false
     private var internalIsLevel: Bool = false
+    private var internalIsVisible: Bool = false
+    private var internalCardinalDegrees: Double = 0.0
     private var lastPublishTime: CFTimeInterval = 0
+    private var lastPublishedEval: Evaluation? = nil
     private var lastHapticTime: CFTimeInterval = -.infinity
     private var hasTriggeredHapticForCurrentLevel: Bool = false
 
@@ -55,7 +70,7 @@ public final class HorizonLevelerService: ObservableObject {
         stateLock.unlock()
     }
 
-    public func start(rollOffsetDegrees: Double) {
+    public func start(rollOffsetDegrees: Double = 0.0) {
         stateLock.lock()
         self.rollOffsetDegrees = rollOffsetDegrees.isFinite ? rollOffsetDegrees : 0.0
         if subscriptionID != nil {
@@ -64,6 +79,7 @@ public final class HorizonLevelerService: ObservableObject {
         }
         hasSeededGravity = false
         lastPublishTime = 0
+        lastPublishedEval = nil
         stateLock.unlock()
 
         let id = DeviceMotionService.shared.subscribe { [weak self] sample in
@@ -85,6 +101,7 @@ public final class HorizonLevelerService: ObservableObject {
         let activeID = subscriptionID
         subscriptionID = nil
         hasSeededGravity = false
+        lastPublishedEval = nil
         stateLock.unlock()
 
         if let activeID {
@@ -92,59 +109,68 @@ public final class HorizonLevelerService: ObservableObject {
         }
         DispatchQueue.main.async { [weak self] in
             self?.isReceivingMotion = false
+            self?.isVisible = false
         }
     }
 
-    /// Tính toán thuần từ vector trọng lực thiết bị (đã tách ra để kiểm thử toán học trực tiếp).
+    /// Tính toán thuần từ vector trọng lực thiết bị (độ chính xác chuẩn Apple Camera, không phụ thuộc UI).
     public static func evaluateGravity(
         _ gravity: SIMD3<Double>,
         rollOffsetDegrees: Double,
         wasOverhead: Bool,
-        wasLevel: Bool
-    ) -> (
-        rollDegrees: Double,
-        nearestCardinalDegrees: Double,
-        cardinalDeviationDegrees: Double,
-        isOverhead: Bool,
-        overheadOffsetX: Double,
-        overheadOffsetY: Double,
-        isLevel: Bool
-    ) {
+        wasLevel: Bool,
+        wasVisible: Bool = true,
+        previousCardinalDegrees: Double = 0.0
+    ) -> Evaluation {
         let len = simd_length(gravity)
         let g = (len.isFinite && len > 1e-6) ? (gravity / len) : SIMD3<Double>(0, -1, 0)
 
-        // Hysteresis chuyển đổi giữa chế độ cân chân trời và cân phẳng 2 trục (chụp flatlay / hướng trời)
+        // Hysteresis chuyển đổi giữa cân chân trời (upright/landscape) và cân phẳng 2 trục (flat-lay / overhead).
+        // Dùng ngưỡng 0.85 (~58° pitch) để tránh vùng phóng đại nhiễu atan2 khi chúc máy xuống nhẹ 35–50°.
         let absZ = abs(g.z)
-        let isOverhead = wasOverhead ? (absZ >= 0.74) : (absZ >= 0.82)
+        let isOverhead = wasOverhead ? (absZ >= 0.78) : (absZ >= 0.85)
 
-        // Trục dọc/ngang theo chiều trọng lực chiếu lên mặt phẳng màn hình (gx, gy)
+        // Góc roll quang học thực tế trên mặt phẳng cảm biến: atan2(gx, -gy).
         let rawRoll = atan2(g.x, -g.y) * 180.0 / .pi
         let calibratedRoll = wrapAngle180(rawRoll - rollOffsetDegrees)
 
-        // Mốc 0°, +90°, -90°, 180° gần nhất để hoạt động chuẩn cả khi cầm dọc lẫn xoay ngang (Landscape)
-        let nearestCardinal = (calibratedRoll / 90.0).rounded() * 90.0
+        // Chọn mốc trục chính (0°, +90°, -90°, 180°) có hysteresis ±3° quanh biên ±45° để không giật trục.
+        let prevDelta = abs(wrapAngle180(calibratedRoll - previousCardinalDegrees))
+        let nearestCardinal: Double
+        if prevDelta <= 48.0 {
+            nearestCardinal = wrapAngle180(previousCardinalDegrees)
+        } else {
+            nearestCardinal = wrapAngle180((calibratedRoll / 90.0).rounded() * 90.0)
+        }
         let deviation = wrapAngle180(calibratedRoll - nearestCardinal)
 
-        // Độ lệch phẳng 2 trục (khi cầm ngang úp xuống hoặc ngửa lên)
-        let clampedX = max(-1.0, min(1.0, g.x / 0.35))
-        let clampedY = max(-1.0, min(1.0, -g.y / 0.35))
+        // Cân phẳng 2 trục (Overhead / Flat-lay): phạm vi hiển thị mượt ±22° (sin 22° ≈ 0.375)
+        let clampedX = max(-1.0, min(1.0, g.x / 0.375))
+        let clampedY = max(-1.0, min(1.0, -g.y / 0.375))
         let tiltFromFlatDegrees = asin(min(1.0, hypot(g.x, g.y))) * 180.0 / .pi
 
+        // Ngưỡng cân bằng chính xác cao giống Apple Camera:
+        // - Chân trời: vào <= 0.55°, thoát > 0.90° (không bị lệch mắt thường)
+        // - Chụp phẳng: vào <= 0.85°, thoát > 1.30°
         let isLevel: Bool
+        let isVisible: Bool
         if isOverhead {
-            isLevel = tiltFromFlatDegrees <= (wasLevel ? 2.2 : 1.5)
+            isLevel = tiltFromFlatDegrees <= (wasLevel ? 1.30 : 0.85)
+            isVisible = tiltFromFlatDegrees <= (wasVisible ? 26.0 : 22.0)
         } else {
-            isLevel = abs(deviation) <= (wasLevel ? 1.4 : 0.9)
+            isLevel = abs(deviation) <= (wasLevel ? 0.90 : 0.55)
+            isVisible = abs(deviation) <= (wasVisible ? 22.0 : 19.0)
         }
 
-        return (
+        return Evaluation(
             rollDegrees: calibratedRoll,
-            nearestCardinalDegrees: wrapAngle180(nearestCardinal),
+            nearestCardinalDegrees: nearestCardinal,
             cardinalDeviationDegrees: deviation,
             isOverhead: isOverhead,
             overheadOffsetX: clampedX,
             overheadOffsetY: clampedY,
-            isLevel: isLevel
+            isLevel: isLevel,
+            isVisible: isVisible
         )
     }
 
@@ -162,8 +188,8 @@ public final class HorizonLevelerService: ObservableObject {
         guard qVec.x.isFinite, qVec.y.isFinite, qVec.z.isFinite, qVec.w.isFinite,
               simd_length(qVec) > 1e-9 else { return }
 
-        // Hệ tọa độ tham chiếu CoreMotion (.xArbitraryZVertical) có +Z hướng lên trời => trọng lực thế giới = (0, 0, -1).
-        // `deviceToWorld.inverse` ánh xạ vector trọng lực từ thế giới về hệ tọa độ thiết bị (gx, gy, gz).
+        // Hệ tọa độ tham chiếu CoreMotion (.xArbitraryZVertical): +Z hướng lên trời => trọng lực thế giới = (0, 0, -1).
+        // `deviceToWorld.inverse` ánh xạ từ thế giới về hệ tọa độ thiết bị (gx, gy, gz).
         let rawGravity = q.inverse.act(SIMD3<Double>(0.0, 0.0, -1.0))
         guard rawGravity.x.isFinite, rawGravity.y.isFinite, rawGravity.z.isFinite else { return }
 
@@ -175,36 +201,40 @@ public final class HorizonLevelerService: ObservableObject {
             return
         }
 
-        // Lọc thông thấp EMA nhẹ để thanh thước trượt mượt như Camera gốc iPhone, triệt tiêu rung vi mô
+        // Lọc thích ứng vận tốc: xoay tay nhanh phản hồi tức thì (alpha cao), giữ tĩnh triệt rung vi mô (alpha thấp)
         if !hasSeededGravity {
             smoothedGravity = rawGravity
             hasSeededGravity = true
         } else {
-            let alpha = 0.24
-            smoothedGravity = smoothedGravity * (1.0 - alpha) + rawGravity * alpha
+            let delta = simd_length(rawGravity - smoothedGravity)
+            let alpha = min(0.52, max(0.14, 0.14 + delta * 2.8))
+            smoothedGravity = simd_normalize(smoothedGravity * (1.0 - alpha) + rawGravity * alpha)
         }
 
-        // Giới hạn tần suất đẩy lên MainActor ở 30 Hz (~33ms) để UI mượt tuyệt đối mà không tốn CPU
-        if now - lastPublishTime < (1.0 / 30.0) {
+        // 60 Hz mượt như Camera gốc iPhone (có deadband tránh phát thừa khi máy đứng yên)
+        if now - lastPublishTime < (1.0 / 60.0) {
             stateLock.unlock()
             return
         }
-        lastPublishTime = now
 
         let result = Self.evaluateGravity(
             smoothedGravity,
             rollOffsetDegrees: rollOffsetDegrees,
             wasOverhead: internalIsOverhead,
-            wasLevel: internalIsLevel
+            wasLevel: internalIsLevel,
+            wasVisible: internalIsVisible,
+            previousCardinalDegrees: internalCardinalDegrees
         )
 
         let prevLevel = internalIsLevel
         internalIsOverhead = result.isOverhead
         internalIsLevel = result.isLevel
+        internalIsVisible = result.isVisible
+        internalCardinalDegrees = result.nearestCardinalDegrees
 
         var shouldFireHaptic = false
-        if result.isLevel && !prevLevel && !hasTriggeredHapticForCurrentLevel {
-            if now - lastHapticTime >= 1.4 {
+        if result.isLevel && result.isVisible && !prevLevel && !hasTriggeredHapticForCurrentLevel {
+            if now - lastHapticTime >= 0.85 {
                 lastHapticTime = now
                 shouldFireHaptic = true
             }
@@ -212,7 +242,27 @@ public final class HorizonLevelerService: ObservableObject {
         } else if !result.isLevel {
             hasTriggeredHapticForCurrentLevel = false
         }
+
+        let needsUIUpdate: Bool
+        if let prev = lastPublishedEval {
+            needsUIUpdate = prev.isLevel != result.isLevel
+                || prev.isVisible != result.isVisible
+                || prev.isOverhead != result.isOverhead
+                || prev.nearestCardinalDegrees != result.nearestCardinalDegrees
+                || abs(prev.cardinalDeviationDegrees - result.cardinalDeviationDegrees) >= 0.06
+                || abs(prev.overheadOffsetX - result.overheadOffsetX) >= 0.005
+                || abs(prev.overheadOffsetY - result.overheadOffsetY) >= 0.005
+        } else {
+            needsUIUpdate = true
+        }
+
+        if needsUIUpdate {
+            lastPublishTime = now
+            lastPublishedEval = result
+        }
         stateLock.unlock()
+
+        guard needsUIUpdate || shouldFireHaptic else { return }
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -223,6 +273,7 @@ public final class HorizonLevelerService: ObservableObject {
             self.overheadOffsetX = result.overheadOffsetX
             self.overheadOffsetY = result.overheadOffsetY
             self.isLevel = result.isLevel
+            self.isVisible = result.isVisible
             if !self.isReceivingMotion {
                 self.isReceivingMotion = true
             }

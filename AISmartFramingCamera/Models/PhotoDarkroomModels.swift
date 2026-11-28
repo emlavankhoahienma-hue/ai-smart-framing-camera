@@ -1602,3 +1602,366 @@ public struct VideoPreviewMetadata: Equatable, Sendable {
         return String(format: "%.2f:1", r)
     }
 }
+
+// MARK: - Smart QR Code Payload Models & Parser (Pure Foundation — Unit Tested on CI)
+public enum QRCodePayloadKind: Equatable, Sendable {
+    case webURL(urlString: String, displayHostPath: String)
+    case deepLink(urlString: String, schemeLabel: String)
+    case wifi(ssid: String, password: String, security: String, isHidden: Bool)
+    case vietQR(amountText: String?, noteText: String?, rawPayload: String)
+    case contact(displayName: String, rawVCard: String)
+    case plainText(String)
+}
+
+public struct DetectedQRCode: Equatable, Sendable, Identifiable {
+    public var id: String { rawValue }
+    public let rawValue: String
+    public let kind: QRCodePayloadKind
+    /// Normalized top-left coordinates [0, 1] matching camera viewfinder buffer space.
+    public let normalizedBoundingBox: CGRect
+    public let symbologyLabel: String
+    public let timestamp: TimeInterval
+
+    public init(
+        rawValue: String,
+        kind: QRCodePayloadKind,
+        normalizedBoundingBox: CGRect,
+        symbologyLabel: String = "QR",
+        timestamp: TimeInterval = 0
+    ) {
+        self.rawValue = rawValue
+        self.kind = kind
+        self.normalizedBoundingBox = normalizedBoundingBox
+        self.symbologyLabel = symbologyLabel
+        self.timestamp = timestamp
+    }
+
+    public var pillTitle: String {
+        switch kind {
+        case .webURL(_, let displayHostPath):
+            return displayHostPath
+        case .deepLink(let urlString, let schemeLabel):
+            if urlString.lowercased().hasPrefix("tel:") {
+                let phone = String(urlString.dropFirst(4))
+                return "Gọi \(phone)"
+            }
+            if urlString.lowercased().hasPrefix("mailto:") {
+                let addr = String(urlString.dropFirst(7)).components(separatedBy: "?").first ?? ""
+                return addr.isEmpty ? "Gửi Email" : addr
+            }
+            return schemeLabel
+        case .wifi(let ssid, _, _, _):
+            return ssid.isEmpty ? "Mạng Wi-Fi" : "Wi-Fi · \(ssid)"
+        case .vietQR(let amountText, _, _):
+            if let amountText, !amountText.isEmpty {
+                return "VietQR · \(amountText)"
+            }
+            return "VietQR · Chuyển khoản"
+        case .contact(let displayName, _):
+            return displayName.isEmpty ? "Danh bạ vCard" : "Liên hệ · \(displayName)"
+        case .plainText(let text):
+            let compact = text
+                .replacingOccurrences(of: "\r\n", with: " ")
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return compact.isEmpty ? "Mã QR" : compact
+        }
+    }
+
+    public var categoryLabel: String {
+        switch kind {
+        case .webURL: return "Liên kết Web"
+        case .deepLink(_, let schemeLabel): return schemeLabel
+        case .wifi: return "Wi-Fi"
+        case .vietQR: return "VietQR / Ngân hàng"
+        case .contact: return "Danh bạ"
+        case .plainText: return "Nội dung QR"
+        }
+    }
+
+    public var iconName: String {
+        switch kind {
+        case .webURL: return "safari"
+        case .deepLink(let urlString, _):
+            let lower = urlString.lowercased()
+            if lower.hasPrefix("tel:") { return "phone.fill" }
+            if lower.hasPrefix("mailto:") { return "envelope.fill" }
+            if lower.hasPrefix("sms:") || lower.hasPrefix("smsto:") { return "message.fill" }
+            return "arrow.up.forward.app"
+        case .wifi: return "wifi"
+        case .vietQR: return "qrcode"
+        case .contact: return "person.crop.circle"
+        case .plainText: return "doc.text"
+        }
+    }
+
+    public var openableURL: URL? {
+        switch kind {
+        case .webURL(let urlString, _):
+            return URL(string: urlString)
+        case .deepLink(let urlString, _):
+            return URL(string: urlString)
+        case .wifi, .vietQR, .contact, .plainText:
+            return nil
+        }
+    }
+
+    public var copyableText: String {
+        switch kind {
+        case .webURL(let urlString, _): return urlString
+        case .deepLink(let urlString, _): return urlString
+        case .wifi(let ssid, let password, _, _): return password.isEmpty ? ssid : password
+        case .vietQR(_, _, let raw): return raw
+        case .contact(_, let raw): return raw
+        case .plainText(let text): return text
+        }
+    }
+
+    public var copySuccessMessage: String {
+        switch kind {
+        case .webURL, .deepLink: return "Đã sao chép liên kết"
+        case .wifi(_, let password, _, _): return password.isEmpty ? "Đã sao chép tên Wi-Fi" : "Đã sao chép mật khẩu Wi-Fi"
+        case .vietQR: return "Đã sao chép chuỗi VietQR"
+        case .contact: return "Đã sao chép danh bạ"
+        case .plainText: return "Đã sao chép nội dung QR"
+        }
+    }
+}
+
+public enum QRCodePayloadParser {
+    public static func parse(_ rawInput: String) -> QRCodePayloadKind {
+        let trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .plainText("") }
+
+        // 1. Wi-Fi QR: WIFI:T:WPA;S:MyNetwork;P:Secret;H:false;;
+        if trimmed.uppercased().hasPrefix("WIFI:") {
+            let fields = parseWiFiFields(String(trimmed.dropFirst(5)))
+            let ssid = fields["S"] ?? ""
+            let password = fields["P"] ?? ""
+            let security = fields["T"] ?? "NOPASS"
+            let hidden = (fields["H"]?.lowercased() == "true")
+            return .wifi(ssid: ssid, password: password, security: security, isHidden: hidden)
+        }
+
+        // 2. VietQR / EMVCo Banking QR (starts with 000201 and carries NAPAS AID A000000727 or VietQR TLV structure)
+        if isEMVCoVietQR(trimmed) {
+            let tlv = parseEMVCoTLV(trimmed)
+            let amountText = tlv["54"].flatMap { formatVNDAmount($0) }
+            var noteText: String? = nil
+            if let additional = tlv["62"] {
+                let sub = parseEMVCoTLV(additional)
+                if let purpose = sub["08"], !purpose.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    noteText = purpose.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+            return .vietQR(amountText: amountText, noteText: noteText, rawPayload: trimmed)
+        }
+
+        // 3. vCard Contact
+        if trimmed.uppercased().hasPrefix("BEGIN:VCARD") {
+            let displayName = extractVCardName(trimmed)
+            return .contact(displayName: displayName, rawVCard: trimmed)
+        }
+
+        // 4. Web URL (explicit http/https)
+        let lower = trimmed.lowercased()
+        if (lower.hasPrefix("https://") || lower.hasPrefix("http://")),
+           let url = URL(string: trimmed),
+           let host = url.host, !host.isEmpty {
+            return .webURL(urlString: trimmed, displayHostPath: conciseHostPath(for: url))
+        }
+
+        // 5. Known actionable deep link / tel / mailto / sms schemes
+        if let colonIndex = trimmed.firstIndex(of: ":") {
+            let scheme = String(trimmed[..<colonIndex]).lowercased()
+            let allowedSchemes: [String: String] = [
+                "tel": "Gọi điện",
+                "mailto": "Email",
+                "sms": "Tin nhắn",
+                "smsto": "Tin nhắn",
+                "facetime": "FaceTime",
+                "zalo": "Mở Zalo",
+                "momo": "Mở MoMo",
+                "fb": "Mở Facebook",
+                "instagram": "Mở Instagram",
+                "tiktok": "Mở TikTok",
+                "youtube": "Mở YouTube",
+                "maps": "Mở Bản đồ"
+            ]
+            if let label = allowedSchemes[scheme] {
+                let normalizedURLString: String
+                if scheme == "smsto" {
+                    let rest = String(trimmed[trimmed.index(after: colonIndex)...])
+                    let phone = rest.components(separatedBy: ":").first ?? rest
+                    normalizedURLString = "sms:\(phone)"
+                } else {
+                    normalizedURLString = trimmed
+                }
+                if URL(string: normalizedURLString) != nil {
+                    return .deepLink(urlString: normalizedURLString, schemeLabel: label)
+                }
+            }
+        }
+
+        // 6. Bare domain URL (e.g., "www.apple.com/vn" or "shopee.vn/product") without whitespace
+        if !trimmed.contains(where: { $0.isWhitespace || $0.isNewline }),
+           looksLikeBareDomain(trimmed),
+           let url = URL(string: "https://\(trimmed)"),
+           let host = url.host, !host.isEmpty {
+            return .webURL(urlString: url.absoluteString, displayHostPath: conciseHostPath(for: url))
+        }
+
+        return .plainText(trimmed)
+    }
+
+    /// Projects a Vision normalized bottom-left bounding box back to full-frame top-left normalized [0, 1] coordinates.
+    public static func visionRectToFullFrameTopLeft(
+        _ visionRect: CGRect,
+        subCropTopLeft: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+    ) -> CGRect {
+        let localTopLeft = CGRect(
+            x: visionRect.minX,
+            y: 1.0 - visionRect.maxY,
+            width: visionRect.width,
+            height: visionRect.height
+        )
+        let x = subCropTopLeft.minX + localTopLeft.minX * subCropTopLeft.width
+        let y = subCropTopLeft.minY + localTopLeft.minY * subCropTopLeft.height
+        let w = localTopLeft.width * subCropTopLeft.width
+        let h = localTopLeft.height * subCropTopLeft.height
+        let clampedX = max(0.0, min(1.0, x))
+        let clampedY = max(0.0, min(1.0, y))
+        let clampedW = max(0.0, min(1.0 - clampedX, w))
+        let clampedH = max(0.0, min(1.0 - clampedY, h))
+        return CGRect(x: clampedX, y: clampedY, width: clampedW, height: clampedH)
+    }
+
+    private static func conciseHostPath(for url: URL) -> String {
+        var host = url.host ?? url.absoluteString
+        if host.lowercased().hasPrefix("www.") {
+            host = String(host.dropFirst(4))
+        }
+        let path = url.path
+        if path.isEmpty || path == "/" {
+            return host
+        }
+        let combined = "\(host)\(path)"
+        if combined.count > 44 {
+            return String(combined.prefix(43)) + "…"
+        }
+        return combined
+    }
+
+    private static func looksLikeBareDomain(_ text: String) -> Bool {
+        guard text.contains("."), !text.hasPrefix("."), !text.hasSuffix(".") else { return false }
+        let hostPart = text.split(separator: "/", maxSplits: 1).first.map(String.init) ?? text
+        let labels = hostPart.split(separator: ".")
+        guard labels.count >= 2, let tld = labels.last else { return false }
+        let tldStr = String(tld).lowercased()
+        guard tldStr.count >= 2 && tldStr.count <= 12 && tldStr.allSatisfy({ $0.isASCII && $0.isLetter }) else {
+            return false
+        }
+        let commonTLDs: Set<String> = [
+            "com", "vn", "net", "org", "io", "co", "app", "dev", "ai", "edu", "gov",
+            "info", "me", "tv", "gg", "ly", "be", "to", "shop", "store", "site", "online", "xyz", "page"
+        ]
+        return commonTLDs.contains(tldStr) || hostPart.lowercased().hasPrefix("www.")
+    }
+
+    private static func parseWiFiFields(_ body: String) -> [String: String] {
+        var result: [String: String] = [:]
+        var key = ""
+        var value = ""
+        var readingKey = true
+        var escaping = false
+
+        for ch in body {
+            if escaping {
+                if readingKey { key.append(ch) } else { value.append(ch) }
+                escaping = false
+                continue
+            }
+            if ch == "\\" {
+                escaping = true
+                continue
+            }
+            if readingKey && ch == ":" {
+                readingKey = false
+                continue
+            }
+            if !readingKey && ch == ";" {
+                let k = key.trimmingCharacters(in: .whitespaces).uppercased()
+                if !k.isEmpty { result[k] = value }
+                key = ""
+                value = ""
+                readingKey = true
+                continue
+            }
+            if readingKey { key.append(ch) } else { value.append(ch) }
+        }
+        let trailingKey = key.trimmingCharacters(in: .whitespaces).uppercased()
+        if !trailingKey.isEmpty && !readingKey {
+            result[trailingKey] = value
+        }
+        return result
+    }
+
+    private static func isEMVCoVietQR(_ text: String) -> Bool {
+        guard text.hasPrefix("000201"), text.count >= 36 else { return false }
+        let upper = text.uppercased()
+        return upper.contains("A000000727") || upper.contains("QRIBFTTA") || upper.contains("QRIBFTTC") || upper.contains("5802VN")
+    }
+
+    private static func parseEMVCoTLV(_ text: String) -> [String: String] {
+        var out: [String: String] = [:]
+        let chars = Array(text)
+        var i = 0
+        while i + 4 <= chars.count {
+            let tag = String(chars[i..<(i + 2)])
+            let lenStr = String(chars[(i + 2)..<(i + 4)])
+            guard let len = Int(lenStr), len >= 0, i + 4 + len <= chars.count else { break }
+            let val = String(chars[(i + 4)..<(i + 4 + len)])
+            out[tag] = val
+            i += 4 + len
+        }
+        return out
+    }
+
+    private static func formatVNDAmount(_ rawAmount: String) -> String? {
+        let cleaned = rawAmount.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let numeric = Double(cleaned), numeric.isFinite, numeric > 0 else { return nil }
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.groupingSeparator = "."
+        formatter.maximumFractionDigits = 0
+        let formatted = formatter.string(from: NSNumber(value: round(numeric))) ?? cleaned
+        return "\(formatted)đ"
+    }
+
+    private static func extractVCardName(_ text: String) -> String {
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            let upper = line.uppercased()
+            if upper.hasPrefix("FN:") || upper.hasPrefix("FN;") {
+                if let colon = line.firstIndex(of: ":") {
+                    let name = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+                    if !name.isEmpty { return name }
+                }
+            }
+        }
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            let upper = line.uppercased()
+            if upper.hasPrefix("N:") || upper.hasPrefix("N;") {
+                if let colon = line.firstIndex(of: ":") {
+                    let parts = String(line[line.index(after: colon)...])
+                        .split(separator: ";")
+                        .map { $0.trimmingCharacters(in: .whitespaces) }
+                        .filter { !$0.isEmpty }
+                    if !parts.isEmpty { return parts.joined(separator: " ") }
+                }
+            }
+        }
+        return ""
+    }
+}

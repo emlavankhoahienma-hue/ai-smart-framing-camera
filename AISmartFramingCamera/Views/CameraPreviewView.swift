@@ -26,7 +26,9 @@ public struct CameraPreviewView: UIViewRepresentable {
             viewModel.previewContainerView = uiView
         }
         let isDual = viewModel.isDualCameraActive || viewModel.cameraService.isDualCameraActive
-        let dualLayer = isDual ? viewModel.cameraService.multiCamPrimaryPreviewLayer : nil
+        let dualLayer: AVCaptureVideoPreviewLayer? = isDual
+            ? (viewModel.isDualCameraSwapped ? viewModel.cameraService.secondaryPreviewLayer : viewModel.cameraService.multiCamPrimaryPreviewLayer)
+            : nil
         uiView.syncDualCameraPrimaryLayer(
             dualLayer,
             isDualActive: isDual,
@@ -607,7 +609,8 @@ public class PreviewContainerView: UIView {
     ) {
         if lastSyncedDualActive == isDualActive,
            lastSyncedDualLayer === dualLayer,
-           lastSyncedSingleSession === singleSession {
+           lastSyncedSingleSession === singleSession,
+           (!isDualActive || dualLayer?.superlayer === dualPrimaryContainerView.layer) {
             return
         }
         lastSyncedDualActive = isDualActive

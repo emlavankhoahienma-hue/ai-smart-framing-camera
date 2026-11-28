@@ -45,6 +45,26 @@ public struct ARFramingOverlayView: View {
                     }
                 }
 
+                // 2b. Subtle Apple-Style Corner Brackets Framing Detected QR Code
+                if let qr = viewModel.detectedQRCode,
+                   !viewModel.isAISessionActive,
+                   !viewModel.hasActiveTargetPoint,
+                   !qr.normalizedBoundingBox.isEmpty {
+                    let qrRect = viewModel.convertMetadataRectToLayerRect(qr.normalizedBoundingBox, in: size)
+                    let clampedW = max(36, min(size.width * 0.92, qrRect.width + 10))
+                    let clampedH = max(36, min(size.height * 0.92, qrRect.height + 10))
+                    CornerBracketsShape(bracketLength: min(18, min(clampedW, clampedH) * 0.28))
+                        .stroke(
+                            AlignTheme.studioAccent.opacity(0.92),
+                            style: StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round)
+                        )
+                        .frame(width: clampedW, height: clampedH)
+                        .position(x: qrRect.midX, y: qrRect.midY)
+                        .shadow(color: Color.black.opacity(0.45), radius: 2, y: 0.5)
+                        .allowsHitTesting(false)
+                        .animation(.spring(response: 0.24, dampingFraction: 0.86), value: qrRect)
+                }
+
                 if case .analyzing = viewModel.aiSessionState {
                     ScanRadarWaveSweepView(size: size, topInset: topChromeInset, bottomInset: 120)
                         .allowsHitTesting(false)
@@ -849,80 +869,88 @@ struct FocusSquareWithSunSlider: View {
     }
 }
 
-// MARK: - Virtual Horizon & Overhead Dual-Axis Leveler (Thước Cân Bằng Tối Giản)
+// MARK: - Apple Camera Style Virtual Horizon & Overhead Crosshair Leveler (Razor-Sharp Hairline, Zero Border)
 struct HorizonLevelerView: View {
     @ObservedObject var leveler: HorizonLevelerService
+
+    /// Exact Apple Camera Level Yellow (#FFD60A) when snapped dead-level
+    private let levelSnapYellow = Color(red: 1.0, green: 0.84, blue: 0.04)
 
     var body: some View {
         ZStack {
             if leveler.isOverheadMode {
-                overheadBubbleLevel
-                    .transition(.scale(scale: 0.90).combined(with: .opacity))
+                overheadCrosshairLevel
             } else {
-                horizonBarLevel
-                    .transition(.opacity)
+                appleHorizonLineLevel
             }
         }
-        .animation(.easeInOut(duration: 0.16), value: leveler.isOverheadMode)
-        .animation(.easeInOut(duration: 0.14), value: leveler.isLevel)
+        .opacity(leveler.isReceivingMotion && leveler.isVisible ? 1.0 : 0.0)
+        .animation(.easeOut(duration: 0.20), value: leveler.isVisible)
+        .animation(.easeInOut(duration: 0.14), value: leveler.isOverheadMode)
+        .animation(.easeOut(duration: 0.12), value: leveler.isLevel)
     }
 
-    // MARK: - Thanh cân bằng trắng tối giản 360° (không hiển thị số độ)
-    private var horizonBarLevel: some View {
-        let deviation = leveler.cardinalDeviationDegrees
+    // MARK: - Apple Camera Broken Hairline -> Single Continuous Yellow Line When Level (Zero Border, Zero Capsule)
+    private var appleHorizonLineLevel: some View {
         let cardinalRotation = -leveler.nearestCardinalDegrees
-        let barHeight: CGFloat = leveler.isLevel ? 2.0 : 1.5
+        let deviation = leveler.cardinalDeviationDegrees
 
         return ZStack {
-            // Hai vạch chuẩn trắng cố định trái/phải
-            HStack(spacing: 84) {
-                Capsule()
-                    .fill(Color.white.opacity(leveler.isLevel ? 1.0 : 0.72))
-                    .frame(width: 16, height: barHeight)
-                    .shadow(color: Color.black.opacity(0.65), radius: 2, y: 0.5)
+            if leveler.isLevel {
+                // Hợp nhất thành 1 đường thẳng sắc nét liền mạch khóa đúng 0° (tuyệt đối không lệch mối nối)
+                Rectangle()
+                    .fill(levelSnapYellow)
+                    .frame(width: 112, height: 1.5)
+                    .rotationEffect(.degrees(cardinalRotation))
+            } else {
+                // Hai vạch ngắn cố định hai bên + vạch giữa xoay theo đường chân trời thật (không bo góc, không viền)
+                HStack(spacing: 84) {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.84))
+                        .frame(width: 14, height: 1.2)
 
-                Capsule()
-                    .fill(Color.white.opacity(leveler.isLevel ? 1.0 : 0.72))
-                    .frame(width: 16, height: barHeight)
-                    .shadow(color: Color.black.opacity(0.65), radius: 2, y: 0.5)
+                    Rectangle()
+                        .fill(Color.white.opacity(0.84))
+                        .frame(width: 14, height: 1.2)
+                }
+                .rotationEffect(.degrees(cardinalRotation))
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.96))
+                    .frame(width: 72, height: 1.2)
+                    .rotationEffect(.degrees(cardinalRotation - deviation))
             }
-            .rotationEffect(.degrees(cardinalRotation))
-
-            // Thanh cân bằng trắng động xoay thực theo trọng lực (liền mạch khi thẳng)
-            Capsule()
-                .fill(Color.white.opacity(leveler.isLevel ? 1.0 : 0.92))
-                .frame(width: leveler.isLevel ? 84 : 76, height: barHeight)
-                .shadow(color: Color.black.opacity(0.70), radius: leveler.isLevel ? 2.5 : 2.0, y: 0.5)
-                .rotationEffect(.degrees(cardinalRotation - deviation))
         }
+        .shadow(color: Color.black.opacity(0.35), radius: 0.6, y: 0.3)
     }
 
-    // MARK: - Chế độ cân phẳng 2 trục chụp từ trên xuống (Flatlay / Đồ ăn / Tài liệu / Bầu trời)
-    private var overheadBubbleLevel: some View {
-        let maxShift: CGFloat = 28.0
+    // MARK: - Apple Camera Twin Crosshair Overhead Level (+ trắng cố định & + vàng di động, hợp nhất khi phẳng)
+    private var overheadCrosshairLevel: some View {
+        let maxShift: CGFloat = 26.0
         let dx = CGFloat(leveler.overheadOffsetX) * maxShift
         let dy = CGFloat(leveler.overheadOffsetY) * maxShift
 
         return ZStack {
-            crosshairMark(color: Color.white.opacity(leveler.isLevel ? 1.0 : 0.58), size: 18, thickness: leveler.isLevel ? 1.8 : 1.4)
-
-            if !leveler.isLevel {
-                crosshairMark(color: Color.white.opacity(0.95), size: 16, thickness: 1.6)
+            if leveler.isLevel {
+                sharpCrosshair(color: levelSnapYellow, size: 20, thickness: 1.5)
+            } else {
+                sharpCrosshair(color: Color.white.opacity(0.82), size: 18, thickness: 1.2)
+                sharpCrosshair(color: levelSnapYellow.opacity(0.95), size: 18, thickness: 1.2)
                     .offset(x: dx, y: dy)
             }
         }
+        .shadow(color: Color.black.opacity(0.35), radius: 0.6, y: 0.3)
     }
 
-    private func crosshairMark(color: Color, size: CGFloat, thickness: CGFloat) -> some View {
+    private func sharpCrosshair(color: Color, size: CGFloat, thickness: CGFloat) -> some View {
         ZStack {
-            Capsule()
+            Rectangle()
                 .fill(color)
                 .frame(width: size, height: thickness)
-            Capsule()
+            Rectangle()
                 .fill(color)
                 .frame(width: thickness, height: size)
         }
-        .shadow(color: Color.black.opacity(0.70), radius: 2, y: 0.5)
     }
 }
 

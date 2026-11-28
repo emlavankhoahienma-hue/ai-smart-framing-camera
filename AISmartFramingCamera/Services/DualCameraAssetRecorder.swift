@@ -18,11 +18,26 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
     public static let shared = DualCameraAssetRecorder()
 
     private let recordQueue = DispatchQueue(label: "com.alignai.camera.dualRecordQueue", qos: .userInitiated)
-    private let ciContext = CIContext(options: [
-        .useSoftwareRenderer: false,
-        .priorityRequestLow: false,
-        .cacheIntermediates: false
-    ])
+    private lazy var ciContext: CIContext = {
+        let options: [CIContextOption: Any] = [
+            .useSoftwareRenderer: false,
+            .priorityRequestLow: false,
+            .cacheIntermediates: false
+        ]
+        if let mtlDevice = UnifiedMetalColorEngine.shared.device {
+            return CIContext(mtlDevice: mtlDevice, options: options)
+        }
+        return CIContext(options: options)
+    }()
+
+    private struct CachedPIPMaskEntry {
+        let width: Int
+        let height: Int
+        let innerMask: CIImage?
+        let outerBorder: CIImage?
+    }
+    private static let maskCacheLock = NSLock()
+    private static var cachedPIPMask: CachedPIPMaskEntry? = nil
 
     private var assetWriter: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
@@ -39,6 +54,7 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
     private let stateLock = NSLock()
     public var pipCorner: DualCameraPIPCorner = .topTrailing
     public var pipScale: CGFloat = 1.0
+    public var isSwapped: Bool = false
 
     public var isRecording: Bool {
         stateLock.lock()
@@ -107,7 +123,8 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
                     kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
                     kCVPixelBufferWidthKey as String: width,
                     kCVPixelBufferHeightKey as String: height,
-                    kCVPixelFormatOpenGLESCompatibility as String: true
+                    kCVPixelBufferMetalCompatibilityKey as String: true,
+                    kCVPixelBufferIOSurfacePropertiesKey as String: [:]
                 ]
                 let adaptor = AVAssetWriterInputPixelBufferAdaptor(
                     assetWriterInput: vInput,
@@ -196,14 +213,25 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
             self.lastVideoPTS = pts
             let corner = self.pipCorner
             let scaleMultiplier = self.pipScale
+            let swapped = self.isSwapped
             self.stateLock.unlock()
+
+            let primaryBuffer: CVPixelBuffer
+            let overlayBuffer: CVPixelBuffer?
+            if swapped, let frontBuffer {
+                primaryBuffer = frontBuffer
+                overlayBuffer = backBuffer
+            } else {
+                primaryBuffer = backBuffer
+                overlayBuffer = frontBuffer
+            }
 
             var targetBuffer: CVPixelBuffer?
             if let pool = adaptor.pixelBufferPool ?? self.pixelBufferPool {
                 CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &targetBuffer)
             }
-            let inWidth = CVPixelBufferGetWidth(backBuffer)
-            let inHeight = CVPixelBufferGetHeight(backBuffer)
+            let inWidth = CVPixelBufferGetWidth(primaryBuffer)
+            let inHeight = CVPixelBufferGetHeight(primaryBuffer)
             guard inWidth > 0, inHeight > 0 else { return }
 
             if targetBuffer == nil {
@@ -211,7 +239,8 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
                     kCVPixelBufferPixelFormatTypeKey: Int(kCVPixelFormatType_32BGRA),
                     kCVPixelBufferWidthKey: inWidth,
                     kCVPixelBufferHeightKey: inHeight,
-                    kCVPixelFormatOpenGLESCompatibility: true
+                    kCVPixelBufferMetalCompatibilityKey: true,
+                    kCVPixelBufferIOSurfacePropertiesKey: [:]
                 ]
                 CVPixelBufferCreate(kCFAllocatorDefault, inWidth, inHeight, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &targetBuffer)
             }
@@ -220,37 +249,37 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
             let outHeight = CVPixelBufferGetHeight(outBuffer)
             guard outWidth > 0, outHeight > 0 else { return }
 
-            let rawBackCI = CIImage(cvPixelBuffer: backBuffer)
-            let bExt = rawBackCI.extent
-            let normalizedBack: CIImage
+            let rawMainCI = CIImage(cvPixelBuffer: primaryBuffer)
+            let bExt = rawMainCI.extent
+            let normalizedMain: CIImage
             if bExt.width > 0 && bExt.height > 0 && (Int(bExt.width) != outWidth || Int(bExt.height) != outHeight || bExt.minX != 0 || bExt.minY != 0) {
                 let sx = CGFloat(outWidth) / bExt.width
                 let sy = CGFloat(outHeight) / bExt.height
                 let s = max(sx, sy)
                 let ox = (CGFloat(outWidth) - bExt.width * s) / 2.0
                 let oy = (CGFloat(outHeight) - bExt.height * s) / 2.0
-                normalizedBack = rawBackCI
+                normalizedMain = rawMainCI
                     .transformed(by: CGAffineTransform(translationX: -bExt.minX, y: -bExt.minY)
                         .concatenating(CGAffineTransform(scaleX: s, y: s))
                         .concatenating(CGAffineTransform(translationX: ox, y: oy)))
                     .cropped(to: CGRect(x: 0, y: 0, width: outWidth, height: outHeight))
             } else {
-                normalizedBack = rawBackCI
+                normalizedMain = rawMainCI
             }
 
             let finalCI: CIImage
-            if let frontBuffer {
-                let frontCI = CIImage(cvPixelBuffer: frontBuffer)
+            if let overlayBuffer {
+                let pipCI = CIImage(cvPixelBuffer: overlayBuffer)
                 finalCI = Self.compositePIP(
-                    frontCI: frontCI,
-                    over: normalizedBack,
+                    frontCI: pipCI,
+                    over: normalizedMain,
                     canvasWidth: CGFloat(outWidth),
                     canvasHeight: CGFloat(outHeight),
                     corner: corner,
                     scaleMultiplier: scaleMultiplier
                 )
             } else {
-                finalCI = normalizedBack
+                finalCI = normalizedMain
             }
 
             self.ciContext.render(finalCI, to: outBuffer)
@@ -387,14 +416,10 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
                 .concatenating(CGAffineTransform(translationX: offsetX, y: offsetY)))
             .cropped(to: CGRect(x: 0, y: 0, width: pipWidth, height: pipHeight))
 
-        // Bo tròn góc PIP + viền trắng sắc nét bằng filter phần cứng GPU CIRoundedRectangleGenerator (0 cấp phát RAM CPU mỗi frame!)
-        let cornerRadius: CGFloat = max(14.0, round(pipWidth * 0.06))
-        let borderWidth: CGFloat = max(2.5, round(pipWidth * 0.012))
-        let innerRect = CGRect(x: borderWidth, y: borderWidth, width: max(1, pipWidth - borderWidth * 2), height: max(1, pipHeight - borderWidth * 2))
-        let outerRect = CGRect(x: 0, y: 0, width: pipWidth, height: pipHeight)
-
-        let innerMask = createRoundedRectMask(rect: innerRect, cornerRadius: max(8.0, cornerRadius - borderWidth))
-        let outerBorder = createRoundedRectMask(rect: outerRect, cornerRadius: cornerRadius, color: CIColor(red: 1, green: 1, blue: 1, alpha: 0.92))
+        // Bo tròn góc PIP + viền tinh tế dùng cache theo kích thước (chỉ khởi tạo 1 lần thay vì 60 filter/giây!)
+        let pipWInt = max(1, Int(pipWidth))
+        let pipHInt = max(1, Int(pipHeight))
+        let (innerMask, outerBorder) = cachedMasks(width: pipWInt, height: pipHInt)
 
         let maskedFront: CIImage
         if let mask = innerMask,
@@ -410,8 +435,54 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
         // Đặt PIP vào vị trí mong muốn trên canvas
         let positionedFront = maskedFront.transformed(by: CGAffineTransform(translationX: targetX, y: targetY))
 
-        // Lồng ghép lên trên ảnh nền camera sau
+        // Lồng ghép lên trên ảnh nền camera chính
         return positionedFront.composited(over: backCI).cropped(to: CGRect(x: 0, y: 0, width: canvasWidth, height: canvasHeight))
+    }
+
+    /// Center-crops a CIImage cleanly to `targetAspect` (width / height) anchored at (0, 0) for WYSIWYG 3:4 Dual Cam photo capture.
+    public static func cropCenterToAspect(_ image: CIImage, targetAspect: CGFloat) -> CIImage {
+        let ext = image.extent
+        guard ext.width > 1, ext.height > 1, targetAspect > 0.1 else { return image }
+        let currentAspect = ext.width / ext.height
+        let cropRect: CGRect
+        if abs(currentAspect - targetAspect) < 0.01 {
+            cropRect = ext
+        } else if currentAspect > targetAspect {
+            let newW = round(ext.height * targetAspect)
+            let dx = floor((ext.width - newW) * 0.5)
+            cropRect = CGRect(x: ext.minX + dx, y: ext.minY, width: newW, height: ext.height)
+        } else {
+            let newH = round(ext.width / targetAspect)
+            let dy = floor((ext.height - newH) * 0.5)
+            cropRect = CGRect(x: ext.minX, y: ext.minY + dy, width: ext.width, height: newH)
+        }
+        return image
+            .cropped(to: cropRect)
+            .transformed(by: CGAffineTransform(translationX: -cropRect.minX, y: -cropRect.minY))
+    }
+
+    private static func cachedMasks(width: Int, height: Int) -> (CIImage?, CIImage?) {
+        maskCacheLock.lock()
+        if let entry = cachedPIPMask, entry.width == width, entry.height == height {
+            maskCacheLock.unlock()
+            return (entry.innerMask, entry.outerBorder)
+        }
+        maskCacheLock.unlock()
+
+        let pipWidth = CGFloat(width)
+        let pipHeight = CGFloat(height)
+        let cornerRadius: CGFloat = max(14.0, round(pipWidth * 0.065))
+        let borderWidth: CGFloat = max(2.0, round(pipWidth * 0.010))
+        let innerRect = CGRect(x: borderWidth, y: borderWidth, width: max(1, pipWidth - borderWidth * 2), height: max(1, pipHeight - borderWidth * 2))
+        let outerRect = CGRect(x: 0, y: 0, width: pipWidth, height: pipHeight)
+
+        let innerMask = createRoundedRectMask(rect: innerRect, cornerRadius: max(8.0, cornerRadius - borderWidth))
+        let outerBorder = createRoundedRectMask(rect: outerRect, cornerRadius: cornerRadius, color: CIColor(red: 1, green: 1, blue: 1, alpha: 0.72))
+
+        maskCacheLock.lock()
+        cachedPIPMask = CachedPIPMaskEntry(width: width, height: height, innerMask: innerMask, outerBorder: outerBorder)
+        maskCacheLock.unlock()
+        return (innerMask, outerBorder)
     }
 
     private static func createRoundedRectMask(rect: CGRect, cornerRadius: CGFloat, color: CIColor = .white) -> CIImage? {
@@ -517,7 +588,8 @@ public final class EffectVideoAssetRecorder: @unchecked Sendable {
                     kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
                     kCVPixelBufferWidthKey as String: width,
                     kCVPixelBufferHeightKey as String: height,
-                    kCVPixelFormatOpenGLESCompatibility as String: true
+                    kCVPixelBufferMetalCompatibilityKey as String: true,
+                    kCVPixelBufferIOSurfacePropertiesKey as String: [:]
                 ]
                 let adaptor = AVAssetWriterInputPixelBufferAdaptor(
                     assetWriterInput: vInput,
@@ -624,7 +696,8 @@ public final class EffectVideoAssetRecorder: @unchecked Sendable {
                     kCVPixelBufferPixelFormatTypeKey: Int(kCVPixelFormatType_32BGRA),
                     kCVPixelBufferWidthKey: inWidth,
                     kCVPixelBufferHeightKey: inHeight,
-                    kCVPixelFormatOpenGLESCompatibility: true
+                    kCVPixelBufferMetalCompatibilityKey: true,
+                    kCVPixelBufferIOSurfacePropertiesKey: [:]
                 ]
                 CVPixelBufferCreate(kCFAllocatorDefault, inWidth, inHeight, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &targetBuffer)
             }

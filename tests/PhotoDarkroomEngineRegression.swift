@@ -445,6 +445,74 @@ struct PhotoDarkroomEngineRegression {
               VideoPreviewMetadata.formatDuration(3725) == "1:02:05",
               "VideoPreviewMetadata duration formatter guards invalid values & hours")
 
+        // 9. Smart QRCodePayloadParser & Vision Sub-Crop Back-Projection
+        let parsedWeb = QRCodePayloadParser.parse("https://www.vnexpress.net/thoi-su")
+        if case .webURL(let urlStr, let display) = parsedWeb {
+            check(urlStr == "https://www.vnexpress.net/thoi-su" && display == "vnexpress.net/thoi-su",
+                  "QRCodePayloadParser parses HTTPS web URL cleanly",
+                  detail: display)
+        } else {
+            check(false, "QRCodePayloadParser parses HTTPS web URL cleanly")
+        }
+
+        let parsedBare = QRCodePayloadParser.parse("shopee.vn/item/123")
+        if case .webURL(let urlStr, let display) = parsedBare {
+            check(urlStr == "https://shopee.vn/item/123" && display == "shopee.vn/item/123",
+                  "QRCodePayloadParser upgrades bare domain to HTTPS URL")
+        } else {
+            check(false, "QRCodePayloadParser upgrades bare domain to HTTPS URL")
+        }
+
+        let parsedWiFi = QRCodePayloadParser.parse("WIFI:T:WPA;S:Highlands Coffee;P:pass\\;123;H:false;;")
+        if case .wifi(let ssid, let pass, let sec, let hidden) = parsedWiFi {
+            let qr = DetectedQRCode(rawValue: "wifi", kind: parsedWiFi, normalizedBoundingBox: .zero)
+            check(ssid == "Highlands Coffee" && pass == "pass;123" && sec == "WPA" && !hidden &&
+                  qr.pillTitle == "Wi-Fi · Highlands Coffee" && qr.copyableText == "pass;123",
+                  "QRCodePayloadParser parses Wi-Fi QR including escaped semicolons")
+        } else {
+            check(false, "QRCodePayloadParser parses Wi-Fi QR including escaped semicolons")
+        }
+
+        let vietQRSample = "00020101021238570010A00000072701270006970422011303441972120208QRIBFTTA53037045405500005802VN62180814Coffee AlignAI6304ABCD"
+        let parsedVietQR = QRCodePayloadParser.parse(vietQRSample)
+        if case .vietQR(let amount, let note, _) = parsedVietQR {
+            let qr = DetectedQRCode(rawValue: vietQRSample, kind: parsedVietQR, normalizedBoundingBox: .zero)
+            check(amount == "50.000đ" && note == "Coffee AlignAI" && qr.pillTitle == "VietQR · 50.000đ",
+                  "QRCodePayloadParser detects EMVCo VietQR with amount and memo",
+                  detail: qr.pillTitle)
+        } else {
+            check(false, "QRCodePayloadParser detects EMVCo VietQR with amount and memo")
+        }
+
+        let parsedTel = QRCodePayloadParser.parse("tel:+84901234567")
+        let qrTel = DetectedQRCode(rawValue: "tel:+84901234567", kind: parsedTel, normalizedBoundingBox: .zero)
+        check(qrTel.openableURL != nil && qrTel.pillTitle == "Gọi +84901234567",
+              "QRCodePayloadParser handles actionable tel: deep link")
+
+        let parsedVCard = QRCodePayloadParser.parse("BEGIN:VCARD\nVERSION:3.0\nFN:Nguyen Van A\nEND:VCARD")
+        if case .contact(let name, _) = parsedVCard {
+            check(name == "Nguyen Van A", "QRCodePayloadParser extracts vCard FN contact name")
+        } else {
+            check(false, "QRCodePayloadParser extracts vCard FN contact name")
+        }
+
+        let parsedPlain = QRCodePayloadParser.parse("Mã giảm giá ALIGN2026")
+        if case .plainText(let text) = parsedPlain {
+            check(text == "Mã giảm giá ALIGN2026", "QRCodePayloadParser preserves plain text QR")
+        } else {
+            check(false, "QRCodePayloadParser preserves plain text QR")
+        }
+
+        // Vision bottom-left center box (0.25, 0.25, 0.5, 0.5) inside Pass 2 center 56% crop (inset 0.22)
+        let subProjected = QRCodePayloadParser.visionRectToFullFrameTopLeft(
+            CGRect(x: 0.25, y: 0.25, width: 0.50, height: 0.50),
+            subCropTopLeft: CGRect(x: 0.22, y: 0.22, width: 0.56, height: 0.56)
+        )
+        check(abs(subProjected.midX - 0.5) < 0.001 && abs(subProjected.midY - 0.5) < 0.001 &&
+              abs(subProjected.width - 0.28) < 0.001 && abs(subProjected.height - 0.28) < 0.001,
+              "QRCodePayloadParser back-projects sub-crop Vision box to exact full-frame top-left rect",
+              detail: String(format: "(%.2f,%.2f,%.2f,%.2f)", subProjected.minX, subProjected.minY, subProjected.width, subProjected.height))
+
         print("=== Summary: \(passedTests) passed, \(failedTests) failed ===")
         if failedTests > 0 {
             exit(1)

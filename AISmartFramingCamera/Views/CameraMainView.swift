@@ -205,8 +205,13 @@ public struct CameraMainView: View {
 
                             // Dual Concurrent Camera PIP Overlay
                             if viewModel.isDualCameraActive {
-                                DualCameraPIPOverlayView(viewModel: viewModel, containerSize: layout.viewfinderSize)
-                                    .transition(.scale(scale: 0.85).combined(with: .opacity))
+                                DualCameraPIPOverlayView(
+                                    viewModel: viewModel,
+                                    containerSize: layout.viewfinderSize,
+                                    topSafeInset: layout.viewfinderTopOverlayInset + 6,
+                                    bottomSafeInset: layout.viewfinderBottomOverlayInset + 44
+                                )
+                                .transition(.scale(scale: 0.90).combined(with: .opacity))
                             }
 
                             // 360° Horizon Lock HUD Badge (Quiet Smoked Glass)
@@ -333,23 +338,18 @@ public struct CameraMainView: View {
                                     .transition(.opacity)
                             }
                         }
-                        // Expanded Pro RGB + Luma Scope HUD / Photographic Styles 5x5 Quick Trigger (Top Trailing, ẩn ở chế độ PRO để giữ khung ngắm tinh gọn)
+                        // Expanded Pro RGB + Luma Scope HUD (chỉ khi người dùng tự chạm mở thanh Histogram) & Photographic Styles 2D Quick Trigger (gọn thoáng ở góc trên phải)
                         .overlay(alignment: .topTrailing) {
-                            let proTopOffset: CGFloat = (viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo) ? 64 : 0
+                            let proTopOffset: CGFloat = (viewModel.isProPhotoModeEnabled && !visualIsVideo) ? 64 : 0
                             let horizonOffset: CGFloat = viewModel.isHorizonLockEnabled ? 34 : 0
 
                             if !isPhotoStylePadActive && !viewModel.isPhotoboothModeActive {
-                                // Histogram card và nút Photographic Styles cùng tồn tại (xếp dọc), không còn loại trừ nhau.
                                 VStack(alignment: .trailing, spacing: 8) {
-                                    if viewModel.showHistogramInViewfinder && !viewModel.isCameraHibernating {
-                                        if viewModel.isHistogramBarExpanded {
-                                            ProHistogramExpandedHUDView(viewModel: viewModel)
-                                                .transition(.scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity))
-                                        } else {
-                                            HistogramAlertPillView(viewModel: viewModel, expandsOnTap: true)
-                                        }
+                                    if viewModel.showHistogramInViewfinder && viewModel.isHistogramBarExpanded && !viewModel.isCameraHibernating {
+                                        ProHistogramExpandedHUDView(viewModel: viewModel)
+                                            .transition(.scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity))
                                     }
-                                    if !viewModel.captureMode.isVideo &&
+                                    if !visualIsVideo &&
                                        !viewModel.isProPhotoModeEnabled &&
                                        !viewModel.isCameraHibernating &&
                                        !viewModel.isWindowedZoomActive {
@@ -359,12 +359,6 @@ public struct CameraMainView: View {
                                 }
                                 .padding(.top, layout.viewfinderTopOverlayInset + proTopOffset + horizonOffset)
                                 .padding(.trailing, 10)
-                            } else if isPhotoStylePadActive && viewModel.showHistogramInViewfinder && !viewModel.isCameraHibernating {
-                                // Khi chỉnh Tone/Color vẫn thấy cảnh báo cháy sáng / bết tối / nhiễu
-                                HistogramAlertPillView(viewModel: viewModel, expandsOnTap: false)
-                                    .allowsHitTesting(false)
-                                    .padding(.top, layout.viewfinderTopOverlayInset + 6)
-                                    .padding(.trailing, 10)
                             }
                         }
                         // Unobstructed Viewfinder Swipe Overlay khi bật Photographic Styles hoặc Photobooth Studio
@@ -413,17 +407,30 @@ public struct CameraMainView: View {
                                     .padding(.bottom, stampBottomPadding)
                             }
                         }
-                        // Bottom In-Viewfinder Smoked Glass Zoom Capsule / Pro Photo Manual Deck
+                        // Bottom In-Viewfinder Smoked Glass QR Link Pill + Zoom Capsule / Pro Photo Manual Deck
                         .overlay(alignment: .bottom) {
                             if !viewModel.isWindowedZoomActive && !isPhotoStylePadActive && !viewModel.isPhotoboothModeActive {
-                                if viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo && !viewModel.isCameraHibernating {
-                                    ProPhotoManualDeckView(viewModel: viewModel)
-                                        .padding(.bottom, max(6, layout.viewfinderBottomOverlayInset - 2))
+                                VStack(spacing: 8) {
+                                    if let qr = viewModel.detectedQRCode, !viewModel.isCameraHibernating {
+                                        QRCodeFloatingBannerPill(
+                                            qrCode: qr,
+                                            maxWidth: min(layout.viewfinderSize.width - 28, 320),
+                                            onPrimaryTap: { viewModel.handleDetectedQRCodePrimaryAction(qr) },
+                                            onCopyTap: { viewModel.copyDetectedQRCode(qr) },
+                                            onDismissTap: { viewModel.dismissCurrentQRCode() }
+                                        )
                                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                                } else {
-                                    ViewfinderZoomSelectorPill(viewModel: viewModel)
-                                        .padding(.bottom, layout.viewfinderBottomOverlayInset)
+                                    }
+
+                                    if viewModel.isProPhotoModeEnabled && !visualIsVideo && !viewModel.isCameraHibernating {
+                                        ProPhotoManualDeckView(viewModel: viewModel)
+                                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                                    } else {
+                                        ViewfinderZoomSelectorPill(viewModel: viewModel)
+                                    }
                                 }
+                                .padding(.bottom, (viewModel.isProPhotoModeEnabled && !visualIsVideo) ? max(6, layout.viewfinderBottomOverlayInset - 2) : layout.viewfinderBottomOverlayInset)
+                                .animation(.spring(response: 0.28, dampingFraction: 0.84), value: viewModel.detectedQRCode?.rawValue)
                             }
                         }
                         .position(
@@ -666,6 +673,15 @@ public struct CameraMainView: View {
         }
         .sheet(isPresented: $viewModel.isShowingMasterWatermarkConfig) {
             MasterWatermarkConfigSheet(viewModel: viewModel)
+        }
+        .sheet(item: $viewModel.qrDetailSheetTarget) { qr in
+            QRCodeDetailSheetView(
+                qrCode: qr,
+                onCopy: { viewModel.copyDetectedQRCode(qr) },
+                onOpenURL: { url in UIApplication.shared.open(url) }
+            )
+            .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
         }
         .sheet(item: $viewModel.compositionPreviewPresentation) { presentation in
             CompositionPreviewSheet(choices: viewModel.localCompositionChoices,
@@ -2083,5 +2099,249 @@ struct CameraFunctionDrawerView: View {
         }
         .ignoresSafeArea(edges: .bottom)
         .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+}
+
+// MARK: - Single Compact Floating QR Link Pill (Zero Form Deformation)
+private struct QRCodeFloatingBannerPill: View {
+    let qrCode: DetectedQRCode
+    let maxWidth: CGFloat
+    let onPrimaryTap: () -> Void
+    let onCopyTap: () -> Void
+    let onDismissTap: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button(action: onPrimaryTap) {
+                HStack(spacing: 7) {
+                    Image(systemName: qrCode.iconName)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundColor(AlignTheme.studioAccent)
+
+                    Text(qrCode.pillTitle)
+                        .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(AlignTheme.studioInkPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    if qrCode.openableURL != nil {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(AlignTheme.studioAccent)
+                    }
+                }
+                .padding(.leading, 12)
+                .padding(.trailing, 8)
+                .frame(height: 36)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Rectangle()
+                .fill(Color.white.opacity(0.14))
+                .frame(width: 0.6, height: 16)
+
+            Button(action: onCopyTap) {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundColor(AlignTheme.studioInkPrimary.opacity(0.86))
+                    .frame(width: 32, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Sao chép mã QR")
+
+            Button(action: onDismissTap) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(AlignTheme.studioInkSecondary)
+                    .frame(width: 28, height: 36)
+                    .padding(.trailing, 4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Ẩn thông báo mã QR")
+        }
+        .frame(maxWidth: max(180, maxWidth))
+        .background(StudioGlassCapsule(tintOpacity: 0.78, borderOpacity: 0.18))
+        .shadow(color: Color.black.opacity(0.45), radius: 12, y: 4)
+    }
+}
+
+// MARK: - Studio QR Detail Sheet (Wi-Fi / VietQR / Contact / Full Text)
+private struct QRCodeDetailSheetView: View {
+    let qrCode: DetectedQRCode
+    let onCopy: () -> Void
+    let onOpenURL: (URL) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle()
+                                .fill(AlignTheme.studioElevated)
+                                .frame(width: 42, height: 42)
+                                .overlay(Circle().stroke(AlignTheme.studioHairline, lineWidth: 0.7))
+                            Image(systemName: qrCode.iconName)
+                                .font(.system(size: 17, weight: .medium))
+                                .foregroundColor(AlignTheme.studioAccent)
+                        }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(qrCode.categoryLabel)
+                                .font(.system(size: 14.5, weight: .semibold, design: .rounded))
+                                .foregroundColor(AlignTheme.studioInkPrimary)
+                            Text("Chuẩn \(qrCode.symbologyLabel)")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundColor(AlignTheme.studioInkSecondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(AlignTheme.studioSurface)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(AlignTheme.studioHairlineSubtle, lineWidth: 0.7)
+                            )
+                    )
+
+                    structuredContentCard
+
+                    HStack(spacing: 10) {
+                        if let url = qrCode.openableURL {
+                            Button(action: {
+                                onOpenURL(url)
+                                dismiss()
+                            }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.up.right")
+                                        .font(.system(size: 13, weight: .bold))
+                                    Text("Mở liên kết")
+                                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                }
+                                .foregroundColor(.black)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 44)
+                                .background(Capsule().fill(AlignTheme.studioInkPrimary))
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        Button(action: {
+                            onCopy()
+                            dismiss()
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text(primaryCopyLabel)
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            }
+                            .foregroundColor(qrCode.openableURL == nil ? .black : AlignTheme.studioInkPrimary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 44)
+                            .background(
+                                Capsule()
+                                    .fill(qrCode.openableURL == nil ? AlignTheme.studioInkPrimary : AlignTheme.studioElevated)
+                                    .overlay(
+                                        Capsule().stroke(qrCode.openableURL == nil ? Color.clear : AlignTheme.studioHairline, lineWidth: 0.7)
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(16)
+            }
+            .background(AlignTheme.studioCanvas.ignoresSafeArea())
+            .navigationTitle("Nội dung mã QR")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Xong") { dismiss() }
+                        .foregroundColor(.white)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var primaryCopyLabel: String {
+        switch qrCode.kind {
+        case .wifi(_, let password, _, _):
+            return password.isEmpty ? "Sao chép tên Wi-Fi" : "Sao chép mật khẩu"
+        case .vietQR:
+            return "Sao chép mã VietQR"
+        default:
+            return "Sao chép"
+        }
+    }
+
+    @ViewBuilder
+    private var structuredContentCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            switch qrCode.kind {
+            case .wifi(let ssid, let password, let security, _):
+                detailRow(label: "Tên mạng (SSID)", value: ssid.isEmpty ? "—" : ssid)
+                Divider().background(AlignTheme.studioHairlineSubtle)
+                detailRow(label: "Mật khẩu", value: password.isEmpty ? "Không có mật khẩu" : password)
+                Divider().background(AlignTheme.studioHairlineSubtle)
+                detailRow(label: "Bảo mật", value: security)
+            case .vietQR(let amountText, let noteText, let raw):
+                if let amountText {
+                    detailRow(label: "Số tiền", value: amountText)
+                    Divider().background(AlignTheme.studioHairlineSubtle)
+                }
+                if let noteText {
+                    detailRow(label: "Nội dung", value: noteText)
+                    Divider().background(AlignTheme.studioHairlineSubtle)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Chuỗi EMVCo / VietQR")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
+                    Text(raw)
+                        .font(.system(size: 11.5, weight: .regular, design: .monospaced))
+                        .foregroundColor(AlignTheme.studioInkPrimary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            default:
+                Text(qrCode.rawValue)
+                    .font(.system(size: 13, weight: .regular, design: .monospaced))
+                    .foregroundColor(AlignTheme.studioInkPrimary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(AlignTheme.studioSurface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(AlignTheme.studioHairlineSubtle, lineWidth: 0.7)
+                )
+        )
+    }
+
+    private func detailRow(label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundColor(AlignTheme.studioInkSecondary)
+            Spacer(minLength: 10)
+            Text(value)
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundColor(AlignTheme.studioInkPrimary)
+                .textSelection(.enabled)
+                .multilineTextAlignment(.trailing)
+        }
     }
 }

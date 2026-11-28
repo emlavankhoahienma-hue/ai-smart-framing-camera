@@ -183,6 +183,8 @@ public final class CameraService: NSObject {
     private var latestFrontMultiCamPixelBuffer: CVPixelBuffer?
     public var currentDualCameraPIPCorner: DualCameraPIPCorner = .topTrailing
     public var currentDualCameraPIPScale: CGFloat = 1.0
+    public var isDualCameraSwapped: Bool = false
+    private var isMultiCamAudioAttached: Bool = false
     private var secondaryDeviceInput: AVCaptureDeviceInput?
     private var secondaryCameraDevice: AVCaptureDevice?
     private var savedSingleSessionCamera: AVCaptureDevice?
@@ -1385,10 +1387,14 @@ public final class CameraService: NSObject {
 
             // 1. Ngắt KVO và giải phóng hoàn toàn AVCaptureDeviceInput của Virtual Triple/Dual Camera
             // khỏi captureSession đơn để nhả hoàn toàn quyền độc chiếm cảm biến góc rộng vật lý.
+            self.zoomStateLock.withLock {
+                _ = self.zoomController.beginCameraReconfiguration(reason: "startDualCamera", at: CACurrentMediaTime())
+            }
             self.zoomObservation?.invalidate()
             self.zoomObservation = nil
             self.constituentObservation?.invalidate()
             self.constituentObservation = nil
+            self.isMultiCamAudioAttached = false
 
             if self.captureSession.isRunning {
                 self.captureSession.stopRunning()
@@ -1504,6 +1510,9 @@ public final class CameraService: NSObject {
                     if dataConn.isVideoRotationAngleSupported(90) {
                         dataConn.videoRotationAngle = 90
                     }
+                    if dataConn.isVideoStabilizationSupported {
+                        dataConn.preferredVideoStabilizationMode = .standard
+                    }
                 }
             }
 
@@ -1595,31 +1604,40 @@ public final class CameraService: NSObject {
                 }
             }
 
-            // 8. Kết nối Audio Input và Audio Output vào MultiCamSession để quay video có âm thanh
-            self.audioDataOutput.setSampleBufferDelegate(self, queue: self.audioDataQueue)
-            if let audioDev = AVCaptureDevice.default(for: .audio),
-               let aInput = try? AVCaptureDeviceInput(device: audioDev),
-               multiSession.canAddInput(aInput) {
-                multiSession.addInputWithNoConnections(aInput)
-                if multiSession.canAddOutput(self.audioDataOutput) {
-                    multiSession.addOutputWithNoConnections(self.audioDataOutput)
-                    if let aPort = aInput.ports.first(where: { $0.mediaType == .audio }) {
-                        let aConn = AVCaptureConnection(inputPorts: [aPort], output: self.audioDataOutput)
-                        if multiSession.canAddConnection(aConn) {
-                            multiSession.addConnection(aConn)
-                        }
-                    }
-                }
+            // 8. Chỉ gắn Audio Input/Output cho MultiCam khi ở chế độ Video (giảm tải phần cứng và không bật chấm cam micro khi chụp ảnh!)
+            if self.currentCaptureMode.isVideo {
+                self.attachAudioToMultiCamWithinOpenConfig(multiSession)
             }
 
             multiSession.commitConfiguration()
 
+            // Tự động hạ về 720p binned + tắt chống rung nếu phần cứng vượt ngân sách (hỗ trợ mượt trên iPhone XS/11/máy ấm)
+            if multiSession.hardwareCost > 1.0 || multiSession.systemPressureCost > 1.0 {
+                CameraLogger.warning("MultiCam vượt ngân sách phần cứng ban đầu (hw: \(multiSession.hardwareCost), pressure: \(multiSession.systemPressureCost)) -> hạ sang 720p ổn định", category: .capture)
+                multiSession.beginConfiguration()
+                if let fallback720 = Self.selectStableMultiCamFormat(for: primaryCamera, prefer720p: true) {
+                    if let _ = try? primaryCamera.lockForConfiguration() {
+                        primaryCamera.activeFormat = fallback720
+                        let fps30 = CMTime(value: 1, timescale: 30)
+                        if fallback720.videoSupportedFrameRateRanges.contains(where: { $0.minFrameRate <= 30 && $0.maxFrameRate >= 30 }) {
+                            primaryCamera.activeVideoMinFrameDuration = fps30
+                            primaryCamera.activeVideoMaxFrameDuration = fps30
+                        }
+                        primaryCamera.unlockForConfiguration()
+                    }
+                }
+                if let dataConn = self.multiCamVideoDataOutput.connection(with: .video), dataConn.isVideoStabilizationSupported {
+                    dataConn.preferredVideoStabilizationMode = .off
+                }
+                multiSession.commitConfiguration()
+            }
+
             if self.currentCaptureMode.isVideo {
-                self.configureAudioSessionForStereoCapture()
+                self.configureAudioSessionForStereoCaptureAsync(cameraPosition: .back)
             }
 
             guard multiSession.hardwareCost <= 1.0, multiSession.systemPressureCost <= 1.0 else {
-                CameraLogger.warning("MultiCam vượt ngân sách phần cứng (hw: \(multiSession.hardwareCost), pressure: \(multiSession.systemPressureCost))", category: .capture)
+                CameraLogger.warning("MultiCam vẫn vượt ngân sách sau khi hạ 720p (hw: \(multiSession.hardwareCost), pressure: \(multiSession.systemPressureCost))", category: .capture)
                 self.abortDualSetup(multiSession)
                 DispatchQueue.main.async { completion(false) }
                 return
@@ -1648,10 +1666,49 @@ public final class CameraService: NSObject {
         }
     }
 
+    private func attachAudioToMultiCamWithinOpenConfig(_ multiSession: AVCaptureMultiCamSession) {
+        guard !isMultiCamAudioAttached, !isAudioInputDisabledForCall else { return }
+        audioDataOutput.setSampleBufferDelegate(self, queue: audioDataQueue)
+        if let audioDev = AVCaptureDevice.default(for: .audio),
+           let aInput = try? AVCaptureDeviceInput(device: audioDev),
+           multiSession.canAddInput(aInput) {
+            multiSession.addInputWithNoConnections(aInput)
+            if !multiSession.outputs.contains(audioDataOutput), multiSession.canAddOutput(audioDataOutput) {
+                multiSession.addOutputWithNoConnections(audioDataOutput)
+            }
+            if let aPort = aInput.ports.first(where: { $0.mediaType == .audio }) {
+                let aConn = AVCaptureConnection(inputPorts: [aPort], output: audioDataOutput)
+                if multiSession.canAddConnection(aConn) {
+                    multiSession.addConnection(aConn)
+                    isMultiCamAudioAttached = true
+                }
+            }
+        }
+    }
+
+    private func detachAudioFromMultiCam(_ multiSession: AVCaptureMultiCamSession) {
+        guard isMultiCamAudioAttached else { return }
+        multiSession.beginConfiguration()
+        for conn in multiSession.connections where conn.output === audioDataOutput {
+            multiSession.removeConnection(conn)
+        }
+        if multiSession.outputs.contains(audioDataOutput) {
+            multiSession.removeOutput(audioDataOutput)
+        }
+        for input in multiSession.inputs {
+            if let devInput = input as? AVCaptureDeviceInput, devInput.device.hasMediaType(.audio) {
+                multiSession.removeInput(devInput)
+            }
+        }
+        multiSession.commitConfiguration()
+        audioDataOutput.setSampleBufferDelegate(nil, queue: nil)
+        isMultiCamAudioAttached = false
+    }
+
     public func currentMultiCamPixelBuffer() -> CVPixelBuffer? {
         guard isDualCameraActive else { return nil }
         multiCamFrameLock.lock()
-        let pb = latestMultiCamPixelBuffer
+        let pb = isDualCameraSwapped ? (latestFrontMultiCamPixelBuffer ?? latestMultiCamPixelBuffer) : latestMultiCamPixelBuffer
         multiCamFrameLock.unlock()
         return pb
     }
@@ -1708,6 +1765,9 @@ public final class CameraService: NSObject {
             self.secondaryDeviceInput = nil
             self.secondaryCameraDevice = nil
             self.isDualCameraActive = false
+            self.isDualCameraSwapped = false
+            self.isMultiCamAudioAttached = false
+            DualCameraAssetRecorder.shared.isSwapped = false
 
             self.reattachSingleSessionInput()
             self.savedPrimaryActiveFormat = nil
@@ -1797,6 +1857,8 @@ public final class CameraService: NSObject {
         let format: PhotoSaveFormat = isHEIF ? .heif : .jpeg
         let corner = currentDualCameraPIPCorner
         let pipScale = currentDualCameraPIPScale
+        let swapped = isDualCameraSwapped
+        let isPhotoAspect3x4 = !currentCaptureMode.isVideo
 
         DispatchQueue.main.async {
             AudioServicesPlaySystemSound(1108) // Shutter click
@@ -1805,8 +1867,20 @@ public final class CameraService: NSObject {
 
         photoProcessingQueue.async { [weak self] in
             guard let self else { return }
-            let backCI = CIImage(cvPixelBuffer: buffer)
-            let rect = backCI.extent
+            let rawMainCI: CIImage
+            let rawPipCI: CIImage?
+            if swapped, let fBuf = frontBuffer {
+                rawMainCI = CIImage(cvPixelBuffer: fBuf)
+                rawPipCI = CIImage(cvPixelBuffer: buffer)
+            } else {
+                rawMainCI = CIImage(cvPixelBuffer: buffer)
+                rawPipCI = frontBuffer.map { CIImage(cvPixelBuffer: $0) }
+            }
+
+            let mainCI: CIImage = isPhotoAspect3x4
+                ? DualCameraAssetRecorder.cropCenterToAspect(rawMainCI, targetAspect: 3.0 / 4.0)
+                : rawMainCI
+            let rect = mainCI.extent
             guard rect.width > 0, rect.height > 0 else {
                 self.sessionQueue.async {
                     self.isPhotoCaptureInFlight = false
@@ -1819,18 +1893,17 @@ public final class CameraService: NSObject {
             }
 
             let finalCI: CIImage
-            if let fBuf = frontBuffer {
-                let frontCI = CIImage(cvPixelBuffer: fBuf)
+            if let pipCI = rawPipCI {
                 finalCI = DualCameraAssetRecorder.compositePIP(
-                    frontCI: frontCI,
-                    over: backCI,
+                    frontCI: pipCI,
+                    over: mainCI,
                     canvasWidth: rect.width,
                     canvasHeight: rect.height,
                     corner: corner,
                     scaleMultiplier: pipScale
                 )
             } else {
-                finalCI = backCI
+                finalCI = mainCI
             }
 
             guard let cgImage = self.sharedPhotoContext.createCGImage(finalCI, from: rect) else {
@@ -2691,6 +2764,12 @@ public final class CameraService: NSObject {
 
             let corner = currentDualCameraPIPCorner
             let pipScale = currentDualCameraPIPScale
+            DualCameraAssetRecorder.shared.isSwapped = isDualCameraSwapped
+            if let multiSession = self.multiCamSession, !self.isMultiCamAudioAttached {
+                multiSession.beginConfiguration()
+                self.attachAudioToMultiCamWithinOpenConfig(multiSession)
+                multiSession.commitConfiguration()
+            }
             DualCameraAssetRecorder.shared.startRecording(outputURL: outputURL, codec: selectedVideoCodec, corner: corner, scale: pipScale) { [weak self] (success: Bool) in
                 guard let self else { return }
                 self.sessionQueue.async {
@@ -3424,11 +3503,21 @@ public final class CameraService: NSObject {
     private func applyCaptureModeIfPossible() {
         if isDualCameraActive {
             currentCaptureMode = desiredCaptureMode
-            if desiredCaptureMode.isVideo {
-                self.audioDataOutput.setSampleBufferDelegate(self, queue: self.audioDataQueue)
-                self.configureAudioSessionForStereoCaptureAsync(cameraPosition: self.currentCameraPosition)
-                DispatchQueue.main.async { [weak self] in
-                    self?.onActiveVideoFormatChanged?("1080P 30FPS · DUAL PIP")
+            if let multiSession = self.multiCamSession {
+                if desiredCaptureMode.isVideo {
+                    if !self.isMultiCamAudioAttached {
+                        multiSession.beginConfiguration()
+                        self.attachAudioToMultiCamWithinOpenConfig(multiSession)
+                        multiSession.commitConfiguration()
+                    } else {
+                        self.audioDataOutput.setSampleBufferDelegate(self, queue: self.audioDataQueue)
+                    }
+                    self.configureAudioSessionForStereoCaptureAsync(cameraPosition: self.currentCameraPosition)
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onActiveVideoFormatChanged?("1080P 30FPS · DUAL PIP")
+                    }
+                } else {
+                    self.detachAudioFromMultiCam(multiSession)
                 }
             }
             completePendingMode(true)
