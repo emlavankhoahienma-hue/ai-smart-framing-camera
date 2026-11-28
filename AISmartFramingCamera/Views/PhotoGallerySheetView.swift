@@ -782,7 +782,7 @@ private struct StoredRecordThumbnailCell: View {
 
     private func loadThumbnail() {
         guard thumbnailImage == nil else { return }
-        let cacheKey = record.thumbnailFilename.isEmpty ? record.id : record.thumbnailFilename
+        let cacheKey = record.thumbnailFilename.isEmpty ? record.id.uuidString : record.thumbnailFilename
         if let cached = GalleryThumbnailMemoryCache.shared.image(forKey: cacheKey) {
             self.thumbnailImage = cached
             return
