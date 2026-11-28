@@ -43,6 +43,42 @@ public enum CameraLogger {
     private static var heartbeatTimer: DispatchSourceTimer?
     private static var heartbeatIntervalMs: Int = 1000
     private static let heartbeatQueue = DispatchQueue(label: "com.alignai.diagnostics.heartbeat", qos: .utility)
+    private static let asyncWriteQueue = DispatchQueue(label: "com.alignai.diagnostics.fileio", qos: .utility)
+    private static var debugTelemetryEnabledFlag: Bool = false
+    private static var zoomAuditSummaryProvider: (@Sendable () -> String)?
+
+    /// Mặc định TẮT trong bản chính để tránh overhead đo đạc/heartbeat liên tục (chỉ bật khi mở Debug mode).
+    public static var isDebugTelemetryEnabled: Bool {
+        get { fileLock.withLock { debugTelemetryEnabledFlag } }
+        set {
+            let changed = fileLock.withLock { () -> Bool in
+                let prev = debugTelemetryEnabledFlag
+                debugTelemetryEnabledFlag = newValue
+                return prev != newValue
+            }
+            guard changed else { return }
+            #if canImport(UIKit)
+            if newValue {
+                startHeartbeatMonitor(intervalMs: 1000)
+                startMainThreadWatchdog()
+            } else {
+                stopHeartbeatMonitor()
+                stopMainThreadWatchdog()
+            }
+            #endif
+        }
+    }
+
+    public static func registerZoomAuditProvider(_ provider: @escaping @Sendable () -> String) {
+        fileLock.withLock {
+            zoomAuditSummaryProvider = provider
+        }
+    }
+
+    public static func currentZoomAuditSummary() -> String {
+        let provider = fileLock.withLock { zoomAuditSummaryProvider }
+        return provider?() ?? "(Chưa có dữ liệu ghi zoom)"
+    }
 
     private static var watchdogTimer: DispatchSourceTimer?
     private static let watchdogQueue = DispatchQueue(label: "com.alignai.diagnostics.watchdog", qos: .utility)
@@ -379,8 +415,10 @@ public enum CameraLogger {
 
         #if canImport(UIKit)
         installAppLifecycleObserversIfNeeded()
-        startHeartbeatMonitor(intervalMs: 1000)
-        startMainThreadWatchdog()
+        if isDebugTelemetryEnabled {
+            startHeartbeatMonitor(intervalMs: 1000)
+            startMainThreadWatchdog()
+        }
         #endif
 
         let prevState = didPreviousSessionExitUncleanly ? "UNCLEAN_EXIT_OR_CRASH" : "CLEAN"
@@ -601,8 +639,10 @@ public enum CameraLogger {
         ) { _ in
             CameraLogger.clearCleanExitOnDisk()
             CameraLogger.lifecycle("APP_WILL_ENTER_FOREGROUND", category: .general)
-            CameraLogger.startHeartbeatMonitor(intervalMs: 1000)
-            CameraLogger.startMainThreadWatchdog()
+            if CameraLogger.isDebugTelemetryEnabled {
+                CameraLogger.startHeartbeatMonitor(intervalMs: 1000)
+                CameraLogger.startMainThreadWatchdog()
+            }
         }
 
         let didActive = nc.addObserver(
@@ -612,8 +652,10 @@ public enum CameraLogger {
         ) { _ in
             CameraLogger.clearCleanExitOnDisk()
             CameraLogger.lifecycle("APP_DID_BECOME_ACTIVE", category: .general)
-            CameraLogger.startHeartbeatMonitor(intervalMs: 1000)
-            CameraLogger.startMainThreadWatchdog()
+            if CameraLogger.isDebugTelemetryEnabled {
+                CameraLogger.startHeartbeatMonitor(intervalMs: 1000)
+                CameraLogger.startMainThreadWatchdog()
+            }
         }
 
         let willTerm = nc.addObserver(
@@ -783,7 +825,7 @@ public enum CameraLogger {
         let thr = currentThreadLabel()
         let snap = snapshot ?? currentMemorySnapshot()
         let therm = thermalStateName()
-        var line = String(
+        let line = String(
             format: "[%@] [thr=%@] [mem=%.1fMB(int=%.1f,comp=%.1f,ext=%.1f) avail=%dMB therm=%@] %@ %@: %@\n",
             ts, thr, snap.physMB, snap.internalMB, snap.compressedMB, snap.externalMB,
             snap.availMB, therm, category.rawValue, level, message
@@ -802,25 +844,38 @@ public enum CameraLogger {
             }
         }
 
-        fileLock.lock()
-        defer { fileLock.unlock() }
-        guard sessionFD >= 0 else { return }
+        let isCriticalLevel = (level == "ERROR" || level == "WATCHDOG" || level == "LIFECYCLE" || level == "WARN")
+        let lineCopy = line
+        let writeBlock: @Sendable () -> Void = {
+            var mutableLine = lineCopy
+            fileLock.lock()
+            defer { fileLock.unlock() }
+            guard sessionFD >= 0 else { return }
 
-        line.withUTF8 { utf8 in
-            guard let base = utf8.baseAddress else { return }
-            writeAllBytes(sessionFD, base, utf8.count)
-        }
-        _ = Darwin.fsync(sessionFD)
-
-        // Bound current log size so multi-hour runs never bloat disk
-        let pos = Darwin.lseek(sessionFD, 0, SEEK_END)
-        if pos > off_t(maxLogFileSize), let curURL = currentSessionLogURL {
-            Darwin.close(sessionFD)
-            if let data = try? Data(contentsOf: curURL), data.count > trimKeepBytes {
-                let kept = data.suffix(trimKeepBytes)
-                try? kept.write(to: curURL, options: .atomic)
+            mutableLine.withUTF8 { utf8 in
+                guard let base = utf8.baseAddress else { return }
+                writeAllBytes(sessionFD, base, utf8.count)
             }
-            sessionFD = Darwin.open(curURL.path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
+            // Chỉ fsync đồng bộ cho sự kiện lỗi/vòng đời quan trọng để không gây khựng 5-15ms trên Main Thread / camera queue
+            if isCriticalLevel {
+                _ = Darwin.fsync(sessionFD)
+            }
+
+            // Bound current log size so multi-hour runs never bloat disk
+            let pos = Darwin.lseek(sessionFD, 0, SEEK_END)
+            if pos > off_t(maxLogFileSize), let curURL = currentSessionLogURL {
+                Darwin.close(sessionFD)
+                if let data = try? Data(contentsOf: curURL), data.count > trimKeepBytes {
+                    let kept = data.suffix(trimKeepBytes)
+                    try? kept.write(to: curURL, options: .atomic)
+                }
+                sessionFD = Darwin.open(curURL.path, O_WRONLY | O_CREAT | O_APPEND, 0o644)
+            }
+        }
+        if isCriticalLevel {
+            writeBlock()
+        } else {
+            asyncWriteQueue.async(execute: writeBlock)
         }
     }
 
@@ -1058,8 +1113,9 @@ public enum CameraLogger {
 
         """
         let prevSection = readPreviousSessionLogTail(maxLines: 800)
+        let zoomAuditSection = "\n\n=== NHẬT KÝ GHI ZOOM (SINGLE ZOOM OWNER AUDIT) ===\n" + currentZoomAuditSummary()
         let currSection = "\n\n=== LOG PHIÊN HIỆN TẠI (CUỐI) ===\n" + readRecentLogText(maxChars: 96_000)
-        let fullText = header + prevSection + currSection
+        let fullText = header + prevSection + zoomAuditSection + currSection
         try? fullText.data(using: .utf8)?.write(to: outURL, options: .atomic)
         return outURL
     }
@@ -1075,14 +1131,15 @@ public enum CameraLogger {
     }
 
     public static func readCurrentSessionLogTail(maxLines: Int = 220) -> String {
+        let zoomSection = "=== NHẬT KÝ GHI ZOOM (ZOOM AUDIT) ===\n" + currentZoomAuditSummary()
         guard let url = currentSessionLogURL,
               let text = try? String(contentsOf: url, encoding: .utf8),
               !text.isEmpty else {
-            return "(Chưa có log nào được ghi trong phiên hiện tại)"
+            return zoomSection + "\n\n(Chưa có log nào được ghi trong phiên hiện tại)"
         }
         let lines = text.components(separatedBy: .newlines)
         let tail = lines.suffix(max(20, maxLines)).joined(separator: "\n")
-        return "=== DÒNG CUỐI LOG PHIÊN HIỆN TẠI (\(min(lines.count, maxLines))/\(lines.count) dòng) ===\n" + tail
+        return zoomSection + "\n\n=== DÒNG CUỐI LOG PHIÊN HIỆN TẠI (\(min(lines.count, maxLines))/\(lines.count) dòng) ===\n" + tail
     }
 
     public static func clearLogs() {

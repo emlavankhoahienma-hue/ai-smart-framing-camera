@@ -188,6 +188,11 @@ public struct CameraMainView: View {
                                 ZoomDebugOverlayView(viewModel: viewModel)
                             }
 
+                            // Optional Tracking Performance Debug HUD (default OFF in Settings -> Bố cục)
+                            if viewModel.isTrackingPerfHUDEnabled {
+                                TrackingPerfDebugHUDView(perfState: viewModel.trackingPerfHUDState)
+                            }
+
                             // Rangefinder Windowed Zoom Overlay (Khớp trực tiếp 1:1 khung ngắm 3:4 Photo hoặc 9:16 Video)
                             if viewModel.isWindowedZoomActive {
                                 GeometryReader { proxy in

@@ -3,9 +3,6 @@ import SwiftUI
 public struct ARFramingOverlayView: View {
     @ObservedObject var viewModel: CameraViewModel
 
-    @State private var radarPulse: CGFloat = 1.0
-    @State private var radarOpacity: Double = 0.8
-    @State private var dashOffset: CGFloat = 0
     @State private var pinchBaseZoom: CGFloat = 1.0
     @State private var isPinching: Bool = false
 
@@ -33,7 +30,7 @@ public struct ARFramingOverlayView: View {
                 }
 
                 // 2. Detected Faces & Multi-Object Preview (Hiện khi bật trong Cài đặt > Khung ngắm và chưa có mục tiêu ghim)
-                if viewModel.showDetectionBoxes && viewModel.currentTargetPoint == nil {
+                if viewModel.showDetectionBoxes && !viewModel.hasActiveTargetPoint {
                     ForEach(viewModel.heroDetectedEntities) { entity in
                         let layerRect = viewModel.convertMetadataRectToLayerRect(entity.rect, in: size)
                         if layerRect.width >= 12, layerRect.height >= 12 {
@@ -84,76 +81,13 @@ public struct ARFramingOverlayView: View {
                     .allowsHitTesting(false)
                 }
 
-                // 4. VÒNG TRÒN TARGET VÀNG (Bám vật thể quang học + 60Hz Gyroscope)
-                // Chuyển đổi toạ độ chính xác 100% từ Camera Buffer 4:3 sang màn hình tràn viền AspectFill
-                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {
-                    let projectedScreen = convertBufferPointToScreen(targetPoint, in: size)
-                    let targetScreen = TrackingGeometry.dock(projectedScreen, size: size)
-                    let isDocked = hypot(projectedScreen.x - targetScreen.x,
-                                         projectedScreen.y - targetScreen.y) > 0.5
-
-                    // Lực hút nam châm mượt mà C1-continuous (Zero-Teleport Magnetic Potential Well)
-                    let rawDistToCenter = hypot(targetScreen.x - screenCenter.x, targetScreen.y - screenCenter.y)
-                    let snapThresholdScreen: CGFloat = 26.0
-                    let outerWellRadius: CGFloat = 34.0
-                    let innerCoreRadius: CGFloat = 14.0
-                    let isSnapped = (viewModel.isMagneticSnapped || rawDistToCenter <= snapThresholdScreen) && !isDocked
-
-                    // Đường cong thế năng nam châm liên tục C1: hút chặt ở vùng lõi (<= 14pt) và nối trơn hoàn toàn
-                    // tại biên ngoài (34pt) để triệt tiêu hoàn toàn hiện tượng nhảy cóc vị trí khi ra/vào vùng hút.
-                    let effectiveTargetScreen: CGPoint = {
-                        guard !isDocked, rawDistToCenter < outerWellRadius else {
-                            return targetScreen
-                        }
-                        let radialScale: CGFloat
-                        if rawDistToCenter <= innerCoreRadius {
-                            let coreT = rawDistToCenter / innerCoreRadius
-                            radialScale = 0.08 * coreT
-                        } else {
-                            let u = min(1.0, max(0.0, (rawDistToCenter - innerCoreRadius) / (outerWellRadius - innerCoreRadius)))
-                            let smoothstep = u * u * (3.0 - 2.0 * u)
-                            radialScale = 0.08 + 0.92 * smoothstep
-                        }
-                        return CGPoint(
-                            x: screenCenter.x + (targetScreen.x - screenCenter.x) * radialScale,
-                            y: screenCenter.y + (targetScreen.y - screenCenter.y) * radialScale
-                        )
-                    }()
-
-                    // Sợi dây đứt nét & Mũi tên dẫn đường (Dash Arrow Guidance)
-                    if viewModel.showGuidanceRay {
-                        GuidanceRayLine(
-                            from: screenCenter,
-                            to: effectiveTargetScreen,
-                            dashOffset: dashOffset,
-                            distance: viewModel.alignmentDistance,
-                            isAligned: viewModel.isPerfectAlignment,
-                            isSnapped: isSnapped
-                        )
-                        .transaction { $0.animation = nil }
-                    }
-
-                    TargetCircleView(
-                        isAligned: viewModel.isPerfectAlignment,
-                        radarPulse: radarPulse,
-                        radarOpacity: radarOpacity,
-                        trackingQuality: viewModel.trackingQuality,
-                        isSnapped: isSnapped
+                // 4. VÒNG TRÒN TARGET VÀNG (Tách biệt hoàn toàn khỏi CameraMainView để 60-120Hz tracking không re-render toàn UI)
+                if viewModel.showTargetCircle && viewModel.hasActiveTargetPoint {
+                    LiveTargetReticleOverlayView(
+                        targetState: viewModel.liveTargetOverlayState,
+                        showGuidanceRay: viewModel.showGuidanceRay,
+                        size: size
                     )
-                    .animation(.spring(response: 0.22, dampingFraction: 0.68), value: isSnapped)
-                    .position(effectiveTargetScreen)
-                    .transaction { $0.animation = nil }
-
-                    if isDocked {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(.yellow)
-                            .rotationEffect(Angle(radians: Double(atan2(projectedScreen.y - screenCenter.y,
-                                                                         projectedScreen.x - screenCenter.x)) + Double.pi / 2.0))
-                            .position(targetScreen)
-                            .accessibilityLabel("Quay camera theo hướng mũi tên để tìm lại mục tiêu")
-                            .allowsHitTesting(false)
-                    }
                 }
 
                 // Optical centre is always fixed in the photo viewfinder.
@@ -329,7 +263,6 @@ public struct ARFramingOverlayView: View {
             .onAppear {
                 viewModel.viewfinderSize = size
                 SpatialTrackingEngine.shared.prepare()
-                startAnimations()
             }
             // The overlay can be temporarily removed by SwiftUI or a sheet.
             // It does not own the tracking session's lifetime.
@@ -374,13 +307,97 @@ public struct ARFramingOverlayView: View {
         // Only user input is clipped to the image domain, never estimator state.
         return CGPoint(x: max(0, min(1, p.x)), y: max(0, min(1, p.y)))
     }
+}
 
-    private func startAnimations() {
-        withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
-            radarPulse = 1.40; radarOpacity = 0.15
+/// Isolated lightweight subview observing ONLY `LiveTargetOverlayState` (60–120Hz).
+/// Prevents per-frame tracking updates from invalidating `ARFramingOverlayView` or `CameraMainView`,
+/// and only starts repeating radar/dash animations while an active target is actually mounted.
+private struct LiveTargetReticleOverlayView: View {
+    @ObservedObject var targetState: LiveTargetOverlayState
+    let showGuidanceRay: Bool
+    let size: CGSize
+
+    @State private var radarPulse: CGFloat = 1.0
+    @State private var radarOpacity: Double = 0.8
+    @State private var dashOffset: CGFloat = 0
+
+    var body: some View {
+        let screenCenter = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+        ZStack {
+            if let targetPoint = targetState.targetPoint {
+                let projectedScreen = ARFramingOverlayView.convertBufferPointToScreen(targetPoint, in: size)
+                let targetScreen = TrackingGeometry.dock(projectedScreen, size: size)
+                let isDocked = hypot(projectedScreen.x - targetScreen.x,
+                                     projectedScreen.y - targetScreen.y) > 0.5
+
+                let rawDistToCenter = hypot(targetScreen.x - screenCenter.x, targetScreen.y - screenCenter.y)
+                let snapThresholdScreen: CGFloat = 26.0
+                let outerWellRadius: CGFloat = 34.0
+                let innerCoreRadius: CGFloat = 14.0
+                let isSnapped = (targetState.isSnapped || rawDistToCenter <= snapThresholdScreen) && !isDocked
+
+                let effectiveTargetScreen: CGPoint = {
+                    guard !isDocked, rawDistToCenter < outerWellRadius else {
+                        return targetScreen
+                    }
+                    let radialScale: CGFloat
+                    if rawDistToCenter <= innerCoreRadius {
+                        let coreT = rawDistToCenter / innerCoreRadius
+                        radialScale = 0.08 * coreT
+                    } else {
+                        let u = min(1.0, max(0.0, (rawDistToCenter - innerCoreRadius) / (outerWellRadius - innerCoreRadius)))
+                        let smoothstep = u * u * (3.0 - 2.0 * u)
+                        radialScale = 0.08 + 0.92 * smoothstep
+                    }
+                    return CGPoint(
+                        x: screenCenter.x + (targetScreen.x - screenCenter.x) * radialScale,
+                        y: screenCenter.y + (targetScreen.y - screenCenter.y) * radialScale
+                    )
+                }()
+
+                if showGuidanceRay {
+                    GuidanceRayLine(
+                        from: screenCenter,
+                        to: effectiveTargetScreen,
+                        dashOffset: dashOffset,
+                        distance: targetState.alignmentDistance,
+                        isAligned: targetState.isAligned,
+                        isSnapped: isSnapped
+                    )
+                    .transaction { $0.animation = nil }
+                }
+
+                TargetCircleView(
+                    isAligned: targetState.isAligned,
+                    radarPulse: radarPulse,
+                    radarOpacity: radarOpacity,
+                    trackingQuality: targetState.trackingQuality,
+                    isSnapped: isSnapped
+                )
+                .animation(.spring(response: 0.22, dampingFraction: 0.68), value: isSnapped)
+                .position(effectiveTargetScreen)
+                .transaction { $0.animation = nil }
+
+                if isDocked {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(.yellow)
+                        .rotationEffect(Angle(radians: Double(atan2(projectedScreen.y - screenCenter.y,
+                                                                     projectedScreen.x - screenCenter.x)) + Double.pi / 2.0))
+                        .position(targetScreen)
+                        .accessibilityLabel("Quay camera theo hướng mũi tên để tìm lại mục tiêu")
+                        .allowsHitTesting(false)
+                }
+            }
         }
-        withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
-            dashOffset = -22
+        .allowsHitTesting(false)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
+                radarPulse = 1.40; radarOpacity = 0.15
+            }
+            withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
+                dashOffset = -22
+            }
         }
     }
 }
@@ -1002,7 +1019,7 @@ public struct ZoomRevealOverlay: View {
         guard !viewModel.hasExecutedAutoZoomForSession,
               viewModel.isAutoZoomEnabled,
               (viewModel.pendingSuggestedZoom - viewModel.displayZoom) > 0.15,
-              viewModel.currentTargetPoint != nil else { return false }
+              viewModel.hasActiveTargetPoint else { return false }
         switch viewModel.aiSessionState {
         case .analyzing, .targetPlaced:
             return true

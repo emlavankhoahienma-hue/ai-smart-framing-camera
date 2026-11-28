@@ -806,9 +806,12 @@ public final class CompositionCalculator: @unchecked Sendable {
         defer { stateLock.unlock() }
 
         let currentZoom = max(0.5, currentDisplayZoom)
-        let hasUltraWide = availableZooms.contains(where: { $0 < 0.9 })
-        let intermediateZooms: [CGFloat] = (hasUltraWide ? [0.5] : []) + [1.0, 1.2, 1.5, 2.0, 3.0]
-        let testZooms = Array(Set(availableZooms + [currentDisplayZoom] + intermediateZooms)).filter { $0.isFinite && $0 >= 0.5 && $0 <= 10.0 }.sorted()
+        // Auto-zoom NEVER drops below 1.0x (Ultra-Wide 0.5x is manual-only).
+        let intermediateZooms: [CGFloat] = [1.0, 1.2, 1.5, 2.0, 3.0]
+        let autoAvailable = availableZooms.filter { $0.isFinite && $0 >= 1.0 && $0 <= 10.0 }
+        let testZooms = Array(Set(autoAvailable + [max(1.0, currentDisplayZoom)] + intermediateZooms))
+            .filter { $0.isFinite && $0 >= 1.0 && $0 <= 10.0 }
+            .sorted()
         var scoredList: [VirtualCropZoomScore] = []
 
         // Sửa Lỗi 2: Chuẩn hóa kích thước đo được về hệ quy chiếu gốc 1x

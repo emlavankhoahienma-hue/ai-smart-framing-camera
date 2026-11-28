@@ -1212,6 +1212,57 @@ struct AIFramingSettingsSection: View {
                 dividerLine
 
                 SettingsToggleRow(
+                    title: "Lớp đo hiệu năng Tracking (Debug)",
+                    subtitle: "Hiện FPS, độ trễ p50/p95 từng chặng, frame rơi, nhiệt độ & RAM (mặc định TẮT)",
+                    icon: "gauge.with.dots.needle.67percent",
+                    isOn: $viewModel.isTrackingPerfHUDEnabled
+                )
+
+                if viewModel.isZoomDebugOverlayEnabled || viewModel.isTrackingPerfHUDEnabled {
+                    dividerLine
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "timer")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(AlignTheme.studioAccent)
+                            Text("Tốc độ hiệu ứng Zoom (1x → 2x)")
+                                .font(.system(size: 13.5, weight: .semibold))
+                                .foregroundColor(AlignTheme.studioInkPrimary)
+                            Spacer()
+                            Text(String(format: "%.2fs", viewModel.debugSmoothZoomDuration))
+                                .font(.system(size: 12.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(AlignTheme.studioAccent)
+                        }
+                        Slider(
+                            value: $viewModel.debugSmoothZoomDuration,
+                            in: ZoomAnimationProfile.minConfigurableDuration...ZoomAnimationProfile.maxConfigurableDuration,
+                            step: 0.05
+                        )
+                        .tint(AlignTheme.studioAccent)
+                        HStack {
+                            Text("Nhanh (0.40s)")
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundColor(AlignTheme.studioInkSecondary)
+                            Spacer()
+                            Button("Mặc định 0.85s") {
+                                viewModel.debugSmoothZoomDuration = ZoomAnimationProfile.defaultOneOctaveDuration
+                            }
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundColor(AlignTheme.studioAccent)
+                            Spacer()
+                            Text("Chậm (1.50s)")
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundColor(AlignTheme.studioInkSecondary)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                }
+
+                dividerLine
+
+                SettingsToggleRow(
                     title: "Tự động cân chỉnh màu AI",
                     subtitle: "Tối ưu tương phản và tone màu theo ánh sáng thực tế",
                     icon: "slider.horizontal.3",

@@ -253,7 +253,13 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         }
         if visionInterval == 0 || (now - lastVisionProcessTime >= visionInterval) {
             lastVisionProcessTime = now
+            if TrackingPerformanceMonitor.shared.isEnabled, let frame {
+                let f2vMs = max(0, (now - frame.timestamp) * 1000.0)
+                TrackingPerformanceMonitor.shared.recordFrameToVisionLatency(ms: f2vMs)
+            }
             VisionFramingEngine.shared.processVideoSampleBuffer(sampleBuffer, orientation: .up, frameContext: frame)
+        } else if TrackingPerformanceMonitor.shared.isEnabled && SpatialTrackingEngine.shared.isTrackingActive {
+            TrackingPerformanceMonitor.shared.recordDroppedFrame()
         }
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
@@ -294,8 +300,54 @@ private final class CameraFrameProcessor: @unchecked Sendable {
     }
 }
 
+/// Isolated high-frequency state for the 60–120Hz Target Reticle & Guidance Ray overlay.
+/// Keeping per-frame target coordinates here prevents `CameraViewModel.objectWillChange` from
+/// invalidating and re-diffing the entire 2000-line `CameraMainView` 60–120 times/second!
+@MainActor
+public final class LiveTargetOverlayState: ObservableObject {
+    @Published public private(set) var targetPoint: CGPoint? = nil
+    @Published public private(set) var alignmentDistance: CGFloat = 1.0
+    @Published public private(set) var isAligned: Bool = false
+    @Published public private(set) var isSnapped: Bool = false
+    @Published public private(set) var trackingQuality: TrackingQuality = .locked
+
+    public init() {}
+
+    /// Updates overlay state with a sub-pixel deadband (~0.12pt) so stationary micro-noise
+    /// avoids redundant SwiftUI redraws even on the lightweight reticle subview.
+    public func sync(
+        targetPoint nextPoint: CGPoint?,
+        alignmentDistance nextDist: CGFloat,
+        isAligned nextAligned: Bool,
+        isSnapped nextSnapped: Bool,
+        trackingQuality nextQuality: TrackingQuality
+    ) {
+        let pointChanged: Bool = {
+            switch (targetPoint, nextPoint) {
+            case (nil, nil): return false
+            case (nil, .some), (.some, nil): return true
+            case (.some(let a), .some(let b)):
+                return abs(a.x - b.x) >= 0.0003 || abs(a.y - b.y) >= 0.0003
+            }
+        }()
+        let distChanged = abs(alignmentDistance - nextDist) >= 0.0015
+        let flagsChanged = (isAligned != nextAligned) || (isSnapped != nextSnapped) || (trackingQuality != nextQuality)
+        guard pointChanged || distChanged || flagsChanged else { return }
+
+        targetPoint = nextPoint
+        alignmentDistance = nextDist
+        isAligned = nextAligned
+        isSnapped = nextSnapped
+        trackingQuality = nextQuality
+    }
+}
+
 @MainActor
 public final class CameraViewModel: ObservableObject {
+    /// Isolated 60–120Hz target reticle overlay state (zero CameraMainView re-renders during tracking).
+    public let liveTargetOverlayState = LiveTargetOverlayState()
+    /// Isolated 4Hz tracking performance telemetry state (default OFF; zero overhead unless enabled in Debug).
+    public let trackingPerfHUDState = TrackingPerfHUDState()
     private struct AITrackingSource: @unchecked Sendable {
         let buffer: CVPixelBuffer
         let frame: TrackingFrameContext
@@ -1310,7 +1362,31 @@ public final class CameraViewModel: ObservableObject {
         didSet { UserDefaults.standard.set(isAutoZoomEnabled, forKey: "isAutoZoomEnabled") }
     }
     @Published public var isZoomDebugOverlayEnabled: Bool = false {
-        didSet { UserDefaults.standard.set(isZoomDebugOverlayEnabled, forKey: "isZoomDebugOverlayEnabled") }
+        didSet {
+            UserDefaults.standard.set(isZoomDebugOverlayEnabled, forKey: "isZoomDebugOverlayEnabled")
+            CameraLogger.isDebugTelemetryEnabled = isZoomDebugOverlayEnabled || isTrackingPerfHUDEnabled
+        }
+    }
+    @Published public var isTrackingPerfHUDEnabled: Bool = false {
+        didSet {
+            UserDefaults.standard.set(isTrackingPerfHUDEnabled, forKey: "isTrackingPerfHUDEnabled")
+            TrackingPerformanceMonitor.shared.setEnabled(isTrackingPerfHUDEnabled)
+            CameraLogger.isDebugTelemetryEnabled = isZoomDebugOverlayEnabled || isTrackingPerfHUDEnabled
+        }
+    }
+    /// Thanh trượt ẩn trong chế độ Debug cho phép người dùng tự tinh chỉnh thời lượng zoom mượt (1x → 2x) trên máy thật.
+    @Published public var debugSmoothZoomDuration: Double = ZoomAnimationProfile.defaultOneOctaveDuration {
+        didSet {
+            let clamped = max(
+                ZoomAnimationProfile.minConfigurableDuration,
+                min(ZoomAnimationProfile.maxConfigurableDuration, debugSmoothZoomDuration.isFinite ? debugSmoothZoomDuration : ZoomAnimationProfile.defaultOneOctaveDuration)
+            )
+            if abs(clamped - debugSmoothZoomDuration) > 1e-4 {
+                debugSmoothZoomDuration = clamped
+                return
+            }
+            cameraService.smoothZoomBaseDuration = clamped
+        }
     }
     @Published public internal(set) var zoomDebugSnapshot: ZoomDebugSnapshot? = nil
 
@@ -1600,10 +1676,12 @@ public final class CameraViewModel: ObservableObject {
         if now - videoContinuousZoomTimestamp >= 0.020 || abs(clamped - videoContinuousLastZoom) > 0.04 {
             videoContinuousZoomTimestamp = now
             videoContinuousLastZoom = clamped
-            cameraService.applyDisplayZoomWithPhysicalLensSwitching(
+            cameraService.applyUnifiedDisplayZoom(
                 clamped,
+                source: .pinchContinuous,
                 smooth: false,
-                allowPhysicalSwitch: false
+                allowPhysicalSwitch: false,
+                reason: "UI.pinchContinuous"
             )
         }
     }
@@ -1637,11 +1715,12 @@ public final class CameraViewModel: ObservableObject {
         let requestID = UUID()
         manualZoomRequestID = requestID
         manualZoomSettledAt = CACurrentMediaTime()
-        cameraService.applyDisplayZoomWithPhysicalLensSwitching(
+        cameraService.applyUnifiedDisplayZoom(
             clamped,
+            source: .manual,
             smooth: false,
-            rate: 4.5,
-            allowPhysicalSwitch: allowSwitch
+            allowPhysicalSwitch: allowSwitch,
+            reason: "UI.pinchFinish"
         ) { [weak self] actualDeviceZoom in
             guard let self, self.manualZoomRequestID == requestID else { return }
             self.manualZoomRequestID = nil
@@ -1667,8 +1746,11 @@ public final class CameraViewModel: ObservableObject {
         cancelAIZoomForGesture()
         let clamped = max(minAvailableDisplayZoom, min(rawDisplayZoom, maxAvailableDisplayZoom))
         let prevZoom = displayZoom
+        let useSmooth = smooth && !captureMode.isVideo
         syncSimulatedUltraWideState(for: clamped)
-        self.displayZoom = clamped
+        if !useSmooth {
+            self.displayZoom = clamped
+        }
         self.selectedZoomPreset = resolveClosestZoomPreset(for: clamped)
         if abs(clamped - prevZoom) >= 0.45 && !isRecordingVideo {
             previewContainerView?.animateLensTransition()
@@ -1679,11 +1761,12 @@ public final class CameraViewModel: ObservableObject {
         let requestID = UUID()
         manualZoomRequestID = requestID
         manualZoomSettledAt = CACurrentMediaTime()
-        cameraService.applyDisplayZoomWithPhysicalLensSwitching(
+        cameraService.applyUnifiedDisplayZoom(
             clamped,
-            smooth: smooth && !captureMode.isVideo,
-            rate: 5.5,
-            allowPhysicalSwitch: allowSwitch
+            source: .manual,
+            smooth: useSmooth,
+            allowPhysicalSwitch: allowSwitch,
+            reason: "UI.zoomButton"
         ) { [weak self] actualDeviceZoom in
             guard let self, self.manualZoomRequestID == requestID else { return }
             self.manualZoomRequestID = nil
@@ -1699,7 +1782,7 @@ public final class CameraViewModel: ObservableObject {
 
     @Published public var isRevealingZoomTarget: Bool = false
     @Published public var lockOnProgress: CGFloat = 0
-    @Published public var liveZoomFactorForReveal: CGFloat = 1.0
+    public var liveZoomFactorForReveal: CGFloat = 1.0
     public private(set) var pendingTargetZoomForReveal: CGFloat = 1.0
     public private(set) var zoomRevealStartDisplayZoom: CGFloat = 1.0
     private var zoomRevealStartsIn = true
@@ -2033,12 +2116,14 @@ public final class CameraViewModel: ObservableObject {
     public private(set) var hasExecutedAutoZoomForSession: Bool = false
     private var lastAutoZoomExecutionTime: Date = .distantPast
 
-    // MARK: - Auto-Zoom Execution (1x, 2x, 3x Zoom-In & Zoom-Out with Cooldown & Hysteresis)
+    // MARK: - Auto-Zoom Execution (1x, 2x, 3x Zoom-In & Zoom-Out with Cooldown, Floor >= 1.0x & Hysteresis)
     public func applyAISuggestedZoom(_ targetZoom: CGFloat, force: Bool = false) {
         guard isAutoZoomEnabled else { return }
         guard targetZoom.isFinite, currentZoom.isFinite else { return }
-        // Allow immediate Zoom-Out even before alignmentPerfect (zooming out widens FOV and never clips the subject)
-        let isImmediateZoomOut = force && targetZoom < displayZoom - 0.10
+        // Hard rule: Auto-zoom MUST NEVER automatically drop below 1.0x (Ultra-Wide 0.5x is manual-only).
+        let safeTargetZoom = max(1.0, targetZoom)
+        // Allow immediate Zoom-Out (e.g. 2x/3x -> 1.0x) even before alignmentPerfect
+        let isImmediateZoomOut = force && safeTargetZoom < displayZoom - 0.10
         let stateAllowsZoom: Bool = {
             if aiSessionState == .alignmentPerfect { return true }
             if isImmediateZoomOut, case .targetPlaced = aiSessionState { return true }
@@ -2047,9 +2132,14 @@ public final class CameraViewModel: ObservableObject {
         guard stateAllowsZoom, !isPinchingZoom,
               !hasExecutedAutoZoomForSession, !zoomAwaitingVerification,
               (hasFreshOpticalLock || isTargetLocked || isImmediateZoomOut),
-              canZoomCurrentSubject(to: targetZoom) else { return }
+              canZoomCurrentSubject(to: safeTargetZoom) else { return }
 
-        // Cooldown: Tối thiểu 0.8s giữa các lần tự động zoom (tránh spam, nhưng không chặn người dùng khi căn chỉnh)
+        // Freeze new auto-zoom decisions during active zoom transition or post-zoom settle window
+        if !force && cameraService.isZoomTransitioningOrSettling {
+            return
+        }
+
+        // Cooldown: Tối thiểu 0.8s giữa các lần tự động zoom
         let now = Date()
         let timeSinceLast = now.timeIntervalSince(lastAutoZoomExecutionTime)
         if !force && timeSinceLast < 0.8 {
@@ -2058,26 +2148,28 @@ public final class CameraViewModel: ObservableObject {
         }
 
         // Hysteresis: Nếu mức zoom hiện tại đã rất gần mục tiêu (sai số < 0.12), không zoom lại
-        let diff = targetZoom - displayZoom
+        let diff = safeTargetZoom - displayZoom
         guard abs(diff) > 0.12 else { return }
 
         lastAutoZoomExecutionTime = now
 
-        CameraLogger.info("Thực thi AI Auto-Zoom Điện Ảnh: \(displayZoom)x -> \(targetZoom)x", category: .ai)
+        CameraLogger.info("Thực thi AI Auto-Zoom Điện Ảnh: \(displayZoom)x -> \(safeTargetZoom)x", category: .ai)
 
-        triggerZoomRevealAnimation(targetZoom: targetZoom)
+        triggerZoomRevealAnimation(targetZoom: safeTargetZoom)
     }
 
     public func triggerZoomRevealAnimation(targetZoom: CGFloat) {
         guard targetZoom.isFinite, targetZoom > 0, currentZoom.isFinite,
               !isPinchingZoom, !zoomAwaitingVerification else { return }
+        // Hard rule: Auto-zoom NEVER drops below 1.0x (manual user taps/pinch still allow 0.5x).
+        let safeTargetZoom = max(1.0, targetZoom)
         CameraLogger.checkpoint(
             "VM.triggerZoomReveal",
-            detail: String(format: "from=%.2fx to=%.2fx", Double(displayZoom), Double(targetZoom)),
+            detail: String(format: "from=%.2fx to=%.2fx (req=%.2fx)", Double(displayZoom), Double(safeTargetZoom), Double(targetZoom)),
             category: .capture
         )
-        let targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(targetZoom)
-        guard abs(targetDeviceZoom - currentZoom) > 0.05 || abs(targetZoom - displayZoom) > 0.05 else { return }
+        let targetDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(safeTargetZoom)
+        guard abs(targetDeviceZoom - currentZoom) > 0.05 || abs(safeTargetZoom - displayZoom) > 0.05 else { return }
         hasExecutedAutoZoomForSession = true
         postZoomRecovery.reset()
         autoCaptureTask?.cancel()
@@ -2087,55 +2179,53 @@ public final class CameraViewModel: ObservableObject {
         zoomFallbackAfter = .infinity
         zoomStartFrameTimestamp = frameProcessor.latestTrackingFrameSnapshot()?.1.timestamp ?? CACurrentMediaTime()
         postZoomFaceMinimumTimestamp = -Double.infinity
-        pendingTargetZoomForReveal = (targetZoom < 0.99 && !cameraService.hasUltraWideLens)
-            ? targetZoom
-            : cameraService.convertDeviceZoomToDisplayZoom(targetDeviceZoom)
-        selectedZoomPreset = resolveClosestZoomPreset(for: targetZoom)
-        presentZoomChangeHUD(displayZoom: targetZoom)
+        pendingTargetZoomForReveal = cameraService.convertDeviceZoomToDisplayZoom(targetDeviceZoom)
+        selectedZoomPreset = resolveClosestZoomPreset(for: safeTargetZoom)
+        presentZoomChangeHUD(displayZoom: safeTargetZoom)
         alignmentGate.reset()
-        zoomRevealStartDisplayZoom = max(0.1, displayZoom)
-        zoomRevealStartsIn = targetZoom > displayZoom
+        zoomRevealStartDisplayZoom = max(0.5, displayZoom)
+        zoomRevealStartsIn = safeTargetZoom > displayZoom
         liveZoomFactorForReveal = displayZoom
         isZoomRampPhase = false
         lockOnProgress = 0.0
         zoomExpansionProgress = 0.0
         isRevealingZoomTarget = true
         let pinGeneration = targetPinGeneration
+        let smoothDuration = max(0.36, cameraService.estimatedSmoothZoomDuration(from: displayZoom, to: safeTargetZoom))
 
-        // Giai đoạn 2: Khóa mục tiêu & Phát sáng viền Cầu Vồng (Hard Lock & Iridescent Glow: 0.28s)
-        withAnimation(.easeOut(duration: 0.28)) {
+        // Giai đoạn 2: Khóa mục tiêu & Phát sáng viền Cầu Vồng (Hard Lock & Iridescent Glow: 0.24s)
+        withAnimation(.easeOut(duration: 0.24)) {
             lockOnProgress = 1.0
         }
 
-        // Giai đoạn 3: Phản hồi Zoom quang học nhanh, dứt khoát (~0.24s) và mượt 60fps
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) { [weak self] in
+        // Giai đoạn 3: Chuyển Zoom mượt chuẩn thang logarit ease-in-out qua SINGLE owner (`CameraService.applyUnifiedDisplayZoom`)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) { [weak self] in
             guard let self = self, self.targetPinGeneration == pinGeneration,
                   self.zoomAwaitingVerification, !self.isPinchingZoom else { return }
             self.isZoomRampPhase = true
-            if targetZoom < 0.99 && !self.cameraService.hasUltraWideLens {
-                self.activateSimulatedUltraWideFromAI(targetZoom)
-            } else {
-                self.isSimulatedUltraWideActive = false
-                self.simulatedUltraWideFactor = 1.0
-                let delta = Double(abs(targetDeviceZoom - self.currentZoom))
-                let rampDuration: Double = 0.36
-                let smoothRate = Float(max(1.8, min(18.0, delta / rampDuration)))
-                self.cameraService.smoothZoomFactor(to: targetDeviceZoom, rate: smoothRate)
-            }
+            self.isSimulatedUltraWideActive = false
+            self.simulatedUltraWideFactor = 1.0
+            self.cameraService.applyUnifiedDisplayZoom(
+                safeTargetZoom,
+                source: .auto,
+                smooth: true,
+                allowPhysicalSwitch: true,
+                reason: "AI.triggerZoomReveal"
+            )
 
-            withAnimation(.timingCurve(0.2, 0.8, 0.2, 1.0, duration: 0.36)) {
+            withAnimation(.easeInOut(duration: smoothDuration)) {
                 self.zoomExpansionProgress = 1.0
             }
         }
         zoomVerificationTask?.cancel()
         zoomVerificationTask = Task { [weak self] in
-            await self?.verifyZoomAfterRamp(pinGeneration: pinGeneration)
+            await self?.verifyZoomAfterRamp(pinGeneration: pinGeneration, expectedDuration: smoothDuration)
         }
     }
 
     // AI Framing & Composition
     @Published public var framingResult: FramingTargetResult?
-    @Published public var alignmentState: FramingAlignmentState = .analyzing
+    public var alignmentState: FramingAlignmentState = .analyzing
     @Published public var isSmartExposureEnabled: Bool = true
     @Published public internal(set) var plannedEVBias: Float = 0.0
     private var autoFocusPolicy = AutoFocusCapturePolicy()
@@ -2273,13 +2363,63 @@ public final class CameraViewModel: ObservableObject {
     /// Initial target position determined ONCE by AI (normalized 0..1)
     @Published public var initialTargetPoint: CGPoint? = nil
 
-    /// Real-time target position on screen (moves with phone gyroscope towards center (0.5, 0.5))
-    @Published public var currentTargetPoint: CGPoint? = nil
+    /// Real-time target position on screen (moves with phone gyroscope towards center (0.5, 0.5)).
+    /// Not `@Published` on `CameraViewModel` so 60–120Hz IMU ticks NEVER re-render `CameraMainView`;
+    /// high-frequency UI updates flow exclusively through `liveTargetOverlayState`.
+    public var currentTargetPoint: CGPoint? = nil {
+        didSet {
+            let hasNow = (currentTargetPoint != nil)
+            if hasActiveTargetPoint != hasNow {
+                hasActiveTargetPoint = hasNow
+            }
+            liveTargetOverlayState.sync(
+                targetPoint: currentTargetPoint,
+                alignmentDistance: alignmentDistance,
+                isAligned: isPerfectAlignment,
+                isSnapped: isMagneticSnapped,
+                trackingQuality: trackingQuality
+            )
+        }
+    }
+    /// Low-frequency presence flag (only flips on nil <-> non-nil target transitions).
+    @Published public private(set) var hasActiveTargetPoint: Bool = false
 
-    /// Distance from current target point to center (0.5, 0.5)
-    @Published public var alignmentDistance: CGFloat = 1.0
-    @Published public var isPerfectAlignment: Bool = false
-    @Published public var isMagneticSnapped: Bool = false
+    /// Distance from current target point to center (0.5, 0.5) (non-Published; forwarded to `liveTargetOverlayState`).
+    public var alignmentDistance: CGFloat = 1.0 {
+        didSet {
+            liveTargetOverlayState.sync(
+                targetPoint: currentTargetPoint,
+                alignmentDistance: alignmentDistance,
+                isAligned: isPerfectAlignment,
+                isSnapped: isMagneticSnapped,
+                trackingQuality: trackingQuality
+            )
+        }
+    }
+    @Published public var isPerfectAlignment: Bool = false {
+        didSet {
+            guard isPerfectAlignment != oldValue else { return }
+            liveTargetOverlayState.sync(
+                targetPoint: currentTargetPoint,
+                alignmentDistance: alignmentDistance,
+                isAligned: isPerfectAlignment,
+                isSnapped: isMagneticSnapped,
+                trackingQuality: trackingQuality
+            )
+        }
+    }
+    @Published public var isMagneticSnapped: Bool = false {
+        didSet {
+            guard isMagneticSnapped != oldValue else { return }
+            liveTargetOverlayState.sync(
+                targetPoint: currentTargetPoint,
+                alignmentDistance: alignmentDistance,
+                isAligned: isPerfectAlignment,
+                isSnapped: isMagneticSnapped,
+                trackingQuality: trackingQuality
+            )
+        }
+    }
 
     /// Trạng thái khóa cứng mục tiêu khi tâm trắng khớp với tâm Target (0.5, 0.5)
     @Published public private(set) var isTargetLocked: Bool = false
@@ -2743,7 +2883,18 @@ public final class CameraViewModel: ObservableObject {
     @Published public var saveErrorMessage: String? = nil
 
     // MARK: - Advanced Predictive Tracking State Machine
-    @Published public var trackingQuality: TrackingQuality = .locked
+    @Published public var trackingQuality: TrackingQuality = .locked {
+        didSet {
+            guard trackingQuality != oldValue else { return }
+            liveTargetOverlayState.sync(
+                targetPoint: currentTargetPoint,
+                alignmentDistance: alignmentDistance,
+                isAligned: isPerfectAlignment,
+                isSnapped: isMagneticSnapped,
+                trackingQuality: trackingQuality
+            )
+        }
+    }
     @Published public var trackingSensitivity: TrackingSensitivityPreset = .medium {
         didSet {
             UserDefaults.standard.set(trackingSensitivity.rawValue, forKey: "trackingSensitivity")
@@ -2857,6 +3008,12 @@ public final class CameraViewModel: ObservableObject {
         if defaults.object(forKey: "isZoomDebugOverlayEnabled") != nil {
             self.isZoomDebugOverlayEnabled = defaults.bool(forKey: "isZoomDebugOverlayEnabled")
         }
+        if defaults.object(forKey: "isTrackingPerfHUDEnabled") != nil {
+            self.isTrackingPerfHUDEnabled = defaults.bool(forKey: "isTrackingPerfHUDEnabled")
+        }
+        self.debugSmoothZoomDuration = self.cameraService.smoothZoomBaseDuration
+        TrackingPerformanceMonitor.shared.setEnabled(self.isTrackingPerfHUDEnabled)
+        CameraLogger.isDebugTelemetryEnabled = self.isZoomDebugOverlayEnabled || self.isTrackingPerfHUDEnabled
         if defaults.object(forKey: "isLivePhotoEnabled") != nil {
             self.isLivePhotoEnabled = defaults.bool(forKey: "isLivePhotoEnabled")
         }
@@ -3455,19 +3612,6 @@ public final class CameraViewModel: ObservableObject {
         hasExecutedAutoZoomForSession = true
     }
 
-    private func activateSimulatedUltraWideFromAI(_ zoom: CGFloat) {
-        isSimulatedUltraWideActive = true
-        simulatedUltraWideFactor = zoom
-        liveZoomFactorForReveal = zoom
-        displayZoom = zoom
-        SpatialTrackingEngine.shared.updateZoomFactor(zoom)
-        zoomVerified = true
-        zoomAwaitingVerification = false
-        isZoomRampPhase = false
-        isRevealingZoomTarget = false
-        applyPlannedEVBiasIfNeeded()
-    }
-
     private func finishManualZoomIfSettled(_ deviceZoom: CGFloat) {
         guard let target = pendingManualZoomTarget,
               abs(deviceZoom - target) <= 0.03 else { return }
@@ -3525,13 +3669,22 @@ public final class CameraViewModel: ObservableObject {
             self.currentZoom = zoom
             let disp = self.cameraService.convertDeviceZoomToDisplayZoom(zoom)
             self.liveZoomFactorForReveal = disp
-            self.displayZoom = disp
-            if self.isPinchingZoom {
-                self.selectedZoomPreset = self.resolveClosestZoomPreset(for: disp)
+            if abs(self.displayZoom - disp) >= 0.005 {
+                self.displayZoom = disp
+            }
+            let closestPreset = self.resolveClosestZoomPreset(for: disp)
+            if self.isPinchingZoom || self.isRevealingZoomTarget {
+                if self.selectedZoomPreset != closestPreset {
+                    self.selectedZoomPreset = closestPreset
+                }
             }
             SpatialTrackingEngine.shared.updateCameraFieldOfView(self.cameraService.effectiveVideoFieldOfView)
             SpatialTrackingEngine.shared.updateZoomFactor(disp)
             self.finishManualZoomIfSettled(zoom)
+        }
+
+        TrackingPerformanceMonitor.shared.onSnapshotUpdated = { [weak self] snap in
+            self?.trackingPerfHUDState.snapshot = snap
         }
 
         // Realtime Exposure Stats Listener (ISO & Shutter Speed)
@@ -3775,7 +3928,19 @@ public final class CameraViewModel: ObservableObject {
             // A predicted bearing remains visible without pretending it is optical.
             let seeding = quality == .reacquiring && self.latestOpticalPoint == nil &&
                 CACurrentMediaTime() - self.targetPinStartedAt < 1.2
-            self.trackingQuality = seeding ? .predicting : quality
+            let nextQuality: TrackingQuality = seeding ? .predicting : quality
+            if self.trackingQuality != nextQuality {
+                self.trackingQuality = nextQuality
+            }
+            if TrackingPerformanceMonitor.shared.isEnabled {
+                let uiLatencyMs = self.latestOpticalFrameTimestamp.isFinite
+                    ? max(0, (CACurrentMediaTime() - self.latestOpticalFrameTimestamp) * 1000.0)
+                    : nil
+                TrackingPerformanceMonitor.shared.recordOverlayUpdate(
+                    latencyMs: uiLatencyMs,
+                    displayZoom: Double(self.displayZoom)
+                )
+            }
             // Chỉ đánh giá alignment & countdown khi đang ở phase targetPlaced
             switch self.aiSessionState {
             case .targetPlaced, .alignmentPerfect:
@@ -5044,22 +5209,26 @@ public final class CameraViewModel: ObservableObject {
             return plan.zoom
         }()
 
-        var effectiveZoom = plannedTargetZoom
-        // Smart Zoom-Out: Khi chủ thể quá sát/tràn viền ở tiêu cự hiện tại (ví dụ đang ở 2x/3x hoặc sát rìa 1x), cho phép lùi về 1x hoặc 0.5x
+        var effectiveZoom = max(1.0, plannedTargetZoom)
+        // Smart Zoom-Out: Khi chủ thể quá sát/tràn viền ở tiêu cự đang zoom (> 1.0x, ví dụ 2x/3x),
+        // cho phép lùi về 1.0x Wide. TUYỆT ĐỐI KHÔNG tự tụt xuống 0.5x Ultra-Wide (chỉ người dùng chọn tay).
         let subRect = plan.subjectRect
         let crampedArea = subRect.width * subRect.height
         let touchesBorder = subRect.minX <= 0.025 || subRect.maxX >= 0.975 || subRect.minY <= 0.025 || subRect.maxY >= 0.975
         let isCrampedAtCurrentZoom = crampedArea > 0.50 || (touchesBorder && max(subRect.width, subRect.height) > 0.60)
         if isCrampedAtCurrentZoom && evaluatedFraming.recommendedZoomFactor < displayZoom - 0.10 {
-            effectiveZoom = min(effectiveZoom, evaluatedFraming.recommendedZoomFactor)
+            effectiveZoom = max(1.0, min(effectiveZoom, evaluatedFraming.recommendedZoomFactor))
         }
-        if !(effectiveZoom < 0.99 && !cameraService.hasUltraWideLens) {
-            effectiveZoom = cameraService.convertDeviceZoomToDisplayZoom(
-                cameraService.convertDisplayZoomToDeviceZoom(effectiveZoom))
-        }
-        // Ưu tiên khớp vào nấc ống kính quang học phần cứng (0.5x, 1.0x, 2.0x, 3.0x, 5.0x) hoặc tiêu cự prime 28mm/35mm (1.2x, 1.5x)
-        if let opticalMatch = availableZooms.min(by: { abs($0 - effectiveZoom) < abs($1 - effectiveZoom) }),
-           abs(effectiveZoom - opticalMatch) / max(0.5, opticalMatch) <= 0.08,
+        effectiveZoom = max(
+            1.0,
+            cameraService.convertDeviceZoomToDisplayZoom(
+                cameraService.convertDisplayZoomToDeviceZoom(effectiveZoom)
+            )
+        )
+        // Ưu tiên khớp vào nấc ống kính quang học phần cứng (>= 1.0x: 1.0x, 2.0x, 3.0x, 5.0x) hoặc tiêu cự prime 28mm/35mm (1.2x, 1.5x)
+        let autoOpticalZooms = availableZooms.filter { $0 >= 1.0 }
+        if let opticalMatch = autoOpticalZooms.min(by: { abs($0 - effectiveZoom) < abs($1 - effectiveZoom) }),
+           abs(effectiveZoom - opticalMatch) / max(1.0, opticalMatch) <= 0.08,
            opticalMatch <= effectiveZoom * 1.04 {
             effectiveZoom = opticalMatch
         } else if abs(effectiveZoom - 1.2) <= 0.06 {
@@ -5067,6 +5236,7 @@ public final class CameraViewModel: ObservableObject {
         } else if abs(effectiveZoom - 1.5) <= 0.06 {
             effectiveZoom = 1.5
         }
+        effectiveZoom = max(1.0, effectiveZoom)
         // Triệt tiêu micro-zoom vô nghĩa (< 0.11x) gây mờ nội suy kỹ thuật số mà không thay đổi bố cục
         if abs(effectiveZoom - displayZoom) < 0.11 {
             effectiveZoom = displayZoom
@@ -5545,6 +5715,16 @@ public final class CameraViewModel: ObservableObject {
             guard SpatialTrackingEngine.shared.isTrackingActive else { return }
         }
         guard measurement.frame.timestamp > latestOpticalFrameTimestamp else { return }
+        // Không tin kết quả detect/optical tính từ khung hình cũ chụp trước hoặc giữa lúc ống kính đang chuyển zoom!
+        // Trong lúc chuyển zoom, `SpatialTrackingEngine` vẫn chiếu tia 3D theo Gyro 200Hz + zoom thật nên target không bị nhảy.
+        guard cameraService.isDetectionFreshForCurrentZoom(
+            frameTimestamp: measurement.frame.timestamp,
+            frameDisplayZoom: measurement.frame.displayZoom
+        ) else { return }
+        if TrackingPerformanceMonitor.shared.isEnabled {
+            let trackLatencyMs = max(0, (CACurrentMediaTime() - measurement.frame.timestamp) * 1000.0)
+            TrackingPerformanceMonitor.shared.recordVisionTrackDuration(ms: trackLatencyMs)
+        }
         // Only an observation accepted by fusion can unlock zoom or the shutter.
         SpatialTrackingEngine.shared.updateWithOpticalDetection(
             point: measurement.point, confidence: measurement.confidence,
@@ -5664,7 +5844,10 @@ public final class CameraViewModel: ObservableObject {
         }
         let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),
             radius: Double(effectiveRadius), freshEvidence: (hasFreshOpticalLock || isTargetLocked) && !isPinchingZoom)
-        isPerfectAlignment = alignmentGate.isAligned && !localCompositionNeedsLevel
+        let nextPerfectAlignment = alignmentGate.isAligned && !localCompositionNeedsLevel
+        if isPerfectAlignment != nextPerfectAlignment {
+            isPerfectAlignment = nextPerfectAlignment
+        }
         if !isTargetLocked && state == .ready && !localCompositionNeedsLevel {
             lockHardTarget()
         }
@@ -5676,17 +5859,25 @@ public final class CameraViewModel: ObservableObject {
             if !zoomAwaitingVerification && pendingManualZoomTarget == nil {
                 zoomVerified = true
             }
-            aiSessionState = .targetPlaced(locked: hasFreshOpticalLock)
+            let nextOutsideState: AISessionState = .targetPlaced(locked: hasFreshOpticalLock)
+            if aiSessionState != nextOutsideState {
+                aiSessionState = nextOutsideState
+            }
             let angle = atan2(dy, dx) * 180 / .pi
             alignmentState = .guiding(distance: distance, angle: angle < 0 ? angle + 360 : angle)
             return
         }
         if localCompositionNeedsLevel {
-            aiSessionState = .targetPlaced(locked: hasFreshOpticalLock)
+            let nextLevelState: AISessionState = .targetPlaced(locked: hasFreshOpticalLock)
+            if aiSessionState != nextLevelState {
+                aiSessionState = nextLevelState
+            }
             alignmentState = .guiding(distance: distance, angle: 0)
             return
         }
-        aiSessionState = .alignmentPerfect
+        if aiSessionState != .alignmentPerfect {
+            aiSessionState = .alignmentPerfect
+        }
         alignmentState = .aligned(score: 1)
 
         // Một lệnh lấy nét cho mỗi lần ghim mục tiêu / mức zoom; việc chụp chỉ chờ thấu kính ổn định thật sự
@@ -5767,14 +5958,14 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    private func verifyZoomAfterRamp(pinGeneration: UInt64) async {
-        let deadline = CACurrentMediaTime() + 3.8
+    private func verifyZoomAfterRamp(pinGeneration: UInt64, expectedDuration: TimeInterval = 0.85) async {
+        let deadline = CACurrentMediaTime() + max(4.2, expectedDuration + 2.8)
         var reachedAt: TimeInterval?
         while CACurrentMediaTime() < deadline {
             do { try await Task.sleep(nanoseconds: 50_000_000) } catch { return }
             guard !Task.isCancelled, targetPinGeneration == pinGeneration,
                   !isPinchingZoom else { return }
-            let reached = abs(displayZoom - pendingTargetZoomForReveal) <= 0.08
+            let reached = abs(displayZoom - pendingTargetZoomForReveal) <= 0.08 && !cameraService.isZoomTransitioningOrSettling
             if reached {
                 if reachedAt == nil { reachedAt = CACurrentMediaTime() }
                 if latestOpticalFrameTimestamp > (reachedAt ?? .infinity) + 0.05 || CACurrentMediaTime() - (reachedAt ?? 0) >= 0.12 {
@@ -5832,9 +6023,16 @@ public final class CameraViewModel: ObservableObject {
         postZoomRecovery.reset()
         lastFailedCaptureOpticalTimestamp = -.infinity
         lastFailedCaptureAttemptTime = -.infinity
-        let originalDeviceZoom = cameraService.convertDisplayZoomToDeviceZoom(zoomRevealStartDisplayZoom)
-        cameraService.setZoomFactor(originalDeviceZoom)
-        hasExecutedAutoZoomForSession = false
+        let safeRestoreDisplayZoom = max(1.0, zoomRevealStartDisplayZoom)
+        cameraService.applyUnifiedDisplayZoom(
+            safeRestoreDisplayZoom,
+            source: .systemRestore,
+            smooth: true,
+            allowPhysicalSwitch: true,
+            reason: "AI.verifyFailureRestore"
+        )
+        // Giữ hasExecutedAutoZoomForSession = true để không tạo vòng lặp tự zoom lên rồi tụt về liên tục
+        hasExecutedAutoZoomForSession = true
         withAnimation(.easeOut(duration: 0.30)) {
             self.isRevealingZoomTarget = false
             self.isZoomRampPhase = false
@@ -5978,7 +6176,13 @@ public final class CameraViewModel: ObservableObject {
         let targetDisplayZoom: CGFloat = 1.0
         self.effectiveWindowedBaseZoom = targetDisplayZoom
         if abs(displayZoom - targetDisplayZoom) > 0.05 {
-            cameraService.applyDisplayZoomWithPhysicalLensSwitching(targetDisplayZoom, smooth: true, rate: 4.5, allowPhysicalSwitch: true)
+            cameraService.applyUnifiedDisplayZoom(
+                targetDisplayZoom,
+                source: .systemRestore,
+                smooth: true,
+                allowPhysicalSwitch: true,
+                reason: "UI.windowedZoomBase"
+            )
         }
     }
 
@@ -5986,7 +6190,9 @@ public final class CameraViewModel: ObservableObject {
         if displayZoomVal < 0.99 && !cameraService.hasUltraWideLens {
             self.isSimulatedUltraWideActive = true
             self.simulatedUltraWideFactor = displayZoomVal
-            self.displayZoom = displayZoomVal
+            if !smooth {
+                self.displayZoom = displayZoomVal
+            }
             self.selectedZoomPreset = 0.5
             SpatialTrackingEngine.shared.updateZoomFactor(displayZoomVal)
         } else if displayZoomVal >= 0.99 {
@@ -5997,7 +6203,13 @@ public final class CameraViewModel: ObservableObject {
         let requestID = UUID()
         manualZoomRequestID = requestID
         manualZoomSettledAt = CACurrentMediaTime()
-        cameraService.applyDisplayZoomWithPhysicalLensSwitching(displayZoomVal, smooth: smooth, rate: 4.5, allowPhysicalSwitch: true) { [weak self] actualDeviceZoom in
+        cameraService.applyUnifiedDisplayZoom(
+            displayZoomVal,
+            source: .manual,
+            smooth: smooth,
+            allowPhysicalSwitch: true,
+            reason: smooth ? "UI.manualSmooth" : "UI.manualDirect"
+        ) { [weak self] actualDeviceZoom in
             guard let self, self.manualZoomRequestID == requestID else { return }
             self.manualZoomRequestID = nil
             self.pendingManualZoomTarget = nil
@@ -6025,13 +6237,25 @@ public final class CameraViewModel: ObservableObject {
         if now - lastContinuousZoomTime >= 0.025 || abs(displayZoomVal - lastContinuousAppliedZoom) > 0.08 {
             lastContinuousZoomTime = now
             lastContinuousAppliedZoom = displayZoomVal
-            cameraService.applyDisplayZoomWithPhysicalLensSwitching(displayZoomVal, smooth: false, allowPhysicalSwitch: false)
+            cameraService.applyUnifiedDisplayZoom(
+                displayZoomVal,
+                source: .pinchContinuous,
+                smooth: false,
+                allowPhysicalSwitch: false,
+                reason: "UI.pinchLegacyContinuous"
+            )
         }
 
         pinchSettleWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self, self.isPinchingZoom else { return }
-            self.cameraService.applyDisplayZoomWithPhysicalLensSwitching(displayZoomVal, smooth: false, allowPhysicalSwitch: true)
+            self.cameraService.applyUnifiedDisplayZoom(
+                displayZoomVal,
+                source: .pinchContinuous,
+                smooth: false,
+                allowPhysicalSwitch: true,
+                reason: "UI.pinchLegacySettle"
+            )
         }
         pinchSettleWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.16, execute: workItem)
@@ -6407,8 +6631,15 @@ public final class CameraViewModel: ObservableObject {
         }
         self.haptics.triggerMagneticSnap()
 
-        if self.isAutoZoomEnabled && guidance.suggestedZoom > 1.05 && abs(guidance.suggestedZoom - self.currentZoom) > 0.1 {
-            self.cameraService.smoothZoomFactor(to: guidance.suggestedZoom, rate: 1.5)
+        let safeGuidanceZoom = max(1.0, guidance.suggestedZoom)
+        if self.isAutoZoomEnabled && safeGuidanceZoom > 1.05 && abs(safeGuidanceZoom - self.displayZoom) > 0.10 {
+            self.cameraService.applyUnifiedDisplayZoom(
+                safeGuidanceZoom,
+                source: .auto,
+                smooth: true,
+                allowPhysicalSwitch: true,
+                reason: "VideoDirector.guidance"
+            )
         }
     }
 

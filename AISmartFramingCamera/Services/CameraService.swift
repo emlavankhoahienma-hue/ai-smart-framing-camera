@@ -224,42 +224,266 @@ public final class CameraService: NSObject {
         return teleDevice
     }
 
-    public func convertDisplayZoomToDeviceZoom(_ displayZoom: CGFloat) -> CGFloat {
-        guard displayZoom.isFinite else { return 1.0 }
-        if isDualCameraActive {
-            return max(1.0, min(displayZoom, maxZoom))
+    // MARK: - Single Zoom Owner (Unified Display Zoom, Audit Log & Smooth Logarithmic Animator)
+    private let zoomStateLock = NSLock()
+    private let zoomController = ZoomTransitionController()
+    private var smoothZoomDisplayLink: CADisplayLink?
+    private var smoothZoomDisplayLinkProxy: SmoothZoomDisplayLinkProxy?
+    private var zoomTickInFlight: Bool = false
+    private var pendingSmoothZoomCompletion: (@MainActor (CGFloat?) -> Void)?
+
+    private static let smoothZoomDurationDefaultsKey = "alignai_debug_smooth_zoom_duration_v1"
+
+    /// Thời lượng chuẩn (giây) cho thay đổi 1 octave (1x → 2x) của hiệu ứng zoom mượt thang logarit.
+    /// Mặc định 0.85s (trong dải 0.6–1.2s chuẩn Camera gốc), có thể chỉnh trực tiếp bằng thanh trượt ẩn ở chế độ Debug.
+    public var smoothZoomBaseDuration: TimeInterval {
+        get {
+            zoomStateLock.withLock { zoomController.animationProfile.baseOneOctaveDuration }
         }
-        if activeCamera?.deviceType == .builtInTelephotoCamera {
-            let optical = telephotoOpticalDisplayZoom ?? 2.0
-            return max(1.0, min(displayZoom / optical, maxZoom))
+        set {
+            let clamped = max(
+                ZoomAnimationProfile.minConfigurableDuration,
+                min(ZoomAnimationProfile.maxConfigurableDuration, newValue.isFinite ? newValue : ZoomAnimationProfile.defaultOneOctaveDuration)
+            )
+            zoomStateLock.withLock {
+                zoomController.animationProfile.baseOneOctaveDuration = clamped
+            }
+            UserDefaults.standard.set(clamped, forKey: Self.smoothZoomDurationDefaultsKey)
         }
-        if !hasUltraWideLens && displayZoom < 1.0 {
-            return minZoom
-        }
-        guard displayMultiplier.isFinite, displayMultiplier > 0 else {
-            return max(minZoom, min(defaultDisplayZoom, maxZoom))
-        }
-        let devZoom = displayZoom * displayMultiplier
-        guard devZoom.isFinite else { return max(minZoom, min(defaultDisplayZoom, maxZoom)) }
-        return max(minZoom, min(devZoom, maxZoom))
     }
 
+    /// Ước lượng chính xác thời lượng chuyển zoom mượt (giây) để đồng bộ khung reveal UI với phần cứng.
+    public func estimatedSmoothZoomDuration(from startDisplayZoom: CGFloat, to targetDisplayZoom: CGFloat) -> TimeInterval {
+        zoomStateLock.withLock {
+            zoomController.animationProfile.duration(from: startDisplayZoom, to: targetDisplayZoom)
+        }
+    }
+
+    public var isZoomTransitioningOrSettling: Bool {
+        zoomStateLock.withLock { !zoomController.isSettled(at: CACurrentMediaTime()) }
+    }
+
+    public func isDetectionFreshForCurrentZoom(frameTimestamp: TimeInterval, frameDisplayZoom: Double? = nil) -> Bool {
+        zoomStateLock.withLock {
+            zoomController.isDetectionFreshForCurrentZoom(
+                frameTimestamp: frameTimestamp,
+                frameDisplayZoom: frameDisplayZoom,
+                at: CACurrentMediaTime()
+            )
+        }
+    }
+
+    public func zoomAuditLogSummary(maxLines: Int = 80) -> String {
+        zoomStateLock.withLock { zoomController.formattedAuditSummary(maxLines: maxLines) }
+    }
+
+    private func buildCurrentZoomHardwareConfig(for device: AVCaptureDevice? = nil) -> ZoomHardwareConfig {
+        let cam = device ?? activeCamera
+        let isTele = (cam?.deviceType == .builtInTelephotoCamera)
+        let maxDev = isDualCameraActive
+            ? min(maxZoom, cam?.activeFormat.videoMaxZoomFactor ?? maxZoom)
+            : maxZoom
+        return ZoomHardwareConfig(
+            displayMultiplier: displayMultiplier,
+            minDeviceZoom: minZoom,
+            maxDeviceZoom: max(minZoom, maxDev),
+            hasPhysicalUltraWide: hasUltraWideLens,
+            allowsSimulatedUltraWide: UltraWideWarpEngine.live.isSupported,
+            isDualCameraActive: isDualCameraActive,
+            isFrontCamera: currentCameraPosition == .front,
+            isStandaloneTelephoto: isTele,
+            telephotoOpticalDisplayZoom: telephotoOpticalDisplayZoom ?? 2.0,
+            opticalSwitchoverDisplayZooms: opticalDisplayZoomOptions,
+            maxDisplayZoomCap: 10.0
+        )
+    }
+
+    /// SINGLE authoritative display -> hardware device zoom conversion chokepoint.
+    public func convertDisplayZoomToDeviceZoom(_ displayZoom: CGFloat) -> CGFloat {
+        let cfg = buildCurrentZoomHardwareConfig()
+        return DisplayDeviceZoomMapper.deviceZoom(forDisplayZoom: displayZoom, config: cfg)
+    }
+
+    /// SINGLE authoritative hardware device -> display zoom conversion chokepoint.
     public func convertDeviceZoomToDisplayZoom(_ deviceZoom: CGFloat) -> CGFloat {
-        guard deviceZoom.isFinite else { return defaultDisplayZoom }
-        if isDualCameraActive {
-            return max(1.0, min(deviceZoom, maxZoom))
+        let cfg = buildCurrentZoomHardwareConfig()
+        let sim: CGFloat? = (!hasUltraWideLens && isSimulatedUltraWideActive) ? simulatedUltraWideFactor : nil
+        return DisplayDeviceZoomMapper.displayZoom(forDeviceZoom: deviceZoom, config: cfg, simulatedUltraWideFactor: sim)
+    }
+
+    /// SINGLE hardware write chokepoint for `camera.videoZoomFactor`.
+    /// Caller MUST hold `camera.lockForConfiguration()` on `sessionQueue`.
+    @discardableResult
+    private func commitDeviceZoomUnlocked(
+        on camera: AVCaptureDevice,
+        targetDeviceZoom: CGFloat,
+        displayZoom: CGFloat,
+        source: ZoomCommandSource,
+        reason: String,
+        logToFile: Bool = true
+    ) -> CGFloat {
+        let oldDev = camera.videoZoomFactor
+        let minAllowed = max(1.0, camera.minAvailableVideoZoomFactor)
+        let formatMax = camera.activeFormat.videoMaxZoomFactor
+        let maxAllowed = max(minAllowed, min(camera.maxAvailableVideoZoomFactor, min(formatMax, max(self.maxZoom, minAllowed))))
+        let clampedDev = max(minAllowed, min(targetDeviceZoom.isFinite ? targetDeviceZoom : minAllowed, maxAllowed))
+        if camera.isRampingVideoZoom {
+            camera.cancelVideoZoomRamp()
         }
-        if activeCamera?.deviceType == .builtInTelephotoCamera {
-            let optical = telephotoOpticalDisplayZoom ?? 2.0
-            return deviceZoom * optical
+        camera.videoZoomFactor = clampedDev
+        let actualDev = camera.videoZoomFactor
+        self.currentZoom = actualDev
+        if logToFile {
+            let oldDisp = self.convertDeviceZoomToDisplayZoom(oldDev)
+            let actualDisp = self.convertDeviceZoomToDisplayZoom(actualDev)
+            CameraLogger.info(
+                String(
+                    format: "ZOOM_WRITE [%@] disp=%.2fx->%.2fx (req=%.2fx) dev=%.2f->%.2f mult=%.1f reason=%@",
+                    source.rawValue, Double(oldDisp), Double(actualDisp), Double(displayZoom),
+                    Double(oldDev), Double(actualDev), Double(self.displayMultiplier), reason
+                ),
+                category: .capture
+            )
         }
-        if !hasUltraWideLens && isSimulatedUltraWideActive {
-            return simulatedUltraWideFactor
+        return actualDev
+    }
+
+    /// Central KVO observer handler: suppresses transient AVFoundation `1.0` resets during format/preset reconfig
+    /// and prevents KVO jitter from fighting an active smooth `CADisplayLink` ramp.
+    private func handleExternalZoomKVO(_ rawDeviceZoom: CGFloat) {
+        let acceptedDisplay: CGFloat? = zoomStateLock.withLock {
+            zoomController.handleExternalHardwareZoomObservation(rawDeviceZoom, at: CACurrentMediaTime())
         }
-        guard displayMultiplier.isFinite, displayMultiplier > 0 else {
-            return defaultDisplayZoom
+        guard acceptedDisplay != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.onLiveZoomFactorChanged?(rawDeviceZoom)
         }
-        return deviceZoom / displayMultiplier
+    }
+
+    private func startSmoothZoomDisplayLink() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if self.smoothZoomDisplayLink != nil { return }
+            let proxy = SmoothZoomDisplayLinkProxy(owner: self)
+            let link = CADisplayLink(target: proxy, selector: #selector(SmoothZoomDisplayLinkProxy.tick(_:)))
+            if #available(iOS 15.0, *) {
+                link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 60)
+            }
+            link.add(to: .main, forMode: .common)
+            self.smoothZoomDisplayLinkProxy = proxy
+            self.smoothZoomDisplayLink = link
+        }
+    }
+
+    private func stopSmoothZoomDisplayLink() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.smoothZoomDisplayLink?.invalidate()
+            self.smoothZoomDisplayLink = nil
+            self.smoothZoomDisplayLinkProxy = nil
+        }
+    }
+
+    fileprivate func handleSmoothZoomDisplayLinkTick() {
+        let tickDecision: (step: ZoomStepOutput, shouldRun: Bool) = zoomStateLock.withLock {
+            guard zoomController.isTransitioning else {
+                return (zoomController.step(at: CACurrentMediaTime()), false)
+            }
+            if zoomTickInFlight {
+                return (
+                    ZoomStepOutput(
+                        isAnimating: true,
+                        didFinishThisStep: false,
+                        displayZoom: zoomController.currentDisplayZoom,
+                        deviceZoom: zoomController.currentDeviceZoom,
+                        progress: 0,
+                        source: zoomController.activeSource
+                    ),
+                    false
+                )
+            }
+            zoomTickInFlight = true
+            let step = zoomController.step(at: CACurrentMediaTime())
+            return (step, true)
+        }
+
+        if !tickDecision.shouldRun {
+            if !tickDecision.step.isAnimating {
+                stopSmoothZoomDisplayLink()
+            }
+            return
+        }
+
+        let step = tickDecision.step
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            defer {
+                self.zoomStateLock.withLock { self.zoomTickInFlight = false }
+            }
+            guard !self.isPhotoCaptureInFlight, let camera = self.activeCamera else {
+                self.zoomStateLock.withLock {
+                    self.zoomController.cancelActiveTransition(at: CACurrentMediaTime(), reason: "smoothTick.cameraUnavailable")
+                }
+                self.stopSmoothZoomDisplayLink()
+                let pending = self.zoomStateLock.withLock { () -> (@MainActor (CGFloat?) -> Void)? in
+                    let cb = self.pendingSmoothZoomCompletion
+                    self.pendingSmoothZoomCompletion = nil
+                    return cb
+                }
+                if let pending {
+                    DispatchQueue.main.async { pending(nil) }
+                }
+                return
+            }
+
+            let simUW = DisplayDeviceZoomMapper.usesSimulatedUltraWide(
+                displayZoom: step.displayZoom,
+                source: step.source,
+                config: self.buildCurrentZoomHardwareConfig(for: camera)
+            )
+            self.isSimulatedUltraWideActive = simUW
+            self.simulatedUltraWideFactor = simUW ? step.displayZoom : 1.0
+
+            var actualDev = self.currentZoom
+            do {
+                try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
+                if camera.deviceType == .builtInTripleCamera || camera.deviceType == .builtInDualCamera || camera.deviceType == .builtInDualWideCamera {
+                    self.configureConstituentDeviceSwitching(for: camera)
+                }
+                actualDev = self.commitDeviceZoomUnlocked(
+                    on: camera,
+                    targetDeviceZoom: step.deviceZoom,
+                    displayZoom: step.displayZoom,
+                    source: step.source,
+                    reason: step.didFinishThisStep ? "smoothRamp.finish" : "smoothRamp.tick",
+                    logToFile: step.didFinishThisStep
+                )
+            } catch {
+                CameraLogger.error("CameraService: Loi cap nhat tick zoom muot", error: error, category: .capture)
+            }
+
+            let finished = step.didFinishThisStep || !step.isAnimating
+            let completionToCall: (@MainActor (CGFloat?) -> Void)? = finished
+                ? self.zoomStateLock.withLock {
+                    let cb = self.pendingSmoothZoomCompletion
+                    self.pendingSmoothZoomCompletion = nil
+                    return cb
+                }
+                : nil
+            if finished {
+                self.stopSmoothZoomDisplayLink()
+            }
+            let reportedDev = actualDev
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.onLiveZoomFactorChanged?(reportedDev)
+                if finished {
+                    self.delegate?.cameraService(self, didChangeZoomFactor: reportedDev)
+                    completionToCall?(reportedDev)
+                }
+            }
+        }
     }
 
     /// True physical optical lens switchover rungs in display zoom units (never includes simulated 0.5x or digital-only steps).
@@ -405,6 +629,15 @@ public final class CameraService: NSObject {
 
     private override init() {
         super.init()
+        let savedDuration = UserDefaults.standard.double(forKey: Self.smoothZoomDurationDefaultsKey)
+        if savedDuration >= ZoomAnimationProfile.minConfigurableDuration && savedDuration <= ZoomAnimationProfile.maxConfigurableDuration {
+            zoomStateLock.withLock {
+                zoomController.animationProfile.baseOneOctaveDuration = savedDuration
+            }
+        }
+        CameraLogger.registerZoomAuditProvider { [weak self] in
+            self?.zoomAuditLogSummary(maxLines: 80) ?? "(CameraService chưa khởi tạo)"
+        }
     }
 
     // Called only from sessionQueue. Delegate notifications are serialized on main.
@@ -446,6 +679,9 @@ public final class CameraService: NSObject {
         notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
         zoomObservation?.invalidate()
         constituentObservation?.invalidate()
+        smoothZoomDisplayLink?.invalidate()
+        smoothZoomDisplayLink = nil
+        smoothZoomDisplayLinkProxy = nil
     }
 
     private func configureConstituentDeviceSwitching(for camera: AVCaptureDevice) {
@@ -487,19 +723,33 @@ public final class CameraService: NSObject {
     /// An explicit user re-pin cancels an earlier AI lens ramp at its current
     /// physical zoom. Configuration and the actual zoom read share sessionQueue.
     public func cancelZoomRamp() {
+        let pending = zoomStateLock.withLock { () -> (@MainActor (CGFloat?) -> Void)? in
+            zoomController.cancelActiveTransition(at: CACurrentMediaTime(), reason: "cancelZoomRamp")
+            let cb = pendingSmoothZoomCompletion
+            pendingSmoothZoomCompletion = nil
+            return cb
+        }
+        stopSmoothZoomDisplayLink()
         sessionQueue.async { [weak self] in
-            guard let self, let camera = self.activeCamera else { return }
+            guard let self, let camera = self.activeCamera else {
+                if let pending { DispatchQueue.main.async { pending(nil) } }
+                return
+            }
             do {
                 try camera.lockForConfiguration()
-                camera.cancelVideoZoomRamp()
+                if camera.isRampingVideoZoom {
+                    camera.cancelVideoZoomRamp()
+                }
                 let zoom = camera.videoZoomFactor
                 camera.unlockForConfiguration()
                 self.currentZoom = zoom
                 DispatchQueue.main.async { [weak self] in
                     self?.onLiveZoomFactorChanged?(zoom)
+                    pending?(zoom)
                 }
             } catch {
                 CameraLogger.error("Không thể dừng AI zoom khi đặt lại mục tiêu", error: error, category: .capture)
+                if let pending { DispatchQueue.main.async { pending(nil) } }
             }
         }
     }
@@ -547,12 +797,13 @@ public final class CameraService: NSObject {
                 mediaType: .video,
                 position: .back
             ).devices.first
+            self.zoomStateLock.withLock {
+                _ = self.zoomController.beginCameraReconfiguration(reason: "setupSession", at: CACurrentMediaTime())
+            }
             self.zoomObservation?.invalidate()
             self.zoomObservation = camera.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
                 guard let newValue = change.newValue else { return }
-                DispatchQueue.main.async {
-                    self?.onLiveZoomFactorChanged?(newValue)
-                }
+                self?.handleExternalZoomKVO(newValue)
             }
             if #available(iOS 15.0, *) {
                 self.constituentObservation?.invalidate()
@@ -643,13 +894,29 @@ public final class CameraService: NSObject {
             }
 
             // Dat muc zoom khoi dong mac dinh la 1.0x (Cam bien chinh Wide sac net chuan xac)
-            let initialDeviceZoom = self.convertDisplayZoomToDeviceZoom(1.0)
+            let initialCfg = self.buildCurrentZoomHardwareConfig(for: camera)
+            let initialRestored = self.zoomStateLock.withLock {
+                self.zoomController.endCameraReconfiguration(
+                    newConfig: initialCfg,
+                    overrideDisplayZoom: 1.0,
+                    reason: "setupSession.init",
+                    at: CACurrentMediaTime()
+                )
+            }
+            let initialDeviceZoom = initialRestored.deviceZoom
             self.currentZoom = initialDeviceZoom
 
             do {
                 try camera.lockForConfiguration()
                 self.configureConstituentDeviceSwitching(for: camera)
-                camera.videoZoomFactor = initialDeviceZoom
+                _ = self.commitDeviceZoomUnlocked(
+                    on: camera,
+                    targetDeviceZoom: initialDeviceZoom,
+                    displayZoom: 1.0,
+                    source: .lensInit,
+                    reason: "setupSession.preCommit",
+                    logToFile: false
+                )
                 if camera.activeFormat.isVideoHDRSupported {
                     camera.automaticallyAdjustsVideoHDREnabled = true
                 }
@@ -888,6 +1155,22 @@ public final class CameraService: NSObject {
                 self.notificationObservers = [subjectAreaObserver, interruptedObserver, interruptionEndedObserver, audioInterruptionObserver, runtimeErrorObserver]
 
                 self.captureSession.commitConfiguration()
+                // Re-assert 1.0x display zoom AFTER sessionPreset/input commit because AVFoundation may reset
+                // videoZoomFactor to 1.0 (= 0.5x Ultra-Wide on Triple/DualWide) on commitConfiguration().
+                let postCommitDeviceZoom = self.convertDisplayZoomToDeviceZoom(1.0)
+                if abs(camera.videoZoomFactor - postCommitDeviceZoom) > 0.01 {
+                    if let _ = try? camera.lockForConfiguration() {
+                        _ = self.commitDeviceZoomUnlocked(
+                            on: camera,
+                            targetDeviceZoom: postCommitDeviceZoom,
+                            displayZoom: 1.0,
+                            source: .lensInit,
+                            reason: "setupSession.postCommitRestore",
+                            logToFile: true
+                        )
+                        camera.unlockForConfiguration()
+                    }
+                }
                 DispatchQueue.main.async { completion(true) }
             } catch {
                 self.captureSession.commitConfiguration()
@@ -923,6 +1206,11 @@ public final class CameraService: NSObject {
     }
 
     public func stop() {
+        zoomStateLock.withLock {
+            zoomController.cancelActiveTransition(at: CACurrentMediaTime(), reason: "CameraService.stop")
+            pendingSmoothZoomCompletion = nil
+        }
+        stopSmoothZoomDisplayLink()
         sessionQueue.async { [weak self] in
             guard let self else { return }
             self.wantsSessionRunning = false
@@ -1010,9 +1298,7 @@ public final class CameraService: NSObject {
         zoomObservation?.invalidate()
         zoomObservation = camera.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
             guard let newValue = change.newValue else { return }
-            DispatchQueue.main.async {
-                self?.onLiveZoomFactorChanged?(newValue)
-            }
+            self?.handleExternalZoomKVO(newValue)
         }
         if #available(iOS 15.0, *) {
             constituentObservation?.invalidate()
@@ -1043,6 +1329,28 @@ public final class CameraService: NSObject {
             }
         }
         reattachSingleSessionInput()
+        if let cam = activeCamera {
+            let cfg = buildCurrentZoomHardwareConfig(for: cam)
+            let restored = zoomStateLock.withLock {
+                zoomController.endCameraReconfiguration(
+                    newConfig: cfg,
+                    overrideDisplayZoom: defaultDisplayZoom,
+                    reason: "abortDualSetup.restore",
+                    at: CACurrentMediaTime()
+                )
+            }
+            if let _ = try? cam.lockForConfiguration() {
+                _ = commitDeviceZoomUnlocked(
+                    on: cam,
+                    targetDeviceZoom: restored.deviceZoom,
+                    displayZoom: restored.displayZoom,
+                    source: .systemRestore,
+                    reason: "abortDualSetup.restore",
+                    logToFile: true
+                )
+                cam.unlockForConfiguration()
+            }
+        }
         savedPrimaryActiveFormat = nil
         savedSingleSessionCamera = nil
         multiCamPrimaryPreviewLayer = nil
@@ -1128,10 +1436,37 @@ public final class CameraService: NSObject {
                         primaryCamera.activeVideoMaxFrameDuration = fps30
                     }
                     let maxAllowedZoom = min(primaryCamera.activeFormat.videoMaxZoomFactor, primaryCamera.maxAvailableVideoZoomFactor)
-                    primaryCamera.videoZoomFactor = 1.0
                     self.minZoom = 1.0
                     self.maxZoom = min(10.0, maxAllowedZoom)
-                    self.currentZoom = 1.0
+                    let dualCfg = ZoomHardwareConfig(
+                        displayMultiplier: 1.0,
+                        minDeviceZoom: 1.0,
+                        maxDeviceZoom: self.maxZoom,
+                        hasPhysicalUltraWide: false,
+                        allowsSimulatedUltraWide: false,
+                        isDualCameraActive: true,
+                        isFrontCamera: false,
+                        isStandaloneTelephoto: false,
+                        telephotoOpticalDisplayZoom: 2.0,
+                        opticalSwitchoverDisplayZooms: [1.0],
+                        maxDisplayZoomCap: 10.0
+                    )
+                    self.zoomStateLock.withLock {
+                        _ = self.zoomController.endCameraReconfiguration(
+                            newConfig: dualCfg,
+                            overrideDisplayZoom: 1.0,
+                            reason: "startDualCamera",
+                            at: CACurrentMediaTime()
+                        )
+                    }
+                    _ = self.commitDeviceZoomUnlocked(
+                        on: primaryCamera,
+                        targetDeviceZoom: 1.0,
+                        displayZoom: 1.0,
+                        source: .lensInit,
+                        reason: "startDualCamera.primary",
+                        logToFile: true
+                    )
                     if primaryCamera.isFocusModeSupported(.continuousAutoFocus) {
                         primaryCamera.focusMode = .continuousAutoFocus
                     }
@@ -1378,12 +1713,26 @@ public final class CameraService: NSObject {
                 self.configureConstituentDeviceSwitching(for: cam)
                 self.minZoom = cam.minAvailableVideoZoomFactor
                 self.maxZoom = min(cam.maxAvailableVideoZoomFactor, 10.0)
-                let restoredZoom = self.convertDisplayZoomToDeviceZoom(self.defaultDisplayZoom)
+                let cfg = self.buildCurrentZoomHardwareConfig(for: cam)
+                let restored = self.zoomStateLock.withLock {
+                    self.zoomController.endCameraReconfiguration(
+                        newConfig: cfg,
+                        overrideDisplayZoom: self.defaultDisplayZoom,
+                        reason: "stopDualCamera.restore",
+                        at: CACurrentMediaTime()
+                    )
+                }
                 if let _ = try? cam.lockForConfiguration() {
-                    cam.videoZoomFactor = max(self.minZoom, min(restoredZoom, self.maxZoom))
+                    _ = self.commitDeviceZoomUnlocked(
+                        on: cam,
+                        targetDeviceZoom: restored.deviceZoom,
+                        displayZoom: restored.displayZoom,
+                        source: .systemRestore,
+                        reason: "stopDualCamera.restore",
+                        logToFile: true
+                    )
                     cam.unlockForConfiguration()
                 }
-                self.currentZoom = cam.videoZoomFactor
                 let syncedZoom = self.currentZoom
                 DispatchQueue.main.async {
                     self.delegate?.cameraService(self, didChangeZoomFactor: syncedZoom)
@@ -1550,8 +1899,20 @@ public final class CameraService: NSObject {
                 }
                 let newMinZoom = newCamera.minAvailableVideoZoomFactor
                 let newMaxZoom = max(newMinZoom, min(newCamera.maxAvailableVideoZoomFactor, wideBase * 5))
+                self.zoomStateLock.withLock {
+                    _ = self.zoomController.beginCameraReconfiguration(reason: "switchCamera", at: CACurrentMediaTime())
+                }
+                self.stopSmoothZoomDisplayLink()
                 try newCamera.lockForConfiguration()
-                newCamera.videoZoomFactor = min(newMaxZoom, max(newMinZoom, wideBase))
+                let initialSwitchDevZoom = min(newMaxZoom, max(newMinZoom, wideBase))
+                _ = self.commitDeviceZoomUnlocked(
+                    on: newCamera,
+                    targetDeviceZoom: initialSwitchDevZoom,
+                    displayZoom: 1.0,
+                    source: .lensInit,
+                    reason: "switchCamera.\(targetPosition == .front ? "front" : "back")",
+                    logToFile: true
+                )
                 if targetPosition == .back {
                     self.configureConstituentDeviceSwitching(for: newCamera)
                 }
@@ -1626,9 +1987,7 @@ public final class CameraService: NSObject {
                     self.zoomObservation?.invalidate()
                     self.zoomObservation = newCamera.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
                         guard let newValue = change.newValue else { return }
-                        DispatchQueue.main.async {
-                            self?.onLiveZoomFactorChanged?(newValue)
-                        }
+                        self?.handleExternalZoomKVO(newValue)
                     }
                     if #available(iOS 15.0, *) {
                         self.constituentObservation?.invalidate()
@@ -1659,6 +2018,27 @@ public final class CameraService: NSObject {
                         self.photoOutput.isAppleProRAWEnabled = false
                     }
                     self.updateMaxPhotoDimensions(for: newCamera)
+                    let switchCfg = self.buildCurrentZoomHardwareConfig(for: newCamera)
+                    let restoredSwitch = self.zoomStateLock.withLock {
+                        self.zoomController.endCameraReconfiguration(
+                            newConfig: switchCfg,
+                            overrideDisplayZoom: 1.0,
+                            reason: "switchCamera.done",
+                            at: CACurrentMediaTime()
+                        )
+                    }
+                    if abs(newCamera.videoZoomFactor - restoredSwitch.deviceZoom) > 0.01,
+                       let _ = try? newCamera.lockForConfiguration() {
+                        _ = self.commitDeviceZoomUnlocked(
+                            on: newCamera,
+                            targetDeviceZoom: restoredSwitch.deviceZoom,
+                            displayZoom: restoredSwitch.displayZoom,
+                            source: .lensInit,
+                            reason: "switchCamera.syncPostAdd",
+                            logToFile: false
+                        )
+                        newCamera.unlockForConfiguration()
+                    }
                     let initialZoom = newCamera.videoZoomFactor
                     self.currentZoom = initialZoom
                     DispatchQueue.main.async {
@@ -1675,6 +2055,17 @@ public final class CameraService: NSObject {
                 }
             }
             self.captureSession.commitConfiguration()
+            if !didSwitch {
+                let rollbackCfg = self.buildCurrentZoomHardwareConfig()
+                self.zoomStateLock.withLock {
+                    _ = self.zoomController.endCameraReconfiguration(
+                        newConfig: rollbackCfg,
+                        overrideDisplayZoom: nil,
+                        reason: "switchCamera.rollback",
+                        at: CACurrentMediaTime()
+                    )
+                }
+            }
             if didSwitch && self.currentCaptureMode.isVideo {
                 self.configureAudioSessionForStereoCapture()
             }
@@ -1688,70 +2079,72 @@ public final class CameraService: NSObject {
         }
     }
 
-    // MARK: - Zoom Control
+    // MARK: - Unified Single-Owner Zoom Control (Display Units + Logarithmic Ease-In-Out)
+
+    /// Legacy device-unit entrypoint: converts to display zoom and delegates through the SINGLE owner.
     public func setZoomFactor(_ factor: CGFloat, completion: (@MainActor (CGFloat?) -> Void)? = nil) {
-        sessionQueue.async { [weak self] in
-            func rejected() { DispatchQueue.main.async { completion?(nil) } }
-            guard let self = self, !self.isPhotoCaptureInFlight, let camera = self.activeCamera else {
-                rejected(); return
-            }
-            guard factor.isFinite else {
-                CameraLogger.warning("CameraService: Bỏ qua zoom không hữu hạn", category: .capture)
-                rejected(); return
-            }
-            let maxZoomLimit = self.isDualCameraActive ? min(self.maxZoom, camera.activeFormat.videoMaxZoomFactor) : self.maxZoom
-            let clampedZoom = max(self.minZoom, min(factor, maxZoomLimit))
-            do {
-                try camera.lockForConfiguration()
-                defer { camera.unlockForConfiguration() }
-                camera.videoZoomFactor = clampedZoom
-                let actualZoom = camera.videoZoomFactor
-                self.currentZoom = actualZoom
-                DispatchQueue.main.async {
-                    self.delegate?.cameraService(self, didChangeZoomFactor: actualZoom)
-                    completion?(actualZoom)
-                }
-            } catch {
-                CameraLogger.error("CameraService: Error setting zoom", error: error, category: .capture)
-                rejected()
-            }
+        guard factor.isFinite, factor > 0 else {
+            CameraLogger.warning("CameraService: Bỏ qua zoom không hữu hạn", category: .capture)
+            DispatchQueue.main.async { completion?(nil) }
+            return
         }
+        let disp = convertDeviceZoomToDisplayZoom(factor)
+        applyUnifiedDisplayZoom(
+            disp,
+            source: .systemRestore,
+            smooth: false,
+            allowPhysicalSwitch: false,
+            reason: "setZoomFactor.legacy",
+            completion: completion
+        )
     }
 
+    /// Legacy device-unit smooth entrypoint: converts to display zoom and delegates through the SINGLE owner.
     public func smoothZoomFactor(to factor: CGFloat, rate: Float = 2.2) {
-        sessionQueue.async { [weak self] in
-            guard let self = self, !self.isPhotoCaptureInFlight, let camera = self.activeCamera else { return }
-            guard factor.isFinite, rate.isFinite, rate > 0 else {
-                CameraLogger.warning("CameraService: Bỏ qua zoom/rate không hợp lệ", category: .capture)
-                return
-            }
-            let maxZoomLimit = self.isDualCameraActive ? min(self.maxZoom, camera.activeFormat.videoMaxZoomFactor) : self.maxZoom
-            let clampedZoom = max(self.minZoom, min(factor, maxZoomLimit))
-            do {
-                try camera.lockForConfiguration()
-                defer { camera.unlockForConfiguration() }
-                camera.ramp(toVideoZoomFactor: clampedZoom, withRate: rate)
-                // A ramp command is not a measurement. KVO supplies subsequent
-                // actual factors; never project the target at the future zoom.
-                let actualZoom = camera.videoZoomFactor
-                self.currentZoom = actualZoom
-                DispatchQueue.main.async {
-                    self.delegate?.cameraService(self, didChangeZoomFactor: actualZoom)
-                }
-            } catch {
-                CameraLogger.error("CameraService: Error smooth zoom", error: error, category: .capture)
-            }
+        guard factor.isFinite, factor > 0, rate.isFinite, rate > 0 else {
+            CameraLogger.warning("CameraService: Bỏ qua zoom/rate không hợp lệ", category: .capture)
+            return
         }
+        let disp = convertDeviceZoomToDisplayZoom(factor)
+        applyUnifiedDisplayZoom(
+            disp,
+            source: .auto,
+            smooth: true,
+            allowPhysicalSwitch: true,
+            reason: "smoothZoomFactor.legacy"
+        )
     }
 
-    // MARK: - Physical Telephoto Hardware Zoom Switching
-    /// Tu dong chuyen doi sang camera Telephoto vat ly (.builtInTelephotoCamera) khi zoom >= 2x (hoac nguong quang hoc tele)
-    /// Su dung thuat toan Hysteresis (Trễ Lưỡng Ngưỡng) phong cach Google Camera giup chuyen cam cuc ky em ai, khong bi giat lag hay rung hinh
+    /// Backward-compatible display-zoom entrypoint forwarding to the SINGLE zoom owner.
     public func applyDisplayZoomWithPhysicalLensSwitching(
         _ displayZoom: CGFloat,
         smooth: Bool = false,
         rate: Float = 4.5,
         allowPhysicalSwitch: Bool = true,
+        completion: (@MainActor (CGFloat?) -> Void)? = nil
+    ) {
+        let inferredSource: ZoomCommandSource = smooth ? .manual : .pinchContinuous
+        applyUnifiedDisplayZoom(
+            displayZoom,
+            source: inferredSource,
+            smooth: smooth,
+            allowPhysicalSwitch: allowPhysicalSwitch,
+            reason: smooth ? "applyDisplayZoom.smooth" : "applyDisplayZoom.direct",
+            completion: completion
+        )
+    }
+
+    /// SINGLE authoritative zoom command owner for ALL auto, manual, pinch, and restore zoom changes.
+    /// - All calculations run in Display Zoom units inside `ZoomTransitionController`.
+    /// - Auto-zoom (`.auto`) is strictly floored at `>= 1.0x` (NEVER drops to 0.5x Ultra-Wide automatically).
+    /// - Smooth transitions run on a perceptually uniform logarithmic ease-in-out curve synchronized 1:1
+    ///   between hardware `videoZoomFactor`, UI indicator, and `SpatialTrackingEngine`.
+    public func applyUnifiedDisplayZoom(
+        _ displayZoom: CGFloat,
+        source: ZoomCommandSource,
+        smooth: Bool = true,
+        allowPhysicalSwitch: Bool = true,
+        reason: String = "unified",
         completion: (@MainActor (CGFloat?) -> Void)? = nil
     ) {
         sessionQueue.async { [weak self] in
@@ -1761,202 +2154,162 @@ public final class CameraService: NSObject {
                 return
             }
             guard displayZoom.isFinite, displayZoom > 0 else {
-                CameraLogger.warning("CameraService: Bo qua zoom khong hop le", category: .capture)
+                CameraLogger.warning("CameraService: Bo qua zoom khong hop le (\(reason))", category: .capture)
                 rejected()
                 return
             }
 
-            if self.isDualCameraActive {
-                guard let primaryCam = self.activeCamera else { rejected(); return }
-                let maxLimit = min(primaryCam.maxAvailableVideoZoomFactor, primaryCam.activeFormat.videoMaxZoomFactor)
-                let targetZoom = max(1.0, min(displayZoom, maxLimit))
-                do {
-                    try primaryCam.lockForConfiguration()
-                    defer { primaryCam.unlockForConfiguration() }
-                    if smooth {
-                        let adaptiveRate = max(3.5, min(9.0, rate))
-                        primaryCam.ramp(toVideoZoomFactor: targetZoom, withRate: adaptiveRate)
-                    } else {
-                        primaryCam.videoZoomFactor = targetZoom
-                    }
-                    let dualActualZoom = primaryCam.videoZoomFactor
-                    self.currentZoom = dualActualZoom
-                    DispatchQueue.main.async {
-                        self.delegate?.cameraService(self, didChangeZoomFactor: dualActualZoom)
-                        completion?(dualActualZoom)
-                    }
-                } catch {
-                    CameraLogger.error("CameraService: Loi zoom trong Dual Camera", error: error, category: .capture)
-                    rejected()
+            // 1. Evaluate guardrails, auto floor (>= 1.0x), switchover hysteresis & smooth curve in ONE place
+            let cfg = self.buildCurrentZoomHardwareConfig()
+            let now = CACurrentMediaTime()
+            let previousPending: (@MainActor (CGFloat?) -> Void)?
+            let decision: ZoomCommandDecision
+            (decision, previousPending) = self.zoomStateLock.withLock {
+                self.zoomController.updateHardwareConfig(cfg)
+                let dec = self.zoomController.requestZoom(
+                    displayZoom,
+                    source: source,
+                    smooth: smooth,
+                    reason: reason,
+                    at: now
+                )
+                let prev = dec.isAccepted ? self.pendingSmoothZoomCompletion : nil
+                if dec.isAccepted {
+                    self.pendingSmoothZoomCompletion = (dec.outcome == .acceptedSmooth || dec.outcome == .acceptedRedirectedSmooth) ? completion : nil
                 }
+                return (dec, prev)
+            }
+
+            if let previousPending {
+                let cur = self.currentZoom
+                DispatchQueue.main.async { previousPending(cur) }
+            }
+
+            guard decision.isAccepted else {
+                if decision.wasClampedAtAutoFloor || decision.outcome == .rejectedSwitchoverHysteresis || decision.outcome == .rejectedReversalCooldown {
+                    CameraLogger.info(
+                        String(
+                            format: "ZOOM_GUARD [%@] outcome=%@ req=%.2fx cur=%.2fx reason=%@",
+                            source.rawValue, decision.outcome.rawValue, Double(displayZoom),
+                            Double(self.convertDeviceZoomToDisplayZoom(self.currentZoom)), reason
+                        ),
+                        category: .capture
+                    )
+                }
+                let cur = self.currentZoom
+                DispatchQueue.main.async { completion?(cur) }
                 return
             }
 
-            guard self.currentCameraPosition == .back else {
-                let devZoom = self.convertDisplayZoomToDeviceZoom(displayZoom)
-                if smooth {
-                    self.smoothZoomFactor(to: devZoom, rate: rate)
-                    DispatchQueue.main.async { completion?(devZoom) }
-                } else {
-                    self.setZoomFactor(devZoom, completion: completion)
-                }
-                return
-            }
+            let effectiveTargetDisplay = decision.targetDisplayZoom
+            self.isSimulatedUltraWideActive = decision.usesSimulatedUltraWide
+            self.simulatedUltraWideFactor = decision.usesSimulatedUltraWide ? effectiveTargetDisplay : 1.0
 
-            if displayZoom < 0.99 {
-                if !self.hasUltraWideLens {
-                    self.isSimulatedUltraWideActive = true
-                    self.simulatedUltraWideFactor = displayZoom
-                } else {
-                    self.isSimulatedUltraWideActive = false
-                    self.simulatedUltraWideFactor = 1.0
-                }
-            } else {
-                self.isSimulatedUltraWideActive = false
-                self.simulatedUltraWideFactor = 1.0
-            }
+            // 2. Physical lens switch (ONLY on non-Virtual-MultiCam back cameras when allowed & not recording)
+            if !self.isDualCameraActive && self.currentCameraPosition == .back {
+                let canSwitchDevice = self.recordingState == .idle && !self.movieFileOutput.isRecording && allowPhysicalSwitch
+                let targetLens = self.resolveOpticalLensTarget(for: effectiveTargetDisplay)
+                self.currentOpticalLensTarget = targetLens
 
-            let teleOptical = self.telephotoOpticalDisplayZoom ?? 2.0
-            let canSwitchDevice = self.recordingState == .idle && !self.movieFileOutput.isRecording && allowPhysicalSwitch
-            let targetLens = self.resolveOpticalLensTarget(for: displayZoom)
-
-            // Neu may co Virtual Multi-Camera (builtInTripleCamera / builtInDualCamera / builtInDualWideCamera),
-            // TUYET DOI GIU NGUYEN Virtual Multi-Camera de Apple ISP tu dong chuyen sang ong kinh Telephoto vat ly
-            // voi do tre 0ms, co hieu ung chuyen tieu cu muot ma nhu app Camera goc va giu nguyen ghep anh Deep Fusion!
-            if let virtualMultiCam = self.multiCameraDevice {
-                if self.activeCamera != virtualMultiCam && canSwitchDevice {
-                    let canUseMultiInCurrentMode: Bool = {
-                        if self.currentCaptureMode.isVideo {
-                            return !Self.findCandidateVideoFormats(for: virtualMultiCam, option: self.selectedVideoFormatOption).isEmpty
+                if let virtualMultiCam = self.multiCameraDevice {
+                    if self.activeCamera != virtualMultiCam && canSwitchDevice {
+                        let canUseMultiInCurrentMode: Bool = {
+                            if self.currentCaptureMode.isVideo {
+                                return !Self.findCandidateVideoFormats(for: virtualMultiCam, option: self.selectedVideoFormatOption).isEmpty
+                            }
+                            return true
+                        }()
+                        if canUseMultiInCurrentMode {
+                            let preserveStart = self.convertDeviceZoomToDisplayZoom(self.currentZoom)
+                            if self.switchInputDeviceInternal(to: virtualMultiCam, initialDisplayZoom: smooth ? preserveStart : effectiveTargetDisplay) {
+                                if self.currentCaptureMode.isVideo {
+                                    self.configureVideoFormatInternal(option: self.selectedVideoFormatOption)
+                                }
+                            }
                         }
-                        return true
+                    }
+                } else if targetLens == .telephoto, let teleCamera = self.telephotoCameraDevice {
+                    if self.activeCamera != teleCamera && canSwitchDevice {
+                        CameraLogger.info("CameraService: Chuyen input session sang camera Telephoto vat ly cho zoom \(effectiveTargetDisplay)x", category: .capture)
+                        if self.switchInputDeviceInternal(to: teleCamera, initialDisplayZoom: effectiveTargetDisplay) {
+                            if self.currentCaptureMode.isVideo {
+                                self.configureVideoFormatInternal(option: self.selectedVideoFormatOption)
+                            }
+                        }
+                    }
+                } else {
+                    let targetWideCamera: AVCaptureDevice? = {
+                        if self.currentCaptureMode.isVideo {
+                            let multiSupportsFormat = self.multiCameraDevice.map { !Self.findCandidateVideoFormats(for: $0, option: self.selectedVideoFormatOption).isEmpty } ?? false
+                            if let wide = self.wideCameraDevice,
+                               !Self.findCandidateVideoFormats(for: wide, option: self.selectedVideoFormatOption).isEmpty &&
+                               !multiSupportsFormat {
+                                return wide
+                            }
+                            return self.multiCameraDevice ?? self.wideCameraDevice
+                        } else {
+                            return self.multiCameraDevice ?? self.wideCameraDevice
+                        }
                     }()
-                    if canUseMultiInCurrentMode {
-                        if self.switchInputDeviceInternal(to: virtualMultiCam, initialDisplayZoom: displayZoom) {
+                    if let wideCam = targetWideCamera, self.activeCamera != wideCam && canSwitchDevice {
+                        CameraLogger.info("CameraService: Chuyen input session tro lai camera Wide/MultiCamera cho zoom \(effectiveTargetDisplay)x", category: .capture)
+                        if self.switchInputDeviceInternal(to: wideCam, initialDisplayZoom: effectiveTargetDisplay) {
                             if self.currentCaptureMode.isVideo {
                                 self.configureVideoFormatInternal(option: self.selectedVideoFormatOption)
                             }
                         }
                     }
                 }
-
-                if self.activeCamera == virtualMultiCam, let currentCam = self.activeCamera {
-                    self.currentOpticalLensTarget = targetLens
-                    let targetDevZoom = self.convertDisplayZoomToDeviceZoom(displayZoom)
-                    do {
-                        try currentCam.lockForConfiguration()
-                        defer { currentCam.unlockForConfiguration() }
-                        self.configureConstituentDeviceSwitching(for: currentCam)
-                        if smooth {
-                            let currentDevZ = max(1.0, currentCam.videoZoomFactor)
-                            let octaves = abs(log2(Double(max(1.0, targetDevZoom) / currentDevZ)))
-                            let adaptiveRate = Float(max(Double(rate), min(14.0, max(6.5, octaves * 9.5))))
-                            currentCam.ramp(toVideoZoomFactor: targetDevZoom, withRate: adaptiveRate)
-                        } else {
-                            currentCam.videoZoomFactor = targetDevZoom
-                        }
-                        let actualDevZoom = currentCam.videoZoomFactor
-                        self.currentZoom = actualDevZoom
-                        DispatchQueue.main.async {
-                            self.delegate?.cameraService(self, didChangeZoomFactor: actualDevZoom)
-                            completion?(actualDevZoom)
-                        }
-                    } catch {
-                        CameraLogger.error("CameraService: Loi cai dat zoom tren virtual multi-camera", error: error, category: .capture)
-                        rejected()
-                    }
-                    return
-                }
             }
 
-            if targetLens == .telephoto, let teleCamera = self.telephotoCameraDevice {
-                if self.activeCamera != teleCamera && canSwitchDevice {
-                    CameraLogger.info("CameraService: Chuyen input session sang camera Telephoto vat ly (.builtInTelephotoCamera) cho zoom \(displayZoom)x", category: .capture)
-                    if self.switchInputDeviceInternal(to: teleCamera, initialDisplayZoom: displayZoom) {
-                        if self.currentCaptureMode.isVideo {
-                            self.configureVideoFormatInternal(option: self.selectedVideoFormatOption)
-                        }
-                    }
-                }
+            guard let currentCam = self.activeCamera else {
+                rejected()
+                return
+            }
 
-                guard let currentCam = self.activeCamera else { rejected(); return }
-                let targetDevZoom: CGFloat
-                if currentCam.deviceType == .builtInTelephotoCamera {
-                    targetDevZoom = max(1.0, min(displayZoom / teleOptical, currentCam.maxAvailableVideoZoomFactor))
-                } else {
-                    targetDevZoom = self.convertDisplayZoomToDeviceZoom(displayZoom)
-                }
+            // Refresh controller hardware config in case a physical input switch occurred above
+            let postSwitchCfg = self.buildCurrentZoomHardwareConfig(for: currentCam)
+            self.zoomStateLock.withLock {
+                self.zoomController.updateHardwareConfig(postSwitchCfg)
+            }
 
-                do {
-                    try currentCam.lockForConfiguration()
-                    defer { currentCam.unlockForConfiguration() }
-                    if smooth {
-                        let adaptiveRate = max(3.5, min(9.0, rate))
-                        currentCam.ramp(toVideoZoomFactor: targetDevZoom, withRate: adaptiveRate)
-                    } else {
-                        currentCam.videoZoomFactor = targetDevZoom
-                    }
-                    let actualDevZoom = currentCam.videoZoomFactor
-                    self.currentZoom = actualDevZoom
-                    DispatchQueue.main.async {
-                        self.delegate?.cameraService(self, didChangeZoomFactor: actualDevZoom)
-                        completion?(actualDevZoom)
-                    }
-                } catch {
-                    CameraLogger.error("CameraService: Loi cai dat zoom telephoto", error: error, category: .capture)
-                    rejected()
-                }
-            } else {
-                let targetWideCamera: AVCaptureDevice? = {
-                    if self.currentCaptureMode.isVideo {
-                        let multiSupportsFormat = self.multiCameraDevice.map { !Self.findCandidateVideoFormats(for: $0, option: self.selectedVideoFormatOption).isEmpty } ?? false
-                        if let wide = self.wideCameraDevice,
-                           !Self.findCandidateVideoFormats(for: wide, option: self.selectedVideoFormatOption).isEmpty &&
-                           !multiSupportsFormat {
-                            return wide
-                        }
-                        return self.multiCameraDevice ?? self.wideCameraDevice
-                    } else {
-                        return self.multiCameraDevice ?? self.wideCameraDevice
-                    }
-                }()
+            // 3. Execute: Smooth logarithmic ease-in-out via CADisplayLink OR immediate write through SINGLE chokepoint
+            if decision.outcome == .acceptedSmooth || decision.outcome == .acceptedRedirectedSmooth {
+                CameraLogger.info(
+                    String(
+                        format: "ZOOM_RAMP_START [%@] target=%.2fx dur=%.2fs reason=%@",
+                        source.rawValue, Double(effectiveTargetDisplay), decision.duration, reason
+                    ),
+                    category: .capture
+                )
+                self.startSmoothZoomDisplayLink()
+                return
+            }
 
-                if let wideCam = targetWideCamera, self.activeCamera != wideCam && canSwitchDevice {
-                    CameraLogger.info("CameraService: Chuyen input session tro lai camera Wide/MultiCamera cho zoom \(displayZoom)x", category: .capture)
-                    if self.switchInputDeviceInternal(to: wideCam, initialDisplayZoom: displayZoom) {
-                        if self.currentCaptureMode.isVideo {
-                            self.configureVideoFormatInternal(option: self.selectedVideoFormatOption)
-                        }
-                    }
+            self.stopSmoothZoomDisplayLink()
+            let targetDevZoom = DisplayDeviceZoomMapper.deviceZoom(forDisplayZoom: effectiveTargetDisplay, config: postSwitchCfg)
+            do {
+                try currentCam.lockForConfiguration()
+                defer { currentCam.unlockForConfiguration() }
+                if currentCam.deviceType == .builtInTripleCamera || currentCam.deviceType == .builtInDualCamera || currentCam.deviceType == .builtInDualWideCamera {
+                    self.configureConstituentDeviceSwitching(for: currentCam)
                 }
-
-                guard let currentCam = self.activeCamera else { rejected(); return }
-                let targetDevZoom: CGFloat
-                if currentCam.deviceType == .builtInTelephotoCamera {
-                    targetDevZoom = max(1.0, min(displayZoom / teleOptical, currentCam.maxAvailableVideoZoomFactor))
-                } else {
-                    targetDevZoom = self.convertDisplayZoomToDeviceZoom(displayZoom)
+                let actualDevZoom = self.commitDeviceZoomUnlocked(
+                    on: currentCam,
+                    targetDeviceZoom: targetDevZoom,
+                    displayZoom: effectiveTargetDisplay,
+                    source: source,
+                    reason: reason,
+                    logToFile: source != .pinchContinuous
+                )
+                DispatchQueue.main.async {
+                    self.onLiveZoomFactorChanged?(actualDevZoom)
+                    self.delegate?.cameraService(self, didChangeZoomFactor: actualDevZoom)
+                    completion?(actualDevZoom)
                 }
-
-                do {
-                    try currentCam.lockForConfiguration()
-                    defer { currentCam.unlockForConfiguration() }
-                    if smooth {
-                        let adaptiveRate = max(3.5, min(9.0, rate))
-                        currentCam.ramp(toVideoZoomFactor: targetDevZoom, withRate: adaptiveRate)
-                    } else {
-                        currentCam.videoZoomFactor = targetDevZoom
-                    }
-                    let actualDevZoom = currentCam.videoZoomFactor
-                    self.currentZoom = actualDevZoom
-                    DispatchQueue.main.async {
-                        self.delegate?.cameraService(self, didChangeZoomFactor: actualDevZoom)
-                        completion?(actualDevZoom)
-                    }
-                } catch {
-                    CameraLogger.error("CameraService: Loi cai dat zoom wide", error: error, category: .capture)
-                    rejected()
-                }
+            } catch {
+                CameraLogger.error("CameraService: Loi cai dat zoom (\(reason))", error: error, category: .capture)
+                rejected()
             }
         }
     }
@@ -2607,6 +2960,26 @@ public final class CameraService: NSObject {
     private func switchInputDeviceInternal(to newCamera: AVCaptureDevice, initialDisplayZoom: CGFloat? = nil) -> Bool {
         guard self.recordingState == .idle, !self.movieFileOutput.isRecording else { return false }
         if self.activeCamera == newCamera { return true }
+        let preservedBeforeSwitch = self.zoomStateLock.withLock {
+            self.zoomController.beginCameraReconfiguration(reason: "switchInputDevice", at: CACurrentMediaTime())
+        }
+        let targetDisplayToRestore = (initialDisplayZoom?.isFinite == true && (initialDisplayZoom ?? 0) > 0)
+            ? initialDisplayZoom!
+            : preservedBeforeSwitch
+        var reconfigEnded = false
+        defer {
+            if !reconfigEnded {
+                let fallbackCfg = self.buildCurrentZoomHardwareConfig()
+                self.zoomStateLock.withLock {
+                    _ = self.zoomController.endCameraReconfiguration(
+                        newConfig: fallbackCfg,
+                        overrideDisplayZoom: nil,
+                        reason: "switchInputDevice.rollback",
+                        at: CACurrentMediaTime()
+                    )
+                }
+            }
+        }
         do {
             let newInput = try AVCaptureDeviceInput(device: newCamera)
             captureSession.beginConfiguration()
@@ -2619,6 +2992,8 @@ public final class CameraService: NSObject {
 
             let previousInput = self.videoDeviceInput
             let previousCamera = self.activeCamera
+            let previousDisplayMultiplier = self.displayMultiplier
+            let previousHasUltraWide = self.hasUltraWideLens
             if let oldInput = previousInput {
                 captureSession.removeInput(oldInput)
             }
@@ -2636,12 +3011,22 @@ public final class CameraService: NSObject {
             self.minZoom = newCamera.minAvailableVideoZoomFactor
             self.maxZoom = min(newCamera.maxAvailableVideoZoomFactor, 10.0)
 
+            // Sync displayMultiplier & Ultra-Wide flag accurately to the newly active device
+            // so switching Triple/DualWide <-> physical Wide NEVER divides 1.0 by stale 2.0 (= 0.5x!).
+            let switchFactors = newCamera.virtualDeviceSwitchOverVideoZoomFactors
+            if (newCamera.deviceType == .builtInTripleCamera || newCamera.deviceType == .builtInDualWideCamera),
+               let firstSwitch = switchFactors.first {
+                self.displayMultiplier = CGFloat(firstSwitch.doubleValue)
+                self.hasUltraWideLens = self.displayMultiplier > 1.0
+            } else {
+                self.displayMultiplier = 1.0
+                self.hasUltraWideLens = false
+            }
+
             self.zoomObservation?.invalidate()
             self.zoomObservation = newCamera.observe(\.videoZoomFactor, options: [.new]) { [weak self] _, change in
                 guard let newValue = change.newValue else { return }
-                DispatchQueue.main.async {
-                    self?.onLiveZoomFactorChanged?(newValue)
-                }
+                self?.handleExternalZoomKVO(newValue)
             }
 
             if let connection = videoDataOutput.connection(with: .video) {
@@ -2656,6 +3041,17 @@ public final class CameraService: NSObject {
                 configurePhotoConnection(connection)
             }
             updateMaxPhotoDimensions(for: newCamera)
+
+            let newCfg = self.buildCurrentZoomHardwareConfig(for: newCamera)
+            let restored = self.zoomStateLock.withLock {
+                self.zoomController.endCameraReconfiguration(
+                    newConfig: newCfg,
+                    overrideDisplayZoom: targetDisplayToRestore,
+                    reason: "switchInputDevice.\(newCamera.deviceType.rawValue)",
+                    at: CACurrentMediaTime()
+                )
+            }
+            reconfigEnded = true
 
             do {
                 try newCamera.lockForConfiguration()
@@ -2674,18 +3070,18 @@ public final class CameraService: NSObject {
                     newCamera.activeColorSpace = .P3_D65
                 }
                 newCamera.isSubjectAreaChangeMonitoringEnabled = true
-
-                if let targetDisplayZoom = initialDisplayZoom, targetDisplayZoom.isFinite {
-                    let initialDeviceZoom: CGFloat
-                    if newCamera.deviceType == .builtInTelephotoCamera {
-                        let teleOptical = telephotoOpticalDisplayZoom ?? 2.0
-                        initialDeviceZoom = max(1.0, min(targetDisplayZoom / teleOptical, newCamera.maxAvailableVideoZoomFactor))
-                    } else {
-                        initialDeviceZoom = convertDisplayZoomToDeviceZoom(targetDisplayZoom)
-                    }
-                    newCamera.videoZoomFactor = initialDeviceZoom
-                    self.currentZoom = initialDeviceZoom
+                if newCamera.deviceType == .builtInTripleCamera || newCamera.deviceType == .builtInDualCamera || newCamera.deviceType == .builtInDualWideCamera {
+                    self.configureConstituentDeviceSwitching(for: newCamera)
                 }
+
+                _ = self.commitDeviceZoomUnlocked(
+                    on: newCamera,
+                    targetDeviceZoom: restored.deviceZoom,
+                    displayZoom: restored.displayZoom,
+                    source: .systemRestore,
+                    reason: "switchInputDevice.restore",
+                    logToFile: true
+                )
             } catch {
                 CameraLogger.error("CameraService: Khong the lockForConfiguration cho \(newCamera.localizedName), dang rollback", error: error, category: .capture)
                 captureSession.removeInput(newInput)
@@ -2693,7 +3089,10 @@ public final class CameraService: NSObject {
                     captureSession.addInput(oldInput)
                     self.videoDeviceInput = oldInput
                     self.activeCamera = previousCamera
+                    self.displayMultiplier = previousDisplayMultiplier
+                    self.hasUltraWideLens = previousHasUltraWide
                 }
+                reconfigEnded = false
                 configurationCommitted = true
                 captureSession.commitConfiguration()
                 return false
@@ -2701,6 +3100,19 @@ public final class CameraService: NSObject {
 
             configurationCommitted = true
             captureSession.commitConfiguration()
+            // Re-assert restored zoom after commitConfiguration() in case AVFoundation reset videoZoomFactor to 1.0
+            if abs(newCamera.videoZoomFactor - restored.deviceZoom) > 0.01,
+               let _ = try? newCamera.lockForConfiguration() {
+                _ = self.commitDeviceZoomUnlocked(
+                    on: newCamera,
+                    targetDeviceZoom: restored.deviceZoom,
+                    displayZoom: restored.displayZoom,
+                    source: .systemRestore,
+                    reason: "switchInputDevice.postCommitRestore",
+                    logToFile: false
+                )
+                newCamera.unlockForConfiguration()
+            }
 
             if newCamera.deviceType == .builtInTelephotoCamera {
                 self.currentOpticalLensTarget = .telephoto
@@ -2806,6 +3218,25 @@ public final class CameraService: NSObject {
         }
 
         do {
+            let reconfigPreserved = self.zoomStateLock.withLock {
+                self.zoomController.beginCameraReconfiguration(reason: "configureVideoFormat", at: CACurrentMediaTime())
+            }
+            let effectivePreservedDisplay = (preservedDisplayZoom.isFinite && preservedDisplayZoom > 0) ? preservedDisplayZoom : reconfigPreserved
+            var endedZoomReconfig = false
+            defer {
+                if !endedZoomReconfig {
+                    let fallbackCfg = self.buildCurrentZoomHardwareConfig(for: targetCamera)
+                    self.zoomStateLock.withLock {
+                        _ = self.zoomController.endCameraReconfiguration(
+                            newConfig: fallbackCfg,
+                            overrideDisplayZoom: effectivePreservedDisplay,
+                            reason: "configureVideoFormat.rollback",
+                            at: CACurrentMediaTime()
+                        )
+                    }
+                }
+            }
+
             try targetCamera.lockForConfiguration()
             defer { targetCamera.unlockForConfiguration() }
 
@@ -2830,12 +3261,27 @@ public final class CameraService: NSObject {
             }
             self.minZoom = targetCamera.minAvailableVideoZoomFactor
             self.maxZoom = min(targetCamera.maxAvailableVideoZoomFactor, 10.0)
-            let syncedDevZoom = self.convertDisplayZoomToDeviceZoom(max(0.5, preservedDisplayZoom))
-            targetCamera.videoZoomFactor = max(self.minZoom, min(syncedDevZoom, self.maxZoom))
-            self.currentZoom = targetCamera.videoZoomFactor
-            let reportedZoom = self.currentZoom
+            let updatedCfg = self.buildCurrentZoomHardwareConfig(for: targetCamera)
+            let restored = self.zoomStateLock.withLock {
+                self.zoomController.endCameraReconfiguration(
+                    newConfig: updatedCfg,
+                    overrideDisplayZoom: effectivePreservedDisplay,
+                    reason: "configureVideoFormat.restore",
+                    at: CACurrentMediaTime()
+                )
+            }
+            endedZoomReconfig = true
+            let reportedZoom = self.commitDeviceZoomUnlocked(
+                on: targetCamera,
+                targetDeviceZoom: restored.deviceZoom,
+                displayZoom: restored.displayZoom,
+                source: .systemRestore,
+                reason: "configureVideoFormat.restore",
+                logToFile: true
+            )
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                self.onLiveZoomFactorChanged?(reportedZoom)
                 self.delegate?.cameraService(self, didChangeZoomFactor: reportedZoom)
             }
 
@@ -3030,6 +3476,9 @@ public final class CameraService: NSObject {
 
             self.removeAudioInputAndOutputInternal()
 
+            self.zoomStateLock.withLock {
+                _ = self.zoomController.beginCameraReconfiguration(reason: "applyCaptureMode.photo", at: CACurrentMediaTime())
+            }
             captureSession.beginConfiguration()
             if captureSession.outputs.contains(movieFileOutput) {
                 captureSession.removeOutput(movieFileOutput)
@@ -3041,6 +3490,15 @@ public final class CameraService: NSObject {
             captureSession.commitConfiguration()
 
             if let camera = activeCamera {
+                let photoCfg = self.buildCurrentZoomHardwareConfig(for: camera)
+                let restoredPhoto = self.zoomStateLock.withLock {
+                    self.zoomController.endCameraReconfiguration(
+                        newConfig: photoCfg,
+                        overrideDisplayZoom: self.defaultDisplayZoom,
+                        reason: "applyCaptureMode.photoRestore",
+                        at: CACurrentMediaTime()
+                    )
+                }
                 do {
                     try camera.lockForConfiguration()
                     defer { camera.unlockForConfiguration() }
@@ -3053,18 +3511,33 @@ public final class CameraService: NSObject {
                     self.configureConstituentDeviceSwitching(for: camera)
                     self.minZoom = camera.minAvailableVideoZoomFactor
                     self.maxZoom = min(camera.maxAvailableVideoZoomFactor, 10.0)
-                    let targetPhotoZoom = self.convertDisplayZoomToDeviceZoom(self.defaultDisplayZoom)
-                    camera.videoZoomFactor = max(self.minZoom, min(targetPhotoZoom, self.maxZoom))
-                    self.currentZoom = camera.videoZoomFactor
-                    let syncedZoom = self.currentZoom
+                    let syncedZoom = self.commitDeviceZoomUnlocked(
+                        on: camera,
+                        targetDeviceZoom: restoredPhoto.deviceZoom,
+                        displayZoom: restoredPhoto.displayZoom,
+                        source: .systemRestore,
+                        reason: "applyCaptureMode.photoRestore",
+                        logToFile: true
+                    )
                     DispatchQueue.main.async { [weak self] in
                         guard let self else { return }
+                        self.onLiveZoomFactorChanged?(syncedZoom)
                         self.delegate?.cameraService(self, didChangeZoomFactor: syncedZoom)
                     }
                 } catch {
                     CameraLogger.error("CameraService: Khong the khoi phuc P3 color space", error: error, category: .capture)
                 }
                 updateMaxPhotoDimensions(for: camera)
+            } else {
+                let fallbackCfg = self.buildCurrentZoomHardwareConfig()
+                self.zoomStateLock.withLock {
+                    _ = self.zoomController.endCameraReconfiguration(
+                        newConfig: fallbackCfg,
+                        overrideDisplayZoom: self.defaultDisplayZoom,
+                        reason: "applyCaptureMode.photoNoCamera",
+                        at: CACurrentMediaTime()
+                    )
+                }
             }
 
             if photoOutput.isAppleProRAWSupported { photoOutput.isAppleProRAWEnabled = false }
@@ -3394,6 +3867,7 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCapture
         }
 
         if output === self.videoDataOutput, let pb = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            TrackingPerformanceMonitor.shared.recordCameraFrameArrival()
             if EffectVideoAssetRecorder.shared.isRecording {
                 let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
                 EffectVideoAssetRecorder.shared.appendVideoPixelBuffer(pb, pts: pts)
@@ -3798,5 +4272,18 @@ extension CameraService: AVCaptureFileOutputRecordingDelegate {
             self.applyCaptureModeIfPossible()
             if self.wantsRecording { self.startRecordingInternal() }
         }
+    }
+}
+
+/// Weak CADisplayLink proxy preventing retain cycles during smooth logarithmic zoom animations.
+private final class SmoothZoomDisplayLinkProxy: NSObject {
+    weak var owner: CameraService?
+
+    init(owner: CameraService) {
+        self.owner = owner
+    }
+
+    @objc func tick(_ link: CADisplayLink) {
+        owner?.handleSmoothZoomDisplayLinkTick()
     }
 }

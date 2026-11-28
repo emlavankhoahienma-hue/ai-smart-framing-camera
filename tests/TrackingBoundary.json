@@ -39,43 +39,43 @@
     },
     {
       "path": "AISmartFramingCamera/Services/CameraService.swift",
-      "sha256": "cdb610cd97c02870c3861a167708ff43f5cec501e8e0a2d31eef7b61e3870cbb"
+      "sha256": "ce9731d295c8545cc37a00cfd124f5b70f3b2352ae974cb98b08e385d1fb002a"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func pinTargetAndStartMotion(at target: CGPoint, subjectRect: CGRect?,",
       "end": "    private func evaluateAlignment(at point: CGPoint) {",
-      "sha256": "c27282cba9d959959a870b9bbae81432db621ec1f514166ba8a1090cd8a72607"
+      "sha256": "bfba557f82036a2f20de4fc3c77b1d9ab12b3d48a1751c4a4d13a89f1bc6570a"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "        let state = alignmentGate.update(time: CACurrentMediaTime(), distance: Double(distance),",
       "end": "    private func verifyAndCaptureWhenReady()",
-      "sha256": "131db810cd5ff9549da750bfb856b6341ed6622bb612608f2ca97b828d2029ef"
+      "sha256": "a65ce420f6988e63522857d0780b43af40b89aa78500012c54c108327b4693f9"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func verifyAndCaptureWhenReady()",
       "end": null,
-      "sha256": "162a44b2768d92e8130406526cbbc34935ab674d1fa621f5ce9c6f541fdff229"
+      "sha256": "634944b9c61a707466605b3a9c2b67910330b4ca08ed178dd88a4be2f38f4ccc"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    private func setupMotionCallbacks()",
       "end": "    public func startAISession()",
-      "sha256": "a493e4075821587dc02d4244c0491be5181f560569e5af58060c3b6211a12226"
+      "sha256": "cda87c265e906257934375c1c34a634e625cbec4beee678d7b0af4570737d816"
     },
     {
       "path": "AISmartFramingCamera/ViewModels/CameraViewModel.swift",
       "start": "    public func applyAISuggestedZoom(",
       "end": "    // AI Framing & Composition",
-      "sha256": "1d05e849a0394b382d75a316d1af895a1e515007b26dd27f24027cfa0df27530"
+      "sha256": "051bd355a3157b606d2c42d47bf549d100c5207537b86b467608b97a9e99a18b"
     },
     {
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",
-      "start": "                if viewModel.showTargetCircle, let targetPoint = viewModel.currentTargetPoint {",
-      "end": "                // Optical centre is always fixed",
-      "sha256": "7dba181105007b787919f1d8ead6535dc7d5e10f94ab1bac5e2e1f9ae5c202e2"
+      "start": "private struct LiveTargetReticleOverlayView: View {",
+      "end": "// MARK: - Composition Grid",
+      "sha256": "d3f6d709ef71ef07648ff4e8b688018a84dd3dc3c2801fcdbc8683d946b06b1e"
     },
     {
       "path": "AISmartFramingCamera/Views/ARFramingOverlayView.swift",

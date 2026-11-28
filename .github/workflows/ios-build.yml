@@ -93,6 +93,19 @@ jobs:
             tests/RealPhotoPipelineBenchmark.swift \
             -o "$RUNNER_TEMP/real-photo-benchmark"
 
+      - name: Run native zoom transition & tracking isolation regressions (25 scenarios)
+        run: |
+          xcrun swiftc -O -warnings-as-errors \
+            AISmartFramingCamera/Services/CameraLogger.swift \
+            AISmartFramingCamera/Services/CompositionTuning.swift \
+            AISmartFramingCamera/Services/CompositionPureCalculations.swift \
+            AISmartFramingCamera/Services/TrackingGeometry.swift \
+            AISmartFramingCamera/Services/ZoomTransitionController.swift \
+            AISmartFramingCamera/Services/TrackingPerformanceMonitor.swift \
+            tests/ZoomTransitionRegression.swift \
+            -o "$RUNNER_TEMP/zoom-transition-regressions"
+          "$RUNNER_TEMP/zoom-transition-regressions"
+
       - name: Verify target tracking boundary
         run: python scripts/verify_tracking_boundary.py
 

@@ -233,3 +233,65 @@ public struct ZoomDebugOverlayView: View {
         }
     }
 }
+
+/// Optional on-device Tracking Performance Debug HUD (default OFF in Settings -> Bố cục).
+/// Observes ONLY `TrackingPerfHUDState` at 4Hz so it never invalidates `CameraMainView`.
+public struct TrackingPerfDebugHUDView: View {
+    @ObservedObject var perfState: TrackingPerfHUDState
+
+    public init(perfState: TrackingPerfHUDState) {
+        self.perfState = perfState
+    }
+
+    public var body: some View {
+        let s = perfState.snapshot
+        VStack(alignment: .trailing, spacing: 2.5) {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(thermalColor(s.thermalState))
+                    .frame(width: 6, height: 6)
+                Text("PERF DEBUG")
+                    .font(.system(size: 9.0, weight: .bold, design: .monospaced))
+                    .foregroundColor(.white)
+            }
+            Text(String(format: "FPS cam %.0f · UI %.0f · drop %llu", s.cameraFPS, s.overlayFPS, s.droppedFrames))
+                .font(.system(size: 8.8, weight: .medium, design: .monospaced))
+                .foregroundColor(.green)
+            Text(String(format: "F→V p50 %.1f / p95 %.1fms", s.frameToVisionP50Ms, s.frameToVisionP95Ms))
+                .font(.system(size: 8.6, weight: .regular, design: .monospaced))
+                .foregroundColor(.white.opacity(0.92))
+            Text(String(format: "Trk p50 %.1f / p95 %.1fms", s.visionTrackP50Ms, s.visionTrackP95Ms))
+                .font(.system(size: 8.6, weight: .regular, design: .monospaced))
+                .foregroundColor(.cyan)
+            Text(String(format: "UI  p50 %.1f / p95 %.1fms · blk %.0fms", s.trackToUIP50Ms, s.trackToUIP95Ms, s.mainThreadMaxBlockMs))
+                .font(.system(size: 8.6, weight: .regular, design: .monospaced))
+                .foregroundColor(.white.opacity(0.88))
+            Text(String(format: "RAM %.0fMB (av %dMB) · %@ · %.2fx", s.memoryPhysMB, s.memoryAvailMB, s.thermalState, s.displayZoom))
+                .font(.system(size: 8.6, weight: .semibold, design: .monospaced))
+                .foregroundColor(.yellow)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.black.opacity(0.74))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.white.opacity(0.18), lineWidth: 0.6)
+                )
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .padding(.top, 52)
+        .padding(.trailing, 8)
+        .allowsHitTesting(false)
+    }
+
+    private func thermalColor(_ thermal: String) -> Color {
+        switch thermal {
+        case "nom": return .green
+        case "fair": return .yellow
+        case "SERIOUS": return .orange
+        default: return .red
+        }
+    }
+}

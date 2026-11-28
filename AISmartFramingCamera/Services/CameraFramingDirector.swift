@@ -982,9 +982,10 @@ enum CameraFramingDirector {
         let measured = smoothedFillOverride ?? rawMeasured
 
         let minHW = allowedZooms.min() ?? 1.0
+        let autoFloorZoom = max(1.0, minHW)
         let maxHW = max(currentZoom, allowedZooms.max() ?? 4.0)
         let effectiveOptical = (opticalZooms?.isEmpty == false) ? opticalZooms! : allowedZooms.filter { $0 <= 5.0 }
-        let hasUltraWide = effectiveOptical.contains { $0 <= 0.60 } || (opticalZooms == nil && minHW <= 0.60)
+        let autoOptical = effectiveOptical.filter { $0 >= 1.0 }
         let maxOptical = effectiveOptical.max() ?? 1.0
         let hardwareUpscaleCap = upscaleThreshold.map { max(maxOptical, $0) } ?? max(2.6, maxOptical * 1.35)
         let qualityCeiling = min(maxHW, min(4.0, max(2.4, min(hardwareUpscaleCap, maxOptical * 1.45))))
@@ -1147,23 +1148,23 @@ enum CameraFramingDirector {
             measured > spec.maxFill && bArea >= 0.48
 
         if isSeverelyClipped || isOversized {
+            // Hard rule: Auto-zoom MUST NEVER automatically drop below 1.0x (Ultra-Wide 0.5x is manual-only).
+            // If currently zoomed in (> 1.14x), zoom back out cleanly toward 1.0x; if already at 1.0x,
+            // stay at 1.0x and keep `state = .zoomOut` so the guidance instructs the user to step back or pick 0.5x manually.
             let targetOut: CGFloat
             if currentZoom > 1.14 {
                 let comfortableFill = spec.minFill + 0.35 * (spec.idealFill - spec.minFill)
                 let scaleBack = CGFloat(comfortableFill / max(0.32, measured))
                 let rawOut = min(currentZoom - 0.20, currentZoom * scaleBack)
-                let floorZoom: CGFloat = (isSeverelyClipped && hasUltraWide) ? 0.5 : max(1.0, minHW)
                 targetOut = snapZoomToLensRungs(
-                    rawZoom: max(floorZoom, rawOut),
-                    minZoom: hasUltraWide ? minHW : max(1.0, minHW),
-                    maxAllowed: max(minHW, currentZoom - 0.15),
-                    opticalSwitchovers: effectiveOptical,
+                    rawZoom: max(autoFloorZoom, rawOut),
+                    minZoom: autoFloorZoom,
+                    maxAllowed: max(autoFloorZoom, currentZoom - 0.15),
+                    opticalSwitchovers: autoOptical,
                     mustNotExceedCeiling: false
                 )
-            } else if hasUltraWide {
-                targetOut = 0.5
             } else {
-                targetOut = max(1.0, minHW)
+                targetOut = max(autoFloorZoom, currentZoom)
             }
             let rsn: ZoomReasonCode = isSeverelyClipped ? .zoomOutBorderClipped : .zoomOutOversized
             let trace = makeTrace(

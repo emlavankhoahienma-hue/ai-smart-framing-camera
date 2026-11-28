@@ -4,15 +4,17 @@ import SwiftUI
 /// Kich hoat khi CompositionTuning.isDebugOverlayEnabled = true.
 public struct CompositionDebugOverlayView: View {
     @ObservedObject var viewModel: CameraViewModel
+    @ObservedObject var targetState: LiveTargetOverlayState
     let containerSize: CGSize
 
     public init(viewModel: CameraViewModel, containerSize: CGSize) {
         self.viewModel = viewModel
+        self.targetState = viewModel.liveTargetOverlayState
         self.containerSize = containerSize
     }
 
     private var qualityText: String {
-        switch viewModel.trackingQuality {
+        switch targetState.trackingQuality {
         case .locked: return "locked"
         case .predicting: return "predicting"
         case .reacquiring: return "reacquiring"
@@ -55,7 +57,7 @@ public struct CompositionDebugOverlayView: View {
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundColor(.white)
 
-                let targetStr = viewModel.currentTargetPoint.map { String(format: "(%.3f, %.3f)", $0.x, $0.y) } ?? "nil"
+                let targetStr = targetState.targetPoint.map { String(format: "(%.3f, %.3f)", $0.x, $0.y) } ?? "nil"
                 Text("Target: \(targetStr)")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .foregroundColor(.yellow)
@@ -66,7 +68,7 @@ public struct CompositionDebugOverlayView: View {
 
                 Text("Track Quality: \(qualityText)")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(viewModel.trackingQuality == .locked ? .green : .orange)
+                    .foregroundColor(targetState.trackingQuality == .locked ? .green : .orange)
             }
             .padding(6)
             .background(
