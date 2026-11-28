@@ -473,7 +473,7 @@ struct PhotoDarkroomEngineRegression {
             check(false, "QRCodePayloadParser parses Wi-Fi QR including escaped semicolons")
         }
 
-        let vietQRSample = "00020101021238570010A00000072701270006970422011303441972120208QRIBFTTA53037045405500005802VN62180814Coffee AlignAI6304ABCD"
+        let vietQRSample = "00020101021238540010A00000072701240006970422011003441972120208QRIBFTTA53037045405500005802VN62180814Coffee AlignAI6304ABCD"
         let parsedVietQR = QRCodePayloadParser.parse(vietQRSample)
         if case .vietQR(let amount, let note, _) = parsedVietQR {
             let qr = DetectedQRCode(rawValue: vietQRSample, kind: parsedVietQR, normalizedBoundingBox: .zero)
