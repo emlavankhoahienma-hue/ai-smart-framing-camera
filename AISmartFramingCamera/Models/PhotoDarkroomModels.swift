@@ -1268,8 +1268,9 @@ public struct PhotoDarkroomRecipe: Identifiable, Equatable, Codable, Sendable {
             presetRawValue: "FUJI X",
             filmIntensity: 0.92,
             effects: PhotoEffectsState(grain: 0.24, vignette: 0.24, fade: 0.08),
-            tools: PhotoToolsState(exposureEV: -0.06, tint: -0.12, contrast: 0.14, highlights: -0.18, clarity: 0.22,
-                                   hsl: PhotoHSLState(green: PhotoHSLBandValue(hue: 0.10, saturation: 0.12, luminance: -0.16)))
+            tools: PhotoToolsState(exposureEV: -0.06, tint: -0.12, contrast: 0.14, highlights: -0.18,
+                                   hsl: PhotoHSLState(green: PhotoHSLBandValue(hue: 0.10, saturation: 0.12, luminance: -0.16)),
+                                   clarity: 0.22)
         ),
         PhotoDarkroomRecipe(
             id: "recipe.concrete_steps",
