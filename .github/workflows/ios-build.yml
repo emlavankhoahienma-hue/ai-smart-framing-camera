@@ -106,6 +106,15 @@ jobs:
             -o "$RUNNER_TEMP/zoom-transition-regressions"
           "$RUNNER_TEMP/zoom-transition-regressions"
 
+      - name: Run native photo darkroom editor regressions (14 effects + 12 tools + HSL + Curves)
+        run: |
+          xcrun swiftc -O -warnings-as-errors \
+            AISmartFramingCamera/Models/PhotoDarkroomModels.swift \
+            AISmartFramingCamera/Services/PhotoDarkroomRenderEngine.swift \
+            tests/PhotoDarkroomEngineRegression.swift \
+            -o "$RUNNER_TEMP/photo-darkroom-regressions"
+          "$RUNNER_TEMP/photo-darkroom-regressions"
+
       - name: Verify target tracking boundary
         run: python scripts/verify_tracking_boundary.py
 

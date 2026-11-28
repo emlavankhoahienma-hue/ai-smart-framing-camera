@@ -38,6 +38,9 @@
 		B20000000000000000000014 /* CameraLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000017 /* CameraLogger.swift */; };
 		B200000000000000000000B1 /* ZoomTransitionController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000B1 /* ZoomTransitionController.swift */; };
 		B200000000000000000000B2 /* TrackingPerformanceMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000B2 /* TrackingPerformanceMonitor.swift */; };
+		B200000000000000000000B3 /* PhotoDarkroomModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000B3 /* PhotoDarkroomModels.swift */; };
+		B200000000000000000000B4 /* PhotoDarkroomRenderEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000B4 /* PhotoDarkroomRenderEngine.swift */; };
+		B200000000000000000000B5 /* PhotoDarkroomControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000B5 /* PhotoDarkroomControlsView.swift */; };
 		B20000000000000000000015 /* SpatialTrackingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000018 /* SpatialTrackingEngine.swift */; };
 		B20000000000000000000016 /* NeuralSubjectIntelligenceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000019 /* NeuralSubjectIntelligenceEngine.swift */; };
 		B20000000000000000000017 /* YOLODetectionEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000020 /* YOLODetectionEngine.swift */; };
@@ -157,6 +160,9 @@
 		B100000000000000000000017 /* CameraLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraLogger.swift; sourceTree = "<group>"; };
 		B100000000000000000000B1 /* ZoomTransitionController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZoomTransitionController.swift; sourceTree = "<group>"; };
 		B100000000000000000000B2 /* TrackingPerformanceMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackingPerformanceMonitor.swift; sourceTree = "<group>"; };
+		B100000000000000000000B3 /* PhotoDarkroomModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoDarkroomModels.swift; sourceTree = "<group>"; };
+		B100000000000000000000B4 /* PhotoDarkroomRenderEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoDarkroomRenderEngine.swift; sourceTree = "<group>"; };
+		B100000000000000000000B5 /* PhotoDarkroomControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoDarkroomControlsView.swift; sourceTree = "<group>"; };
 		B100000000000000000000018 /* SpatialTrackingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialTrackingEngine.swift; sourceTree = "<group>"; };
 		B100000000000000000000019 /* NeuralSubjectIntelligenceEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeuralSubjectIntelligenceEngine.swift; sourceTree = "<group>"; };
 		B100000000000000000000020 /* YOLODetectionEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YOLODetectionEngine.swift; sourceTree = "<group>"; };
@@ -292,6 +298,7 @@
 				C10000000000000000000082 /* PhotographicStyleModels.swift */,
 				C10000000000000000000086 /* VintageCameraModels.swift */,
 				C1000000000000000000008A /* PhotoboothModels.swift */,
+				B100000000000000000000B3 /* PhotoDarkroomModels.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -311,6 +318,7 @@
 				B100000000000000000000017 /* CameraLogger.swift */,
 				B100000000000000000000B1 /* ZoomTransitionController.swift */,
 				B100000000000000000000B2 /* TrackingPerformanceMonitor.swift */,
+				B100000000000000000000B4 /* PhotoDarkroomRenderEngine.swift */,
 				B100000000000000000000018 /* SpatialTrackingEngine.swift */,
 				C10000000000000000000041 /* NeuralTargetTracker.swift */,
 				C10000000000000000000040 /* TrackingGeometry.swift */,
@@ -423,6 +431,7 @@
 				C10000000000000000000050 /* CompositionPreviewSheet.swift */,
 				B1000000000000000000000E /* CameraControlsView.swift */,
 				B1000000000000000000000F /* CapturedPhotoPreviewView.swift */,
+				B100000000000000000000B5 /* PhotoDarkroomControlsView.swift */,
 				B100000000000000000000010 /* SettingsSheetView.swift */,
 				C10000000000000000000072 /* MasterWatermarkConfigSheet.swift */,
 				B100000000000000000000016 /* VideoPreviewSheetView.swift */,
@@ -550,6 +559,9 @@
 				B20000000000000000000014 /* CameraLogger.swift in Sources */,
 				B200000000000000000000B1 /* ZoomTransitionController.swift in Sources */,
 				B200000000000000000000B2 /* TrackingPerformanceMonitor.swift in Sources */,
+				B200000000000000000000B3 /* PhotoDarkroomModels.swift in Sources */,
+				B200000000000000000000B4 /* PhotoDarkroomRenderEngine.swift in Sources */,
+				B200000000000000000000B5 /* PhotoDarkroomControlsView.swift in Sources */,
 				B20000000000000000000015 /* SpatialTrackingEngine.swift in Sources */,
 				C20000000000000000000041 /* NeuralTargetTracker.swift in Sources */,
 				C20000000000000000000040 /* TrackingGeometry.swift in Sources */,

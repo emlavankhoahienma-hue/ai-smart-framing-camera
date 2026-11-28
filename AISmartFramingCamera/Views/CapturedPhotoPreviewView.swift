@@ -4,180 +4,56 @@ import CoreImage
 import UniformTypeIdentifiers
 import ImageIO
 
-// MARK: - Edit Drawer Tabs & Detail Levels
-private enum PhotoEditPanelTab: String, CaseIterable, Identifiable {
-    case film = "Màu phim"
-    case detail = "Độ nét"
-    case frame = "Khung ảnh"
-
-    var id: String { rawValue }
-}
-
-private enum PhotoMicroDetailLevel: Int, CaseIterable, Identifiable {
-    case off = 0
-    case natural = 1
-    case ultra = 2
-
-    var id: Int { rawValue }
-
-    var title: String {
-        switch self {
-        case .off: return "Gốc"
-        case .natural: return "Tự nhiên"
-        case .ultra: return "Ultra Nét"
-        }
-    }
-
-    var unsharpIntensity: Float {
-        switch self {
-        case .off: return 0.0
-        case .natural: return 0.34
-        case .ultra: return 0.62
-        }
-    }
-
-    var luminanceSharpness: Float {
-        switch self {
-        case .off: return 0.0
-        case .natural: return 0.22
-        case .ultra: return 0.45
-        }
-    }
-
-    var microContrast: Float {
-        switch self {
-        case .off: return 1.0
-        case .natural: return 1.022
-        case .ultra: return 1.042
-        }
-    }
-}
-
-// MARK: - Real RGB + Luminance Histogram Snapshot (Shown Cleanly Inside Info Sheet)
-private struct PhotoDetailHistogramSnapshot: Sendable {
-    let lumaBins: [Double]
-    let redBins: [Double]
-    let greenBins: [Double]
-    let blueBins: [Double]
-    let meanLuminance: Double
-    let shadowClipPercent: Double
-    let highlightClipPercent: Double
-
-    static let empty = PhotoDetailHistogramSnapshot(
-        lumaBins: Array(repeating: 0.05, count: 48),
-        redBins: Array(repeating: 0.05, count: 48),
-        greenBins: Array(repeating: 0.05, count: 48),
-        blueBins: Array(repeating: 0.05, count: 48),
-        meanLuminance: 0.5,
-        shadowClipPercent: 0.0,
-        highlightClipPercent: 0.0
-    )
-
-    static func compute(from cgImage: CGImage, binCount: Int = 48) -> PhotoDetailHistogramSnapshot {
-        let sampleW = min(256, max(32, cgImage.width / 8))
-        let sampleH = min(256, max(32, cgImage.height / 8))
-        let bytesPerRow = sampleW * 4
-        var raw = [UInt8](repeating: 0, count: sampleH * bytesPerRow)
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue
-
-        guard let ctx = CGContext(
-            data: &raw,
-            width: sampleW,
-            height: sampleH,
-            bitsPerComponent: 8,
-            bytesPerRow: bytesPerRow,
-            space: colorSpace,
-            bitmapInfo: bitmapInfo
-        ) else {
-            return .empty
-        }
-        ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: sampleW, height: sampleH))
-
-        var lHist = [Double](repeating: 0, count: binCount)
-        var rHist = [Double](repeating: 0, count: binCount)
-        var gHist = [Double](repeating: 0, count: binCount)
-        var bHist = [Double](repeating: 0, count: binCount)
-
-        let totalPixels = sampleW * sampleH
-        guard totalPixels > 0 else { return .empty }
-        var lumaSum = 0.0
-        var shadowClip = 0
-        var highlightClip = 0
-        let scale = Double(binCount - 1) / 255.0
-
-        for i in 0..<totalPixels {
-            let offset = i * 4
-            let r = Double(raw[offset])
-            let g = Double(raw[offset + 1])
-            let b = Double(raw[offset + 2])
-            let y = 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-            lumaSum += y / 255.0
-            if y <= 4.0 { shadowClip += 1 }
-            if y >= 251.0 { highlightClip += 1 }
-
-            rHist[max(0, min(binCount - 1, Int((r * scale).rounded())))] += 1
-            gHist[max(0, min(binCount - 1, Int((g * scale).rounded())))] += 1
-            bHist[max(0, min(binCount - 1, Int((b * scale).rounded())))] += 1
-            lHist[max(0, min(binCount - 1, Int((y * scale).rounded())))] += 1
-        }
-
-        func normalize(_ arr: [Double]) -> [Double] {
-            let interiorMax = arr.dropFirst().dropLast().max() ?? 1.0
-            let peak = max(1.0, max(interiorMax, (arr.max() ?? 1.0) * 0.65))
-            return arr.map { min(1.0, max(0.03, pow($0 / peak, 0.72))) }
-        }
-
-        return PhotoDetailHistogramSnapshot(
-            lumaBins: normalize(lHist),
-            redBins: normalize(rHist),
-            greenBins: normalize(gHist),
-            blueBins: normalize(bHist),
-            meanLuminance: lumaSum / Double(totalPixels),
-            shadowClipPercent: (Double(shadowClip) / Double(totalPixels)) * 100.0,
-            highlightClipPercent: (Double(highlightClip) / Double(totalPixels)) * 100.0
-        )
-    }
-}
-
-// MARK: - Clean Minimalist Photo Detail View (Calm, Spacious, Uncluttered Form)
+// MARK: - Clean Minimalist Photo Detail & Non-Destructive Darkroom Studio
 public struct CapturedPhotoPreviewView: View {
     public let item: CapturedPhotoItem
     public var viewModel: CameraViewModel?
     @Environment(\.dismiss) private var dismiss
 
-    // Non-destructive Editing States
-    @State private var currentProcessedImage: CGImage
-    @State private var activePreset: FilmPreset
-    @State private var activeFilmIntensity: Double = 1.0
-    @State private var selectedCategory: FilmPresetCategory
-    @State private var isAIEnhanced: Bool = false
+    // Unified Non-Destructive Edit State & Undo/Redo Stack
+    @State private var editState: PhotoDarkroomEditState
+    @State private var historyStack = PhotoDarkroomHistoryStack(maxDepth: 40)
     @State private var activeAIColorParams: AIColorParameters? = nil
-    @State private var microDetailLevel: PhotoMicroDetailLevel = .off
-    @State private var isMasterFrameApplied: Bool = false
-    @State private var masterFrameTheme: WatermarkTheme = .white
-    @State private var masterFrameLogo: WatermarkLogoStyle = .alignStudio
 
-    // Quiet Drawer & Info Sheet States (Both Closed by Default so Photo Shines!)
+    // Darkroom Studio Navigation States (Studio Closed by Default so Photo Shines!)
     @State private var isEditDrawerOpen: Bool = false
-    @State private var selectedEditTab: PhotoEditPanelTab = .film
-    @State private var isShowingInfoSheet: Bool = false
-    @State private var histogramSnapshot: PhotoDetailHistogramSnapshot = .empty
+    @State private var activeMainTab: PhotoDarkroomMainTab = .looks
+    @State private var activeLooksSubTab: PhotoLooksSubTab = .films
+    @State private var selectedEffect: PhotoEffectKind? = nil
+    @State private var selectedTool: PhotoToolKind? = nil
+    @State private var isTuningFilmIntensity: Bool = false
+    @State private var selectedHSLChannel: PhotoHSLColorChannel = .red
+    @State private var selectedCurveChannel: PhotoCurveChannel = .rgb
 
-    @State private var isProcessingFilter: Bool = false
+    // User Custom Recipes & Favorites (Persisted via PhotoDarkroomRecipeStore)
+    @State private var customRecipes: [PhotoDarkroomRecipe] = []
+    @State private var favoriteFilmRawValues: Set<String> = []
+    @State private var favoriteRecipeIDs: Set<String> = []
+
+    // Sheets & Inspector
+    @State private var isShowingInfoSheet: Bool = false
+    @State private var isShowingCatalogSheet: Bool = false
+    @State private var isShowingSaveRecipeSheet: Bool = false
+    @State private var histogramSnapshot: PhotoDarkroomHistogram = .empty
+
+    // Render & Persistence Status
+    @State private var isDevelopingPreview: Bool = false
     @State private var isSavingToLibrary: Bool = false
     @State private var hasSavedNewEnhancement: Bool = false
+    @State private var isPreparingShare: Bool = false
+    @State private var isShowingShareSheet: Bool = false
+    @State private var cachedShareURL: URL? = nil
 
-    // Pre-decoded Display & Mini-Map Image Caches (Zero per-frame 48MP decoding or main-thread HEIC export!)
+    // Dual-Resolution Caches (1440px Interactive Proxy + On-Demand Full-Res CGImage)
+    @State private var currentFullResCGImage: CGImage
+    @State private var fullResNeedsRefresh: Bool = false
     @State private var cachedFullResUIImage: UIImage
     @State private var cachedDisplayUIImage: UIImage
     @State private var cachedOriginalDisplayUIImage: UIImage
     @State private var cachedMiniMapUIImage: UIImage
-    @State private var isHistogramStale: Bool = true
-    @State private var cachedShareURL: URL? = nil
-    @State private var isPreparingShare: Bool = false
-    @State private var isShowingShareSheet: Bool = false
+
+    // Session Background Renderer (Coalesced Preview Queue + Bounded Lazy Thumbnail Cache)
+    @State private var coordinator = PhotoDarkroomSessionCoordinator()
 
     // Comparison & Zoom States
     @State private var isSplitCompareMode: Bool = false
@@ -190,16 +66,11 @@ public struct CapturedPhotoPreviewView: View {
     @State private var lastPanOffset: CGSize = .zero
     @State private var dismissDragOffsetY: CGFloat = 0.0
 
-    private static let detailCIContext = CIContext(options: [
-        .useSoftwareRenderer: false,
-        .highQualityDownsample: true,
-        .cacheIntermediates: false
-    ])
-
     public init(item: CapturedPhotoItem, viewModel: CameraViewModel? = nil) {
         self.item = item
         self.viewModel = viewModel
-        _currentProcessedImage = State(initialValue: item.processedImage)
+        _currentFullResCGImage = State(initialValue: item.processedImage)
+
         let initialDisplayUI: UIImage
         let initialOriginalUI: UIImage
         let initialMiniUI: UIImage
@@ -213,10 +84,10 @@ public struct CapturedPhotoPreviewView: View {
                 detail: "src=\(item.processedImage.width)x\(item.processedImage.height)",
                 category: .capture
             )
-            initialDisplayUI = Self.downsampleForFastDisplay(item.processedImage, maxSide: 1600)
+            initialDisplayUI = Self.downsampleForFastDisplay(item.processedImage, maxSide: 1440)
             initialOriginalUI = (item.originalImage === item.processedImage)
                 ? initialDisplayUI
-                : Self.downsampleForFastDisplay(item.originalImage, maxSide: 1600)
+                : Self.downsampleForFastDisplay(item.originalImage, maxSide: 1440)
             initialMiniUI = Self.downsampleForFastDisplay(item.processedImage, maxSide: 220)
             CameraLogger.endTrace(initSpan, detail: "disp=\(Int(initialDisplayUI.size.width))x\(Int(initialDisplayUI.size.height))")
         }
@@ -224,52 +95,186 @@ public struct CapturedPhotoPreviewView: View {
         _cachedDisplayUIImage = State(initialValue: initialDisplayUI)
         _cachedOriginalDisplayUIImage = State(initialValue: initialOriginalUI)
         _cachedMiniMapUIImage = State(initialValue: initialMiniUI)
-        _activePreset = State(initialValue: item.appliedPreset)
-        _selectedCategory = State(initialValue: item.appliedPreset.category)
+
+        var initialEffects = PhotoEffectsState.neutral
         if let vm = viewModel {
-            _masterFrameTheme = State(initialValue: vm.masterWatermarkTheme)
-            _masterFrameLogo = State(initialValue: vm.masterWatermarkLogoStyle)
+            switch vm.masterWatermarkLogoStyle {
+            case .alignStudio: initialEffects.frameLogo = .alignStudio
+            case .aperturePro: initialEffects.frameLogo = .aperturePro
+            case .none, .appleIcon, .customImage: initialEffects.frameLogo = .none
+            }
         }
+        _editState = State(initialValue: PhotoDarkroomEditState(
+            presetRawValue: item.appliedPreset.rawValue,
+            filmIntensity: 1.0,
+            isAIEnhanced: false,
+            effects: initialEffects,
+            tools: .neutral
+        ))
     }
 
     private var hasModifiedSinceOpen: Bool {
-        activePreset != item.appliedPreset ||
-        abs(activeFilmIntensity - 1.0) > 0.02 ||
-        isAIEnhanced ||
-        microDetailLevel != .off ||
-        isMasterFrameApplied
+        editState.isModifiedComparedTo(initialPresetRaw: item.appliedPreset.rawValue)
+    }
+
+    private var isActivelyCropping: Bool {
+        isEditDrawerOpen && activeMainTab == .tools && selectedTool == .crop && item.saveFormat != .dng
+    }
+
+    private var activeLookBadgeTitle: String {
+        if let recipeName = editState.activeRecipeName, !recipeName.isEmpty {
+            return recipeName
+        }
+        if let preset = FilmPreset(rawValue: editState.presetRawValue) {
+            return preset == .standard ? "GỐC" : preset.cameraDisplayTag
+        }
+        return "GỐC"
+    }
+
+    private var renderMetadata: PhotoDarkroomRenderMetadata {
+        PhotoDarkroomRenderMetadata(
+            timestamp: item.timestamp,
+            iso: item.iso,
+            shutterSpeed: item.shutterSpeed,
+            focalLengthMM: focalLengthMillimeters,
+            aperture: 1.8,
+            deviceName: viewModel?.masterWatermarkDeviceName ?? "ALIGN STUDIO OPTICAL"
+        )
     }
 
     public var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.025, green: 0.028, blue: 0.036).ignoresSafeArea()
+                AlignTheme.studioCanvas.ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    cleanTopHeaderBar
+                    if isEditDrawerOpen && item.saveFormat != .dng {
+                        darkroomEditHeaderBar
+                    } else {
+                        cleanTopHeaderBar
+                    }
 
                     heroPhotoViewport
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     if isEditDrawerOpen && item.saveFormat != .dng {
-                        compactEditDrawer
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        PhotoDarkroomStudioDeckView(
+                            editState: $editState,
+                            activeMainTab: $activeMainTab,
+                            activeLooksSubTab: $activeLooksSubTab,
+                            selectedEffect: $selectedEffect,
+                            selectedTool: $selectedTool,
+                            isTuningFilmIntensity: $isTuningFilmIntensity,
+                            selectedHSLChannel: $selectedHSLChannel,
+                            selectedCurveChannel: $selectedCurveChannel,
+                            originalImage: item.originalImage,
+                            currentImageSize: cachedDisplayUIImage.size,
+                            coordinator: coordinator,
+                            histogram: histogramSnapshot,
+                            customRecipes: customRecipes,
+                            favoriteFilmRawValues: favoriteFilmRawValues,
+                            favoriteRecipeIDs: favoriteRecipeIDs,
+                            onLiveChange: {
+                                hasSavedNewEnhancement = false
+                                fullResNeedsRefresh = true
+                                cachedShareURL = nil
+                                schedulePreviewRender()
+                            },
+                            onCommitChange: { previousState in
+                                historyStack.pushUndoSnapshot(previousState, newState: editState)
+                            },
+                            onOpenCatalogSheet: {
+                                isShowingCatalogSheet = true
+                            },
+                            onOpenNewRecipeSheet: {
+                                isShowingSaveRecipeSheet = true
+                            },
+                            onToggleFavoriteFilm: { raw in
+                                favoriteFilmRawValues = PhotoDarkroomRecipeStore.shared.toggleFavoriteFilm(raw)
+                            },
+                            onToggleFavoriteRecipe: { id in
+                                favoriteRecipeIDs = PhotoDarkroomRecipeStore.shared.toggleFavoriteRecipe(id)
+                            },
+                            onDeleteCustomRecipe: { id in
+                                customRecipes = PhotoDarkroomRecipeStore.shared.deleteCustomRecipe(id: id)
+                                favoriteRecipeIDs = PhotoDarkroomRecipeStore.shared.loadFavoriteRecipeIDs()
+                            },
+                            onToggleAIEnhance: {
+                                toggleAIFullColorEnhancement()
+                            }
+                        )
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    } else {
+                        calmBottomActionBar
+                            .transition(.opacity)
                     }
-
-                    calmBottomActionBar
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .interactiveDismissDisabled(zoomScale > 1.02 || isSplitCompareMode)
+            .preferredColorScheme(.dark)
+            .interactiveDismissDisabled(zoomScale > 1.02 || isSplitCompareMode || isEditDrawerOpen)
             .sheet(isPresented: $isShowingInfoSheet) {
                 photoInfoInspectorSheet
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
-                    .onAppear {
-                        if isHistogramStale {
-                            refreshHistogram(for: currentProcessedImage)
-                        }
+            }
+            .sheet(isPresented: $isShowingCatalogSheet) {
+                PhotoDarkroomCatalogSheetView(
+                    initialSubTab: activeLooksSubTab,
+                    currentEditState: editState,
+                    originalImage: item.originalImage,
+                    coordinator: coordinator,
+                    customRecipes: customRecipes,
+                    favoriteFilmRawValues: favoriteFilmRawValues,
+                    favoriteRecipeIDs: favoriteRecipeIDs,
+                    onSelectFilm: { preset in
+                        let before = editState
+                        editState.presetRawValue = preset.rawValue
+                        editState.filmIntensity = 1.0
+                        editState.activeRecipeID = nil
+                        editState.activeRecipeName = nil
+                        historyStack.pushUndoSnapshot(before, newState: editState)
+                        hasSavedNewEnhancement = false
+                        fullResNeedsRefresh = true
+                        cachedShareURL = nil
+                        schedulePreviewRender()
+                    },
+                    onSelectRecipe: { recipe in
+                        let before = editState
+                        editState = recipe.apply(preservingCropFrom: editState)
+                        historyStack.pushUndoSnapshot(before, newState: editState)
+                        hasSavedNewEnhancement = false
+                        fullResNeedsRefresh = true
+                        cachedShareURL = nil
+                        schedulePreviewRender()
+                    },
+                    onToggleFavoriteFilm: { raw in
+                        favoriteFilmRawValues = PhotoDarkroomRecipeStore.shared.toggleFavoriteFilm(raw)
+                    },
+                    onToggleFavoriteRecipe: { id in
+                        favoriteRecipeIDs = PhotoDarkroomRecipeStore.shared.toggleFavoriteRecipe(id)
                     }
+                )
+            }
+            .sheet(isPresented: $isShowingSaveRecipeSheet) {
+                PhotoSaveRecipeSheetView(activePresetName: activeLookBadgeTitle) { name in
+                    let newRecipe = PhotoDarkroomRecipe(
+                        id: "custom.\(UUID().uuidString)",
+                        name: name.uppercased(),
+                        isBuiltIn: false,
+                        presetRawValue: editState.presetRawValue,
+                        filmIntensity: editState.filmIntensity,
+                        effects: editState.effects,
+                        tools: editState.tools
+                    )
+                    customRecipes = PhotoDarkroomRecipeStore.shared.saveCustomRecipe(newRecipe)
+                    editState.activeRecipeID = newRecipe.id
+                    editState.activeRecipeName = newRecipe.name
+                    activeMainTab = .looks
+                    activeLooksSubTab = .mine
+                }
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $isShowingShareSheet) {
                 if let url = cachedShareURL {
@@ -278,22 +283,44 @@ public struct CapturedPhotoPreviewView: View {
             }
             .onAppear {
                 CameraLogger.lifecycle("VIEW_APPEAR", detail: "CapturedPhotoPreviewView \(item.processedImage.width)x\(item.processedImage.height)", category: .photoKit)
-                rebuildDisplayCachesAsync(processed: currentProcessedImage, original: item.originalImage)
+                loadRecipeStoreState()
+                let safeOriginalPredecode: UIImage? = item.predecodedOriginalDisplayImage
+                    ?? (item.originalImage === item.processedImage ? item.predecodedDisplayImage : nil)
+                coordinator.prepareProxies(
+                    from: item.originalImage,
+                    predecodedDisplay: safeOriginalPredecode
+                ) {
+                    refreshHistogramAsync(for: currentFullResCGImage)
+                }
             }
             .onDisappear {
                 CameraLogger.lifecycle("VIEW_DISAPPEAR", detail: "CapturedPhotoPreviewView", category: .photoKit)
+                coordinator.teardown()
             }
             .onChangeCompatible(of: zoomScale > 2.2) { needsFullRes in
                 if needsFullRes {
-                    cachedFullResUIImage = UIImage(cgImage: currentProcessedImage)
+                    if fullResNeedsRefresh {
+                        refreshFullResForDeepZoom()
+                    } else {
+                        cachedFullResUIImage = UIImage(cgImage: currentFullResCGImage)
+                    }
                 } else {
                     cachedFullResUIImage = cachedDisplayUIImage
+                }
+            }
+            .onChangeCompatible(of: isActivelyCropping) { cropping in
+                if cropping {
+                    resetZoomAndPan()
+                    isSplitCompareMode = false
+                }
+                if hasModifiedSinceOpen || !editState.tools.crop.isIdentity {
+                    schedulePreviewRender()
                 }
             }
         }
     }
 
-    // MARK: - 1. Clean Top Header Bar (Only Close + Quiet Metadata + Info)
+    // MARK: - 1A. Clean Calm View Header Bar (Default When Studio Is Collapsed)
     private var cleanTopHeaderBar: some View {
         HStack {
             Button(action: { dismiss() }) {
@@ -320,9 +347,7 @@ public struct CapturedPhotoPreviewView: View {
 
             Spacer()
 
-            Button(action: {
-                isShowingInfoSheet = true
-            }) {
+            Button(action: { isShowingInfoSheet = true }) {
                 Image(systemName: "info.circle")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundColor(.white.opacity(0.90))
@@ -336,35 +361,183 @@ public struct CapturedPhotoPreviewView: View {
         .padding(.vertical, 10)
     }
 
+    // MARK: - 1B. Darkroom Edit Mode Header Bar (Close · Live Histogram · Undo/Redo · More · Xong)
+    private var darkroomEditHeaderBar: some View {
+        HStack(spacing: 10) {
+            Button(action: { dismiss() }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.90))
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(Color.white.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Đóng xem ảnh")
+
+            // Live Mini Luminance Histogram (Tap for full RGB & EXIF Inspector)
+            Button(action: { isShowingInfoSheet = true }) {
+                PhotoDarkroomMiniHistogramView(histogram: histogramSnapshot)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(AlignTheme.studioElevated)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .stroke(AlignTheme.studioHairlineSubtle, lineWidth: 0.6)
+                            )
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Biểu đồ sáng và thông số ảnh")
+
+            Spacer(minLength: 4)
+
+            // Undo & Redo Controls
+            HStack(spacing: 6) {
+                Button(action: { performUndo() }) {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(historyStack.canUndo ? .white : .white.opacity(0.26))
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(Color.white.opacity(historyStack.canUndo ? 0.09 : 0.03)))
+                }
+                .buttonStyle(.plain)
+                .disabled(!historyStack.canUndo)
+                .accessibilityLabel("Hoàn tác")
+
+                Button(action: { performRedo() }) {
+                    Image(systemName: "arrow.uturn.forward")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(historyStack.canRedo ? .white : .white.opacity(0.26))
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(Color.white.opacity(historyStack.canRedo ? 0.09 : 0.03)))
+                }
+                .buttonStyle(.plain)
+                .disabled(!historyStack.canRedo)
+                .accessibilityLabel("Làm lại")
+            }
+
+            Spacer(minLength: 4)
+
+            // More Actions Menu (...)
+            Menu {
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        resetZoomAndPan()
+                        if isActivelyCropping { selectedTool = nil }
+                        isSplitCompareMode.toggle()
+                    }
+                }) {
+                    Label(isSplitCompareMode ? "Tắt so sánh chia đôi" : "So sánh gốc chia đôi", systemImage: "square.split.2x1")
+                }
+
+                Button(action: { isShowingInfoSheet = true }) {
+                    Label("Thông số & Biểu đồ RGB", systemImage: "info.circle")
+                }
+
+                Button(action: { isShowingSaveRecipeSheet = true }) {
+                    Label("Lưu thành Công thức mới", systemImage: "plus.square.on.square")
+                }
+
+                Button(action: { toggleAIFullColorEnhancement() }) {
+                    Label(editState.isAIEnhanced ? "Tắt AI Cân Màu" : "Bật AI Cân Màu", systemImage: "wand.and.stars")
+                }
+
+                if hasModifiedSinceOpen {
+                    Divider()
+                    Button(role: .destructive, action: { resetToOriginalPhoto() }) {
+                        Label("Đặt lại toàn bộ ảnh gốc", systemImage: "arrow.counterclockwise")
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white.opacity(0.88))
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(Color.white.opacity(0.08)))
+            }
+
+            // Done / Finish Editing Pill (Warm Titanium Accent)
+            Button(action: {
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                    isEditDrawerOpen = false
+                    selectedEffect = nil
+                    selectedTool = nil
+                    isTuningFilmIntensity = false
+                    isSplitCompareMode = false
+                }
+            }) {
+                Text("Xong")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7.5)
+                    .background(Capsule().fill(AlignTheme.studioAccent))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+    }
+
     // MARK: - 2. Unobstructed Hero Photo Viewport
     private var heroPhotoViewport: some View {
         GeometryReader { geo in
             ZStack {
                 Color.clear
 
-                if isSplitCompareMode && zoomScale <= 1.05 && item.saveFormat != .dng {
+                if isActivelyCropping {
+                    ZStack {
+                        Image(uiImage: cachedDisplayUIImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .padding(14)
+                            .frame(width: geo.size.width, height: geo.size.height)
+
+                        PhotoInteractiveCropOverlayView(
+                            cropState: $editState.tools.crop,
+                            imageSize: cachedDisplayUIImage.size,
+                            viewportSize: geo.size,
+                            onCommit: { previousCrop in
+                                var previousEdit = editState
+                                previousEdit.tools.crop = previousCrop
+                                historyStack.pushUndoSnapshot(previousEdit, newState: editState)
+                                hasSavedNewEnhancement = false
+                                fullResNeedsRefresh = true
+                                cachedShareURL = nil
+                            }
+                        )
+                    }
+                } else if isSplitCompareMode && zoomScale <= 1.05 && item.saveFormat != .dng {
                     splitScreenComparisonCanvas(in: geo.size)
                 } else {
                     zoomableHeroCanvas(in: geo.size)
                 }
 
-                // Subtle Processing Pill
-                if isProcessingFilter {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            .scaleEffect(0.85)
-                        Text("Đang xử lý...")
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundColor(.white)
+                // Subtle Developing / Processing Indicator Pill at Top
+                if isDevelopingPreview {
+                    VStack {
+                        HStack(spacing: 7) {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                .scaleEffect(0.75)
+                            Text("ĐANG XỬ LÝ...")
+                                .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                                .tracking(0.6)
+                                .foregroundColor(.white)
+                        }
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 6)
+                        .background(StudioGlassCapsule(tintOpacity: 0.68, borderOpacity: 0.16))
+                        .padding(.top, 12)
+                        Spacer()
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(Color.black.opacity(0.75)))
+                    .allowsHitTesting(false)
                     .transition(.opacity)
                 }
 
-                // Only visible while actively peeking original
+                // Peeking Original Indicator
                 if isPeekingOriginal {
                     VStack {
                         Text("ẢNH GỐC")
@@ -380,8 +553,36 @@ public struct CapturedPhotoPreviewView: View {
                     .transition(.opacity)
                 }
 
-                // Zoom Region Mini-Map (top-leading) + Reset Pill (top-trailing) when zoomed in
-                if zoomScale > 1.05 {
+                // Bottom-Left Floating Active Look Pill (Exact Reference Ergonomics in AlignTheme Glass)
+                if item.saveFormat != .dng && zoomScale <= 1.05 && !isPeekingOriginal && !isActivelyCropping && !isSplitCompareMode {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            PhotoDarkroomLookBadgePill(title: activeLookBadgeTitle) {
+                                withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                                    if !isEditDrawerOpen {
+                                        isEditDrawerOpen = true
+                                        activeMainTab = .looks
+                                        activeLooksSubTab = (editState.activeRecipeID != nil) ? .recipes : .films
+                                    } else {
+                                        activeMainTab = .looks
+                                        if editState.presetRawValue != FilmPreset.standard.rawValue {
+                                            isTuningFilmIntensity.toggle()
+                                        }
+                                    }
+                                }
+                            }
+                            .padding(.leading, 14)
+                            .padding(.bottom, 12)
+
+                            Spacer()
+                        }
+                    }
+                    .transition(.opacity)
+                }
+
+                // Zoom Region Mini-Map + Reset Pill When Zoomed In
+                if zoomScale > 1.05 && !isActivelyCropping {
                     VStack {
                         HStack(alignment: .top) {
                             zoomRegionMiniMap(viewportSize: geo.size)
@@ -418,14 +619,10 @@ public struct CapturedPhotoPreviewView: View {
     @ViewBuilder
     private func zoomableHeroCanvas(in size: CGSize) -> some View {
         let isZoomedIn = zoomScale > 1.02
-        // Sử dụng ảnh đã giải mã trước (<= 2400px) cho 1x..2.3x để kéo/phóng 120Hz siêu mượt,
-        // và tự động chuyển sang ảnh full-res đã cache khi zoom sâu (> 2.3x) để soi chi tiết 100%.
         let activeUIImage: UIImage = isPeekingOriginal
             ? cachedOriginalDisplayUIImage
             : (zoomScale > 2.3 ? cachedFullResUIImage : cachedDisplayUIImage)
 
-        // Gắn toàn bộ cử chỉ trên vùng chứa tĩnh (coordinateSpace cố định) để kéo xuống xem vùng trên khi zoom
-        // hoàn toàn mượt mà, không bị lệch tọa độ và không bao giờ xung đột với cử chỉ đóng sheet.
         ZStack {
             Color.clear
 
@@ -475,7 +672,6 @@ public struct CapturedPhotoPreviewView: View {
             DragGesture(minimumDistance: 2, coordinateSpace: .named("capturedPhotoHeroSpace"))
                 .onChanged { val in
                     if zoomScale > 1.02 {
-                        // Đang phóng to: toàn quyền kéo 4 hướng (kéo xuống để xem mép trên ảnh mượt 100%)
                         dismissDragOffsetY = 0
                         let raw = CGSize(
                             width: lastPanOffset.width + val.translation.width,
@@ -483,7 +679,6 @@ public struct CapturedPhotoPreviewView: View {
                         )
                         panOffset = clampPanOffset(raw, in: size, scale: zoomScale)
                     } else if !isEditDrawerOpen && val.translation.height > 12 && abs(val.translation.height) > abs(val.translation.width) * 1.35 {
-                        // Chỉ cho vuốt xuống để đóng khi đang ở 1.0x nguyên bản (không zoom)
                         dismissDragOffsetY = max(0, val.translation.height * 0.72)
                     }
                 }
@@ -561,298 +756,23 @@ public struct CapturedPhotoPreviewView: View {
         }
     }
 
-    // MARK: - 3. Optional Compact Edit Drawer (Opens Only On Demand)
-    private var compactEditDrawer: some View {
-        VStack(spacing: 12) {
-            // Quiet Tab Selector + Optional Reset Link
-            HStack {
-                HStack(spacing: 4) {
-                    ForEach(PhotoEditPanelTab.allCases) { tab in
-                        let selected = selectedEditTab == tab
-                        Button(action: {
-                            withAnimation(.easeInOut(duration: 0.18)) {
-                                selectedEditTab = tab
-                            }
-                        }) {
-                            Text(tab.rawValue)
-                                .font(.system(size: 12, weight: selected ? .semibold : .medium, design: .rounded))
-                                .foregroundColor(selected ? .white : .white.opacity(0.50))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    Capsule()
-                                        .fill(selected ? Color.white.opacity(0.14) : Color.clear)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                Spacer()
-
-                if hasModifiedSinceOpen {
-                    Button("Đặt lại") {
-                        resetToOriginalPhoto()
-                    }
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundColor(AlignTheme.amberGold)
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 16)
-
-            // Active Drawer Body
-            Group {
-                switch selectedEditTab {
-                case .film:
-                    filmEditSection
-                case .detail:
-                    detailEditSection
-                case .frame:
-                    frameEditSection
-                }
-            }
-        }
-        .padding(.top, 12)
-        .padding(.bottom, 10)
-        .background(
-            Color(red: 0.055, green: 0.060, blue: 0.075)
-                .overlay(alignment: .top) {
-                    Rectangle().fill(Color.white.opacity(0.08)).frame(height: 0.7)
-                }
-        )
-    }
-
-    private var filmEditSection: some View {
-        VStack(spacing: 10) {
-            if activePreset != .standard {
-                HStack(spacing: 10) {
-                    Text("Cường độ")
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundColor(.white.opacity(0.65))
-                    Slider(
-                        value: $activeFilmIntensity,
-                        in: 0.15...1.0,
-                        step: 0.05,
-                        onEditingChanged: { editing in
-                            if !editing { rebuildEditedImage() }
-                        }
-                    )
-                    .tint(.white)
-                    Text("\(Int(round(activeFilmIntensity * 100)))%")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.85))
-                        .frame(width: 36, alignment: .trailing)
-                }
-                .padding(.horizontal, 16)
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
-                    ForEach(FilmPresetCategory.allCases) { category in
-                        let selected = selectedCategory == category
-                        Button(action: { selectedCategory = category }) {
-                            Text(category.displayName)
-                                .font(.system(size: 11.5, weight: selected ? .semibold : .regular, design: .rounded))
-                                .foregroundColor(selected ? .white : .white.opacity(0.48))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 16)
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(selectedCategory.presets) { preset in
-                        let selected = activePreset == preset
-                        Button(action: {
-                            activePreset = preset
-                            rebuildEditedImage()
-                        }) {
-                            VStack(spacing: 4) {
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(preset.previewColor.opacity(selected ? 0.34 : 0.16))
-                                    .frame(width: 60, height: 38)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                            .stroke(selected ? Color.white : Color.white.opacity(0.12), lineWidth: selected ? 1.5 : 0.7)
-                                    )
-                                    .overlay(
-                                        Text(preset.deviceBadge)
-                                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                                            .foregroundColor(.white.opacity(0.9))
-                                    )
-
-                                Text(preset.shortTitle)
-                                    .font(.system(size: 10, weight: selected ? .semibold : .regular, design: .rounded))
-                                    .foregroundColor(selected ? .white : .white.opacity(0.62))
-                                    .lineLimit(1)
-                                    .frame(width: 62)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(isProcessingFilter)
-                    }
-                }
-                .padding(.horizontal, 16)
-            }
-        }
-    }
-
-    private var detailEditSection: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 6) {
-                ForEach(PhotoMicroDetailLevel.allCases) { level in
-                    let selected = microDetailLevel == level
-                    Button(action: {
-                        guard microDetailLevel != level else { return }
-                        microDetailLevel = level
-                        rebuildEditedImage()
-                    }) {
-                        Text(level.title)
-                            .font(.system(size: 12, weight: selected ? .semibold : .medium, design: .rounded))
-                            .foregroundColor(selected ? .black : .white.opacity(0.80))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .fill(selected ? Color.white : Color.white.opacity(0.08))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 16)
-
-            HStack(spacing: 10) {
-                Button(action: { toggleAIFullColorEnhancement() }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "wand.and.stars")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text(isAIEnhanced ? "AI Cân Màu: Bật" : "AI Cân Màu")
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    }
-                    .foregroundColor(isAIEnhanced ? .black : .white.opacity(0.88))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 9)
-                    .background(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(isAIEnhanced ? AlignTheme.amberGold : Color.white.opacity(0.08))
-                    )
-                }
-                .buttonStyle(.plain)
-
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        resetZoomAndPan()
-                        isSplitCompareMode.toggle()
-                    }
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "square.split.2x1")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text(isSplitCompareMode ? "Tắt so sánh" : "So sánh gốc")
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    }
-                    .foregroundColor(isSplitCompareMode ? .black : .white.opacity(0.88))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 9)
-                    .background(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(isSplitCompareMode ? Color.white : Color.white.opacity(0.08))
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 16)
-        }
-    }
-
-    private var frameEditSection: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                Button(action: {
-                    isMasterFrameApplied = false
-                    rebuildEditedImage()
-                }) {
-                    Text("Tắt khung")
-                        .font(.system(size: 12, weight: !isMasterFrameApplied ? .semibold : .medium, design: .rounded))
-                        .foregroundColor(!isMasterFrameApplied ? .black : .white.opacity(0.75))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(!isMasterFrameApplied ? Color.white : Color.white.opacity(0.08))
-                        )
-                }
-                .buttonStyle(.plain)
-
-                ForEach(WatermarkTheme.allCases) { theme in
-                    let selected = isMasterFrameApplied && masterFrameTheme == theme
-                    Button(action: {
-                        masterFrameTheme = theme
-                        isMasterFrameApplied = true
-                        rebuildEditedImage()
-                    }) {
-                        Text(theme.rawValue)
-                            .font(.system(size: 12, weight: selected ? .semibold : .medium, design: .rounded))
-                            .foregroundColor(selected ? .black : .white.opacity(0.78))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                    .fill(selected ? Color.white : Color.white.opacity(0.08))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 16)
-
-            if isMasterFrameApplied {
-                HStack(spacing: 8) {
-                    ForEach([WatermarkLogoStyle.alignStudio, .aperturePro, .none]) { logo in
-                        let selected = masterFrameLogo == logo
-                        Button(action: {
-                            masterFrameLogo = logo
-                            rebuildEditedImage()
-                        }) {
-                            Text(logo.rawValue)
-                                .font(.system(size: 11, weight: selected ? .semibold : .regular, design: .rounded))
-                                .foregroundColor(selected ? .white : .white.opacity(0.55))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(selected ? Color.white.opacity(0.14) : Color.clear)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 16)
-            }
-        }
-    }
-
-    // MARK: - 4. Calm Bottom Action Bar (Strictly 3 Clean Controls)
+    // MARK: - 3. Calm Bottom Action Bar (Default View Mode)
     private var calmBottomActionBar: some View {
         HStack(spacing: 12) {
             if item.saveFormat != .dng {
                 Button(action: {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                        isEditDrawerOpen.toggle()
-                        if !isEditDrawerOpen { isSplitCompareMode = false }
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                        resetZoomAndPan()
+                        isEditDrawerOpen = true
                     }
                 }) {
                     VStack(spacing: 3) {
-                        Image(systemName: isEditDrawerOpen ? "checkmark.circle.fill" : "slider.horizontal.3")
+                        Image(systemName: "slider.horizontal.3")
                             .font(.system(size: 17, weight: .medium))
-                        Text(isEditDrawerOpen ? "Xong" : "Chỉnh ảnh")
+                        Text("Chỉnh ảnh")
                             .font(.system(size: 10.5, weight: .medium, design: .rounded))
                     }
-                    .foregroundColor(isEditDrawerOpen ? AlignTheme.amberGold : .white.opacity(0.88))
+                    .foregroundColor(hasModifiedSinceOpen ? AlignTheme.studioAccent : .white.opacity(0.88))
                     .frame(width: 70, height: 44)
                 }
                 .buttonStyle(.plain)
@@ -877,18 +797,16 @@ public struct CapturedPhotoPreviewView: View {
                 .frame(height: 44)
                 .background(
                     Capsule()
-                        .fill(hasSavedNewEnhancement ? Color.green.opacity(0.75) : Color.white)
+                        .fill(hasSavedNewEnhancement ? AlignTheme.studioPositive : Color.white)
                 )
             }
             .buttonStyle(.plain)
-            .disabled(isSavingToLibrary || isProcessingFilter)
+            .disabled(isSavingToLibrary || isDevelopingPreview)
 
-            // Share Control (Preserving OriginalDNGShare contract; non-DNG encodes lazily on background thread ONLY when tapped!)
+            // Share Control (Preserving OriginalDNGShare contract; non-DNG encodes lazily off main thread)
             if item.saveFormat == .dng {
                 if let url = item.rawLocalFileURL, FileManager.default.fileExists(atPath: url.path) {
-                    ShareLink(item: url) {
-                        shareIconLabel
-                    }
+                    ShareLink(item: url) { shareIconLabel }
                 } else if let data = item.rawPhotoData, SuperResolutionRAWEngine.isDNGData(data) {
                     ShareLink(item: OriginalDNGShare(data: data),
                               preview: SharePreview("AlignAI True RAW DNG")) {
@@ -912,13 +830,13 @@ public struct CapturedPhotoPreviewView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .disabled(isPreparingShare || isProcessingFilter)
+                .disabled(isPreparingShare || isDevelopingPreview)
             }
         }
         .padding(.horizontal, 18)
         .padding(.top, 10)
         .padding(.bottom, 12)
-        .background(Color(red: 0.03, green: 0.033, blue: 0.045))
+        .background(AlignTheme.studioCanvas)
     }
 
     private var shareIconLabel: some View {
@@ -932,12 +850,11 @@ public struct CapturedPhotoPreviewView: View {
         .frame(width: 70, height: 44)
     }
 
-    // MARK: - 5. Clean Slide-Up EXIF & Histogram Info Sheet (Opened via `i`)
+    // MARK: - 4. EXIF & RGB Histogram Info Sheet
     private var photoInfoInspectorSheet: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    // RGB + Luminance Histogram Card
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             Text("BIỂU ĐỒ QUANG PHỔ RGB")
@@ -964,17 +881,16 @@ public struct CapturedPhotoPreviewView: View {
                     .padding(14)
                     .background(
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.white.opacity(0.06))
+                            .fill(AlignTheme.studioSurface)
                     )
 
-                    // Optical EXIF Grid
                     VStack(alignment: .leading, spacing: 10) {
                         Text("THÔNG SỐ QUANG HỌC")
                             .font(.system(size: 11, weight: .bold, design: .rounded))
                             .foregroundColor(.white.opacity(0.6))
 
                         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                            infoStatCell(label: "Độ phân giải", value: "\(currentProcessedImage.width) × \(currentProcessedImage.height) (\(megapixelsString))")
+                            infoStatCell(label: "Độ phân giải", value: "\(currentFullResCGImage.width) × \(currentFullResCGImage.height) (\(megapixelsString))")
                             infoStatCell(label: "Định dạng & Dung lượng", value: "\(formatBadgeTitle) · \(estimatedFileSizeString)")
                             infoStatCell(label: "Tiêu cự & Khẩu độ", value: "\(focalLengthDisplayString) · f/1.8")
                             infoStatCell(label: "Phơi sáng", value: "\(formattedShutterSpeed) · ISO \(Int(round(max(25, item.iso))))")
@@ -985,7 +901,7 @@ public struct CapturedPhotoPreviewView: View {
                 }
                 .padding(18)
             }
-            .background(Color(red: 0.05, green: 0.055, blue: 0.07).ignoresSafeArea())
+            .background(AlignTheme.studioCanvas.ignoresSafeArea())
             .navigationTitle("Thông số ảnh")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1012,155 +928,151 @@ public struct CapturedPhotoPreviewView: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(Color.white.opacity(0.06))
+                .fill(AlignTheme.studioSurface)
         )
     }
 
-    // MARK: - Non-Destructive Rendering Pipeline
-    private func rebuildEditedImage() {
-        isProcessingFilter = true
-        hasSavedNewEnhancement = false
+    // MARK: - 5. Zero-Lag Coalesced Preview & Full-Res Rendering Pipeline
+    private func loadRecipeStoreState() {
+        customRecipes = PhotoDarkroomRecipeStore.shared.loadCustomRecipes()
+        favoriteFilmRawValues = PhotoDarkroomRecipeStore.shared.loadFavoriteFilmRawValues()
+        favoriteRecipeIDs = PhotoDarkroomRecipeStore.shared.loadFavoriteRecipeIDs()
+    }
 
-        let baseImage = item.originalImage
-        let preset = activePreset
-        let intensity = Float(activeFilmIntensity)
-        let aiParams = isAIEnhanced ? (activeAIColorParams ?? item.sceneType.aiFullColorParameters) : nil
-        let detailLevel = microDetailLevel
-        let applyMaster = isMasterFrameApplied
-        let theme = masterFrameTheme
-        let logo = masterFrameLogo
-        let deviceName = viewModel?.masterWatermarkDeviceName ?? "ALIGN STUDIO OPTICAL"
+    private func schedulePreviewRender() {
+        var previewState = editState
+        // While interactively dragging crop handles, show full oriented frame (rotation/flip/straighten active, rect uncropped)
+        if isActivelyCropping {
+            previewState.tools.crop.normalizedRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+        }
+        let aiParams = editState.isAIEnhanced ? (activeAIColorParams ?? item.sceneType.aiFullColorParameters) : nil
+        let meta = renderMetadata
         let customLogo = viewModel?.masterWatermarkCustomLogoImage
-        let specs = PhotoWatermarkSpecs.from(
-            iso: item.iso,
-            shutterSpeed: item.shutterSpeed,
-            focalLength: 24.0,
-            aperture: 1.8
-        )
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            var working = baseImage
-
-            if preset != .standard || aiParams != nil {
-                working = FilmFilterEngine.shared.applyPresetAndAIParameters(
-                    to: working,
-                    preset: preset,
-                    params: aiParams,
-                    intensity: intensity
-                ) ?? working
-            }
-
-            if detailLevel != .off {
-                working = Self.applyMicroDetailEnhancement(to: working, level: detailLevel)
-            }
-
-            if applyMaster {
-                working = MasterWatermarkRenderer.shared.renderWatermark(
-                    on: working,
-                    deviceName: deviceName,
-                    theme: theme,
-                    logoStyle: logo,
-                    customLogo: customLogo,
-                    specs: specs
-                ) ?? working
-            }
-
-            let previewDisplayUI = Self.downsampleForFastDisplay(working, maxSide: 2400)
-            let miniUI = Self.downsampleForFastDisplay(working, maxSide: 220)
-            let fullUI = UIImage(cgImage: working)
-
-            DispatchQueue.main.async {
-                withAnimation(.easeInOut(duration: 0.16)) {
-                    self.currentProcessedImage = working
-                    self.cachedFullResUIImage = fullUI
-                    self.cachedDisplayUIImage = previewDisplayUI
-                    self.cachedMiniMapUIImage = miniUI
-                    self.cachedShareURL = nil
-                    self.isHistogramStale = true
-                    self.isProcessingFilter = false
-                }
+        coordinator.scheduleInteractivePreview(
+            fallbackOriginal: item.originalImage,
+            state: previewState,
+            metadata: meta,
+            aiColorParams: aiParams,
+            customWatermarkLogo: customLogo,
+            applyCropGeometry: true
+        ) { displayUI, miniUI, hist in
+            self.cachedDisplayUIImage = displayUI
+            self.cachedMiniMapUIImage = miniUI
+            self.histogramSnapshot = hist
+            if self.zoomScale <= 2.2 {
+                self.cachedFullResUIImage = displayUI
             }
         }
     }
 
-    private static func applyMicroDetailEnhancement(to image: CGImage, level: PhotoMicroDetailLevel) -> CGImage {
-        guard level != .off, image.width >= 32, image.height >= 32 else { return image }
-        return autoreleasepool {
-            var ci = CIImage(cgImage: image)
-            if let unsharp = CIFilter(name: "CIUnsharpMask") {
-                unsharp.setValue(ci, forKey: kCIInputImageKey)
-                unsharp.setValue(1.18, forKey: kCIInputRadiusKey)
-                unsharp.setValue(level.unsharpIntensity, forKey: kCIInputIntensityKey)
-                if let out = unsharp.outputImage { ci = out }
-            }
-            if let sharpen = CIFilter(name: "CISharpenLuminance") {
-                sharpen.setValue(ci, forKey: kCIInputImageKey)
-                sharpen.setValue(level.luminanceSharpness, forKey: kCIInputSharpnessKey)
-                if let out = sharpen.outputImage { ci = out }
-            }
-            if let color = CIFilter(name: "CIColorControls") {
-                color.setValue(ci, forKey: kCIInputImageKey)
-                color.setValue(level.microContrast, forKey: kCIInputContrastKey)
-                if let out = color.outputImage { ci = out }
-            }
-            return detailCIContext.createCGImage(ci, from: ci.extent.integral) ?? image
+    private func refreshFullResForDeepZoom() {
+        isDevelopingPreview = true
+        let aiParams = editState.isAIEnhanced ? (activeAIColorParams ?? item.sceneType.aiFullColorParameters) : nil
+        coordinator.renderFullResolutionAsync(
+            original: item.originalImage,
+            state: editState,
+            metadata: renderMetadata,
+            aiColorParams: aiParams,
+            customWatermarkLogo: viewModel?.masterWatermarkCustomLogoImage
+        ) { fullCG in
+            self.currentFullResCGImage = fullCG
+            self.fullResNeedsRefresh = false
+            self.cachedFullResUIImage = UIImage(cgImage: fullCG)
+            self.isDevelopingPreview = false
         }
+    }
+
+    private func ensureFullResolutionReady(completion: @escaping (CGImage) -> Void) {
+        if !hasModifiedSinceOpen && !fullResNeedsRefresh {
+            completion(item.processedImage)
+            return
+        }
+        if !fullResNeedsRefresh {
+            completion(currentFullResCGImage)
+            return
+        }
+        isDevelopingPreview = true
+        let aiParams = editState.isAIEnhanced ? (activeAIColorParams ?? item.sceneType.aiFullColorParameters) : nil
+        coordinator.renderFullResolutionAsync(
+            original: item.originalImage,
+            state: editState,
+            metadata: renderMetadata,
+            aiColorParams: aiParams,
+            customWatermarkLogo: viewModel?.masterWatermarkCustomLogoImage
+        ) { fullCG in
+            self.currentFullResCGImage = fullCG
+            self.fullResNeedsRefresh = false
+            self.isDevelopingPreview = false
+            completion(fullCG)
+        }
+    }
+
+    private func performUndo() {
+        guard let prev = historyStack.undo(current: editState) else { return }
+        editState = prev
+        hasSavedNewEnhancement = false
+        fullResNeedsRefresh = true
+        cachedShareURL = nil
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        schedulePreviewRender()
+    }
+
+    private func performRedo() {
+        guard let next = historyStack.redo(current: editState) else { return }
+        editState = next
+        hasSavedNewEnhancement = false
+        fullResNeedsRefresh = true
+        cachedShareURL = nil
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        schedulePreviewRender()
     }
 
     private func toggleAIFullColorEnhancement() {
-        isAIEnhanced.toggle()
-        if isAIEnhanced {
+        let before = editState
+        editState.isAIEnhanced.toggle()
+        if editState.isAIEnhanced {
             activeAIColorParams = item.sceneType.aiFullColorParameters
-            if activePreset == .standard {
-                activePreset = item.sceneType.recommendedFilter
-                selectedCategory = activePreset.category
+            if editState.presetRawValue == FilmPreset.standard.rawValue {
+                editState.presetRawValue = item.sceneType.recommendedFilter.rawValue
             }
         } else {
             activeAIColorParams = nil
         }
-        rebuildEditedImage()
+        historyStack.pushUndoSnapshot(before, newState: editState)
+        hasSavedNewEnhancement = false
+        fullResNeedsRefresh = true
+        cachedShareURL = nil
+        schedulePreviewRender()
     }
 
     private func resetToOriginalPhoto() {
-        activePreset = .standard
-        activeFilmIntensity = 1.0
-        selectedCategory = .original
-        isAIEnhanced = false
+        let before = editState
+        editState = PhotoDarkroomEditState(
+            presetRawValue: FilmPreset.standard.rawValue,
+            filmIntensity: 1.0,
+            isAIEnhanced: false,
+            effects: .neutral,
+            tools: .neutral
+        )
         activeAIColorParams = nil
-        microDetailLevel = .off
-        isMasterFrameApplied = false
+        historyStack.pushUndoSnapshot(before, newState: editState)
         isPeekingOriginal = false
         isSplitCompareMode = false
-        currentProcessedImage = item.originalImage
-        cachedFullResUIImage = UIImage(cgImage: item.originalImage)
+        currentFullResCGImage = item.originalImage
+        fullResNeedsRefresh = false
         cachedDisplayUIImage = cachedOriginalDisplayUIImage
+        cachedFullResUIImage = cachedOriginalDisplayUIImage
         cachedShareURL = nil
-        isHistogramStale = true
         hasSavedNewEnhancement = false
-        rebuildDisplayCachesAsync(processed: item.originalImage, original: nil)
+        refreshHistogramAsync(for: item.originalImage)
     }
 
-    private func refreshHistogram(for image: CGImage) {
+    private func refreshHistogramAsync(for image: CGImage) {
         DispatchQueue.global(qos: .utility).async {
-            let snap = PhotoDetailHistogramSnapshot.compute(from: image)
+            let snap = PhotoDarkroomHistogram.compute(from: image)
             DispatchQueue.main.async {
                 self.histogramSnapshot = snap
-                self.isHistogramStale = false
-            }
-        }
-    }
-
-    private func rebuildDisplayCachesAsync(processed: CGImage, original: CGImage?) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let displayUI = Self.downsampleForFastDisplay(processed, maxSide: 2400)
-            let miniUI = Self.downsampleForFastDisplay(processed, maxSide: 220)
-            let origUI = original.map { Self.downsampleForFastDisplay($0, maxSide: 2400) }
-            DispatchQueue.main.async {
-                self.cachedDisplayUIImage = displayUI
-                self.cachedMiniMapUIImage = miniUI
-                if let origUI {
-                    self.cachedOriginalDisplayUIImage = origUI
-                }
             }
         }
     }
@@ -1170,7 +1082,6 @@ public struct CapturedPhotoPreviewView: View {
         let h = CGFloat(cgImage.height)
         let longest = max(w, h)
         guard longest > maxSide, w > 0, h > 0 else {
-            // Still force eager bitmap decode off main thread so SwiftUI doesn't decode on first zoom frame
             let ui = UIImage(cgImage: cgImage)
             return ui.preparingForDisplay() ?? ui
         }
@@ -1186,30 +1097,32 @@ public struct CapturedPhotoPreviewView: View {
         return downsampled.preparingForDisplay() ?? downsampled
     }
 
+    // MARK: - 6. Share & Save Operations (Full-Res Background Export)
     private func prepareAndPresentShareSheet() {
         if let existing = cachedShareURL, FileManager.default.fileExists(atPath: existing.path) {
             isShowingShareSheet = true
             return
         }
         isPreparingShare = true
-        let cgToExport = currentProcessedImage
-        let format = item.saveFormat
-        let itemID = item.id
-        let preserveOrig = item.preservesOriginalFile && !hasModifiedSinceOpen && (currentProcessedImage === item.processedImage)
-        let rawData = preserveOrig ? item.rawPhotoData : nil
+        ensureFullResolutionReady { fullCG in
+            let format = self.item.saveFormat
+            let itemID = self.item.id
+            let preserveOrig = self.item.preservesOriginalFile && !self.hasModifiedSinceOpen && (fullCG === self.item.processedImage)
+            let rawData = preserveOrig ? self.item.rawPhotoData : nil
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let url = Self.writeShareFileOnBackground(
-                cgImage: cgToExport,
-                saveFormat: format,
-                itemID: itemID,
-                rawPhotoData: rawData
-            )
-            DispatchQueue.main.async {
-                self.isPreparingShare = false
-                if let url {
-                    self.cachedShareURL = url
-                    self.isShowingShareSheet = true
+            DispatchQueue.global(qos: .userInitiated).async {
+                let url = Self.writeShareFileOnBackground(
+                    cgImage: fullCG,
+                    saveFormat: format,
+                    itemID: itemID,
+                    rawPhotoData: rawData
+                )
+                DispatchQueue.main.async {
+                    self.isPreparingShare = false
+                    if let url {
+                        self.cachedShareURL = url
+                        self.isShowingShareSheet = true
+                    }
                 }
             }
         }
@@ -1255,38 +1168,41 @@ public struct CapturedPhotoPreviewView: View {
         guard let vm = viewModel else { return }
         isSavingToLibrary = true
 
-        let preserveOriginal = !hasModifiedSinceOpen && item.preservesOriginalFile &&
-            currentProcessedImage === item.processedImage
-        let updatedItem = CapturedPhotoItem(
-            originalImage: item.originalImage,
-            processedImage: currentProcessedImage,
-            rawPhotoData: item.rawPhotoData,
-            processedCompanionData: preserveOriginal ? item.processedCompanionData : nil,
-            saveFormat: item.saveFormat,
-            preservesOriginalFile: preserveOriginal,
-            rawLocalFileURL: item.rawLocalFileURL,
-            livePhotoMovieURL: item.livePhotoMovieURL,
-            sceneType: item.sceneType,
-            appliedPreset: activePreset,
-            compositionRule: item.compositionRule,
-            alignmentScore: item.alignmentScore,
-            iso: item.iso,
-            shutterSpeed: item.shutterSpeed,
-            aiColorParameters: isAIEnhanced ? (activeAIColorParams ?? item.sceneType.aiFullColorParameters) : item.aiColorParameters
-        )
+        ensureFullResolutionReady { fullCG in
+            let preserveOriginal = !self.hasModifiedSinceOpen && self.item.preservesOriginalFile &&
+                (fullCG === self.item.processedImage)
+            let appliedPreset = FilmPreset(rawValue: self.editState.presetRawValue) ?? self.item.appliedPreset
+            let updatedItem = CapturedPhotoItem(
+                originalImage: self.item.originalImage,
+                processedImage: fullCG,
+                rawPhotoData: self.item.rawPhotoData,
+                processedCompanionData: preserveOriginal ? self.item.processedCompanionData : nil,
+                saveFormat: self.item.saveFormat,
+                preservesOriginalFile: preserveOriginal,
+                rawLocalFileURL: self.item.rawLocalFileURL,
+                livePhotoMovieURL: self.item.livePhotoMovieURL,
+                sceneType: self.item.sceneType,
+                appliedPreset: appliedPreset,
+                compositionRule: self.item.compositionRule,
+                alignmentScore: self.item.alignmentScore,
+                iso: self.item.iso,
+                shutterSpeed: self.item.shutterSpeed,
+                aiColorParameters: self.editState.isAIEnhanced ? (self.activeAIColorParams ?? self.item.sceneType.aiFullColorParameters) : self.item.aiColorParameters
+            )
 
-        vm.savePhotoToLibrary(updatedItem) { success in
-            self.isSavingToLibrary = false
-            self.hasSavedNewEnhancement = success
+            vm.savePhotoToLibrary(updatedItem) { success in
+                self.isSavingToLibrary = false
+                self.hasSavedNewEnhancement = success
+            }
         }
     }
 
-    // MARK: - Interactive Zoom Navigator Mini-Map (Khung báo vùng đang zoom)
+    // MARK: - 7. Interactive Zoom Navigator Mini-Map
     @ViewBuilder
     private func zoomRegionMiniMap(viewportSize: CGSize) -> some View {
-        let displayCG = isPeekingOriginal ? item.originalImage : currentProcessedImage
-        let imgW = CGFloat(max(1, displayCG.width))
-        let imgH = CGFloat(max(1, displayCG.height))
+        let displaySize = isPeekingOriginal ? cachedOriginalDisplayUIImage.size : cachedDisplayUIImage.size
+        let imgW = max(1, displaySize.width)
+        let imgH = max(1, displaySize.height)
         let imgAspect = imgW / imgH
         let vpAspect = viewportSize.width / max(1.0, viewportSize.height)
 
@@ -1319,7 +1235,6 @@ public struct CapturedPhotoPreviewView: View {
             Color.black.opacity(0.40)
                 .frame(width: miniW, height: miniH)
 
-            // Khung sáng đánh dấu chính xác vùng ảnh đang phóng to
             RoundedRectangle(cornerRadius: 2.5, style: .continuous)
                 .fill(Color.white.opacity(0.16))
                 .overlay(
@@ -1353,7 +1268,7 @@ public struct CapturedPhotoPreviewView: View {
         .accessibilityLabel("Bản đồ vùng đang phóng to \(String(format: "%.1f", zoomScale)) lần")
     }
 
-    // MARK: - Zoom & Pan Helpers
+    // MARK: - 8. Zoom & Pan Helpers
     private func resetZoomAndPan() {
         zoomScale = 1.0
         lastZoomScale = 1.0
@@ -1363,9 +1278,9 @@ public struct CapturedPhotoPreviewView: View {
 
     private func clampPanOffset(_ offset: CGSize, in size: CGSize, scale: CGFloat) -> CGSize {
         guard scale > 1.0 else { return .zero }
-        let displayCG = isPeekingOriginal ? item.originalImage : currentProcessedImage
-        let imgW = CGFloat(max(1, displayCG.width))
-        let imgH = CGFloat(max(1, displayCG.height))
+        let displaySize = isPeekingOriginal ? cachedOriginalDisplayUIImage.size : cachedDisplayUIImage.size
+        let imgW = max(1, displaySize.width)
+        let imgH = max(1, displaySize.height)
         let imgAspect = imgW / imgH
         let vpAspect = size.width / max(1.0, size.height)
         let baseW: CGFloat = (vpAspect > imgAspect) ? (size.height * imgAspect) : size.width
@@ -1397,7 +1312,7 @@ public struct CapturedPhotoPreviewView: View {
         }
     }
 
-    // MARK: - Share & Format Metadata Helpers
+    // MARK: - 9. Metadata & Share Format Helpers
     private struct OriginalDNGShare: Transferable {
         let data: Data
         static var transferRepresentation: some TransferRepresentation {
@@ -1414,21 +1329,23 @@ public struct CapturedPhotoPreviewView: View {
     }
 
     private var megapixelsString: String {
-        let mp = Double(currentProcessedImage.width * currentProcessedImage.height) / 1_000_000.0
+        let mp = Double(currentFullResCGImage.width * currentFullResCGImage.height) / 1_000_000.0
         return String(format: "%.1f MP", mp)
     }
 
-    private var focalLengthDisplayString: String {
+    private var focalLengthMillimeters: Double {
         if let vm = viewModel {
-            if vm.isWindowedZoomActive {
-                return "\(Int(round(vm.windowedZoomFocalLength)))mm"
-            }
+            if vm.isWindowedZoomActive { return Double(vm.windowedZoomFocalLength) }
             let z = vm.displayZoom
-            if z < 0.75 { return "13mm" }
-            if z >= 2.8 { return "77mm" }
-            if z >= 1.9 { return "48mm" }
+            if z < 0.75 { return 13.0 }
+            if z >= 2.8 { return 77.0 }
+            if z >= 1.9 { return 48.0 }
         }
-        return "24mm"
+        return 24.0
+    }
+
+    private var focalLengthDisplayString: String {
+        "\(Int(round(focalLengthMillimeters)))mm"
     }
 
     private var formattedShutterSpeed: String {
@@ -1448,7 +1365,7 @@ public struct CapturedPhotoPreviewView: View {
             let mb = Double(rawData.count) / (1024.0 * 1024.0)
             return String(format: "%.2f MB", mb)
         }
-        let pixels = Double(currentProcessedImage.width * currentProcessedImage.height)
+        let pixels = Double(currentFullResCGImage.width * currentFullResCGImage.height)
         let bytesPerPx = (item.saveFormat == .dng) ? 1.8 : ((item.saveFormat == .jpeg) ? 0.42 : 0.24)
         let estMB = max(0.25, (pixels * bytesPerPx) / (1024.0 * 1024.0))
         return String(format: "~%.1f MB", estMB)
@@ -1457,7 +1374,7 @@ public struct CapturedPhotoPreviewView: View {
 
 // MARK: - Smooth RGB + Luminance Histogram Waveform Canvas
 private struct PhotoDetailHistogramCanvasView: View {
-    let snapshot: PhotoDetailHistogramSnapshot
+    let snapshot: PhotoDarkroomHistogram
 
     private func buildPath(bins: [Double], in size: CGSize, closed: Bool) -> Path {
         var path = Path()
