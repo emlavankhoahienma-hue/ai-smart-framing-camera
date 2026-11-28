@@ -22,8 +22,46 @@ public final class PhotoboothAssetManager: ObservableObject {
     @Published public private(set) var isGeneratingAI: Bool = false
     @Published public var lastStatusMessage: String? = nil
 
-    private var imageCache: [String: UIImage] = [:]
-    private let ciContext = CIContext(options: [.useSoftwareRenderer: false, .highQualityDownsample: true])
+    private let imageCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 48
+        cache.totalCostLimit = 32 * 1024 * 1024
+        return cache
+    }()
+    private var hasCreatedCIContext = false
+    private lazy var ciContext: CIContext = {
+        hasCreatedCIContext = true
+        let options: [CIContextOption: Any] = [
+            .useSoftwareRenderer: false,
+            .cacheIntermediates: false,
+            .highQualityDownsample: true
+        ]
+        if let mtlDevice = UnifiedMetalColorEngine.shared.device {
+            return CIContext(mtlDevice: mtlDevice, options: options)
+        }
+        return CIContext(options: options)
+    }()
+
+    private func cachedUIImage(forKey key: String) -> UIImage? {
+        imageCache.object(forKey: key as NSString)
+    }
+
+    private func storeCachedUIImage(_ img: UIImage, forKey key: String) {
+        let pixelCost: Int
+        if let cg = img.cgImage {
+            pixelCost = max(4096, cg.bytesPerRow * cg.height)
+        } else {
+            pixelCost = max(4096, Int(img.size.width * img.size.height * img.scale * img.scale * 4.0))
+        }
+        imageCache.setObject(img, forKey: key as NSString, cost: pixelCost)
+    }
+
+    public func clearCaches() {
+        imageCache.removeAllObjects()
+        if hasCreatedCIContext {
+            ciContext.clearCaches()
+        }
+    }
 
     private let onlineCacheDir: URL
     private let aiStickersDir: URL
@@ -214,7 +252,7 @@ public final class PhotoboothAssetManager: ObservableObject {
     // MARK: - 2. Synchronous & Async Image Loading
 
     public func cachedImage(for source: PhotoboothAssetSource, id: String) -> UIImage? {
-        if let mem = imageCache[id] { return mem }
+        if let mem = cachedUIImage(forKey: id) { return mem }
 
         switch source {
         case .bundled(let filename):
@@ -226,7 +264,7 @@ public final class PhotoboothAssetManager: ObservableObject {
             ].compactMap { $0 }
             for path in paths {
                 if let img = UIImage(contentsOfFile: path) {
-                    imageCache[id] = img
+                    storeCachedUIImage(img, forKey: id)
                     return img
                 }
             }
@@ -235,7 +273,7 @@ public final class PhotoboothAssetManager: ObservableObject {
         case .online:
             let fileURL = onlineCacheDir.appendingPathComponent("\(id).png")
             if let img = UIImage(contentsOfFile: fileURL.path) {
-                imageCache[id] = img
+                storeCachedUIImage(img, forKey: id)
                 return img
             }
             return nil
@@ -243,12 +281,12 @@ public final class PhotoboothAssetManager: ObservableObject {
         case .localFile(let filename):
             let stickerURL = aiStickersDir.appendingPathComponent(filename)
             if let img = UIImage(contentsOfFile: stickerURL.path) {
-                imageCache[id] = img
+                storeCachedUIImage(img, forKey: id)
                 return img
             }
             let frameURL = aiFramesDir.appendingPathComponent(filename)
             if let img = UIImage(contentsOfFile: frameURL.path) {
-                imageCache[id] = img
+                storeCachedUIImage(img, forKey: id)
                 return img
             }
             return nil
@@ -257,10 +295,10 @@ public final class PhotoboothAssetManager: ObservableObject {
 
     public func loadFrameTextureImage(filename: String) -> UIImage? {
         let key = "frame_\(filename)"
-        if let mem = imageCache[key] { return mem }
+        if let mem = cachedUIImage(forKey: key) { return mem }
         let url = aiFramesDir.appendingPathComponent(filename)
         if let img = UIImage(contentsOfFile: url.path) {
-            imageCache[key] = img
+            storeCachedUIImage(img, forKey: key)
             return img
         }
         return nil
@@ -268,7 +306,7 @@ public final class PhotoboothAssetManager: ObservableObject {
 
     public func bundledFrameTextureImage(filename: String) -> UIImage? {
         let key = "btex_\(filename)"
-        if let mem = imageCache[key] { return mem }
+        if let mem = cachedUIImage(forKey: key) { return mem }
         let baseName = (filename as NSString).deletingPathExtension
         let ext = (filename as NSString).pathExtension
         let paths = [
@@ -277,7 +315,7 @@ public final class PhotoboothAssetManager: ObservableObject {
         ].compactMap { $0 }
         for path in paths {
             if let img = UIImage(contentsOfFile: path) {
-                imageCache[key] = img
+                storeCachedUIImage(img, forKey: key)
                 return img
             }
         }
@@ -308,7 +346,7 @@ public final class PhotoboothAssetManager: ObservableObject {
             }
             let dest = onlineCacheDir.appendingPathComponent("\(asset.id).png")
             try? pngData.write(to: dest, options: .atomic)
-            imageCache[asset.id] = img
+            storeCachedUIImage(img, forKey: asset.id)
             downloadedOnlineIDs.insert(asset.id)
             return img
         } catch {
@@ -346,8 +384,9 @@ public final class PhotoboothAssetManager: ObservableObject {
     // MARK: - 4. On-Device Vision Subject Cutout -> Die-Cut Booth Sticker
 
     public func createCutoutStickerFromPhoto(_ cgImage: CGImage, title: String = "Tự tách nền") async -> PhotoboothStickerAsset? {
-        let cutResult: UIImage? = await Task.detached(priority: .userInitiated) { [ciContext] () -> UIImage? in
-            Self.cutoutForegroundAndAddDieCutOutline(cgImage: cgImage, ciContext: ciContext)
+        let ctx = ciContext
+        let cutResult: UIImage? = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+            Self.cutoutForegroundAndAddDieCutOutline(cgImage: cgImage, ciContext: ctx)
         }.value
 
         guard let finalImg = cutResult, let pngData = finalImg.pngData() else {
@@ -359,7 +398,7 @@ public final class PhotoboothAssetManager: ObservableObject {
         let filename = "\(id).png"
         let dest = aiStickersDir.appendingPathComponent(filename)
         try? pngData.write(to: dest, options: .atomic)
-        imageCache[id] = finalImg
+        storeCachedUIImage(finalImg, forKey: id)
 
         let asset = PhotoboothStickerAsset(
             id: id,
@@ -380,7 +419,7 @@ public final class PhotoboothAssetManager: ObservableObject {
             if case .localFile(let name) = item.source {
                 try? FileManager.default.removeItem(at: aiStickersDir.appendingPathComponent(name))
             }
-            imageCache.removeValue(forKey: id)
+            imageCache.removeObject(forKey: id as NSString)
             persistUserAssets()
         }
     }
@@ -423,8 +462,9 @@ public final class PhotoboothAssetManager: ObservableObject {
 
         let finalStickerUI: UIImage?
         if let cg = rawCG {
-            finalStickerUI = await Task.detached(priority: .userInitiated) { [ciContext] in
-                Self.cutoutForegroundAndAddDieCutOutline(cgImage: cg, ciContext: ciContext)
+            let ctx = ciContext
+            finalStickerUI = await Task.detached(priority: .userInitiated) {
+                Self.cutoutForegroundAndAddDieCutOutline(cgImage: cg, ciContext: ctx)
                     ?? Self.floodFillWhiteBackgroundRemoval(cgImage: cg)
                     ?? UIImage(cgImage: cg)
             }.value
@@ -442,7 +482,7 @@ public final class PhotoboothAssetManager: ObservableObject {
         let filename = "\(id).png"
         let dest = aiStickersDir.appendingPathComponent(filename)
         try? pngData.write(to: dest, options: .atomic)
-        imageCache[id] = stickerImg
+        storeCachedUIImage(stickerImg, forKey: id)
 
         let shortTitle = String(effectiveTitle.prefix(18))
         let asset = PhotoboothStickerAsset(
@@ -511,7 +551,7 @@ public final class PhotoboothAssetManager: ObservableObject {
         let filename = "aiframe_\(UUID().uuidString.prefix(8)).jpg"
         let dest = aiFramesDir.appendingPathComponent(filename)
         try? data.write(to: dest, options: .atomic)
-        imageCache["frame_\(filename)"] = finalImg
+        storeCachedUIImage(finalImg, forKey: "frame_\(filename)")
         customAIFrameFilenames.insert(filename, at: 0)
         persistUserAssets()
         lastStatusMessage = "Đã tạo nền khung '\(effectiveTitle)' qua \(backendLabel)!"

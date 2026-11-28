@@ -693,6 +693,35 @@ public struct PhotoGallerySheetView: View {
     }
 }
 
+// MARK: - Bounded NSCache for Align Studio Gallery Thumbnails (Prevents Re-Decode Spikes & RAM Bloat)
+public final class GalleryThumbnailMemoryCache: @unchecked Sendable {
+    public static let shared = GalleryThumbnailMemoryCache()
+    private let cache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 120
+        c.totalCostLimit = 24 * 1024 * 1024
+        return c
+    }()
+
+    public func image(forKey key: String) -> UIImage? {
+        cache.object(forKey: key as NSString)
+    }
+
+    public func store(_ image: UIImage, forKey key: String) {
+        let cost: Int
+        if let cg = image.cgImage {
+            cost = max(4096, cg.bytesPerRow * cg.height)
+        } else {
+            cost = max(4096, Int(image.size.width * image.size.height * image.scale * image.scale * 4.0))
+        }
+        cache.setObject(image, forKey: key as NSString, cost: cost)
+    }
+
+    public static func clearAll() {
+        shared.cache.removeAllObjects()
+    }
+}
+
 // MARK: - Stored Record Square Thumbnail Cell (Quiet Darkroom Rhythm)
 private struct StoredRecordThumbnailCell: View {
     let record: AppPhotoStorageService.StoredPhotoRecord
@@ -753,9 +782,16 @@ private struct StoredRecordThumbnailCell: View {
 
     private func loadThumbnail() {
         guard thumbnailImage == nil else { return }
+        let cacheKey = record.thumbnailFilename.isEmpty ? record.id : record.thumbnailFilename
+        if let cached = GalleryThumbnailMemoryCache.shared.image(forKey: cacheKey) {
+            self.thumbnailImage = cached
+            return
+        }
+        let targetRecord = record
         DispatchQueue.global(qos: .userInitiated).async {
-            if let cgThumb = AppPhotoStorageService.shared.loadThumbnailImage(for: record) {
+            if let cgThumb = AppPhotoStorageService.shared.loadThumbnailImage(for: targetRecord) {
                 let uiThumb = UIImage(cgImage: cgThumb)
+                GalleryThumbnailMemoryCache.shared.store(uiThumb, forKey: cacheKey)
                 DispatchQueue.main.async {
                     self.thumbnailImage = uiThumb
                 }

@@ -76,23 +76,42 @@ private final class PhotographicStyleSwipeAnimator: NSObject {
     }
 }
 
+private final class CameraNotificationToken: @unchecked Sendable {
+    private let token: NSObjectProtocol
+
+    init(_ token: NSObjectProtocol) {
+        self.token = token
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(token)
+    }
+}
+
 private struct QRPixelBufferBox: @unchecked Sendable {
     let buffer: CVPixelBuffer
 }
 
-/// Multi-pass native Apple Vision QR/2D barcode scanner optimized for zero viewfinder FPS drop:
-/// - Pass 1: Fast full-frame `VNDetectBarcodesRequest` directly on `CVPixelBuffer` (~5ms)
-/// - Pass 2: Center 56% zoomed + high-contrast + sharpened pass for tiny/distant/faded/glare QRs
-/// - Pass 3: Center 72% inverted-polarity pass for dark-mode white-on-black QRs on screens/menus
+/// Multi-pass native Apple Vision QR + 1D/2D barcode scanner optimized for zero viewfinder FPS drop:
+/// - Pass 1: Fast full-frame `VNDetectBarcodesRequest` directly on `CVPixelBuffer` (~5ms), returning ALL visible codes
+/// - Pass 2: Lazy center 56% zoomed + high-contrast + sharpened pass for tiny/distant/faded/glare QRs
+/// - Pass 3: Lazy center 72% inverted-polarity pass for dark-mode white-on-black QRs on screens/menus
+/// - Cadence & fallback passes adapt automatically via `QRThermalCadencePolicy` to keep battery cool.
 private final class QRCodeScannerEngine: @unchecked Sendable {
     private let lock = NSLock()
     private let scanQueue = DispatchQueue(label: "com.alignai.camera.qrScanQueue", qos: .userInitiated)
+    private var hasCreatedCIContext = false
     private lazy var ciContext: CIContext = {
-        CIContext(options: [
+        hasCreatedCIContext = true
+        let options: [CIContextOption: Any] = [
             .useSoftwareRenderer: false,
             .cacheIntermediates: false,
             .priorityRequestLow: true
-        ])
+        ]
+        if let mtlDevice = UnifiedMetalColorEngine.shared.device {
+            return CIContext(mtlDevice: mtlDevice, options: options)
+        }
+        return CIContext(options: options)
     }()
 
     private var isScanning = false
@@ -102,7 +121,7 @@ private final class QRCodeScannerEngine: @unchecked Sendable {
     private var missPassCounter: UInt64 = 0
     private var cachedSymbologies: [VNBarcodeSymbology]? = nil
 
-    var onResult: (@Sendable (DetectedQRCode?) -> Void)?
+    var onResults: (@Sendable ([DetectedQRCode]) -> Void)?
 
     func reset() {
         lock.lock()
@@ -112,9 +131,34 @@ private final class QRCodeScannerEngine: @unchecked Sendable {
         lock.unlock()
     }
 
+    func clearCaches() {
+        reset()
+        scanQueue.async { [weak self] in
+            guard let self, self.hasCreatedCIContext else { return }
+            self.ciContext.clearCaches()
+        }
+    }
+
+    private static func currentThermalLevel() -> QRThermalCadencePolicy.ThermalLevel {
+        switch ProcessInfo.processInfo.thermalState {
+        case .nominal: return .nominal
+        case .fair: return .fair
+        case .serious: return .serious
+        case .critical: return .critical
+        @unknown default: return .fair
+        }
+    }
+
     func submitIfDue(pixelBuffer: CVPixelBuffer, now: CFTimeInterval) {
+        let thermal = Self.currentThermalLevel()
         lock.lock()
-        let interval: CFTimeInterval = hasActiveDetection ? 0.11 : 0.21
+        guard let interval = QRThermalCadencePolicy.scanInterval(
+            thermal: thermal,
+            hasActiveDetection: hasActiveDetection
+        ) else {
+            lock.unlock()
+            return
+        }
         guard !isScanning, (now - lastSubmitTime) >= interval else {
             lock.unlock()
             return
@@ -127,31 +171,36 @@ private final class QRCodeScannerEngine: @unchecked Sendable {
         let box = QRPixelBufferBox(buffer: pixelBuffer)
         scanQueue.async { [weak self] in
             guard let self else { return }
-            let detected: DetectedQRCode? = autoreleasepool {
-                self.scanMultiPass(buffer: box.buffer, missCounter: currentMissCount, timestamp: now)
+            let detectedCodes: [DetectedQRCode] = autoreleasepool {
+                self.scanMultiPass(
+                    buffer: box.buffer,
+                    missCounter: currentMissCount,
+                    thermal: thermal,
+                    timestamp: now
+                )
             }
 
-            var callbackToInvoke: (@Sendable (DetectedQRCode?) -> Void)?
-            var payloadToEmit: DetectedQRCode? = nil
+            var callbackToInvoke: (@Sendable ([DetectedQRCode]) -> Void)?
+            var payloadToEmit: [DetectedQRCode] = []
             var shouldEmit = false
 
             self.lock.lock()
             self.isScanning = false
-            if let detected {
+            if !detectedCodes.isEmpty {
                 self.hasActiveDetection = true
                 self.lastDetectedTime = now
                 self.missPassCounter = 0
-                payloadToEmit = detected
+                payloadToEmit = detectedCodes
                 shouldEmit = true
             } else {
                 self.missPassCounter &+= 1
                 if self.hasActiveDetection && (now - self.lastDetectedTime) >= 0.95 {
                     self.hasActiveDetection = false
-                    payloadToEmit = nil
+                    payloadToEmit = []
                     shouldEmit = true
                 }
             }
-            callbackToInvoke = self.onResult
+            callbackToInvoke = self.onResults
             self.lock.unlock()
 
             if shouldEmit {
@@ -165,7 +214,10 @@ private final class QRCodeScannerEngine: @unchecked Sendable {
         if let cached = cachedSymbologies {
             request.symbologies = cached
         } else {
-            let preferred: [VNBarcodeSymbology] = [.qr, .microQR, .aztec, .dataMatrix]
+            let preferred: [VNBarcodeSymbology] = [
+                .qr, .microQR, .aztec, .dataMatrix, .pdf417,
+                .ean13, .ean8, .upce, .code128, .code39
+            ]
             let supported = (try? request.supportedSymbologies()) ?? [.qr]
             let resolved = preferred.filter { supported.contains($0) }
             let finalSymbologies = resolved.isEmpty ? [.qr] : resolved
@@ -175,26 +227,37 @@ private final class QRCodeScannerEngine: @unchecked Sendable {
         return request
     }
 
-    private func scanMultiPass(buffer: CVPixelBuffer, missCounter: UInt64, timestamp: TimeInterval) -> DetectedQRCode? {
-        // Pass 1: Native full-frame Vision scan (zero copy, handles ~95% of QR codes in 4-8ms)
+    private func scanMultiPass(
+        buffer: CVPixelBuffer,
+        missCounter: UInt64,
+        thermal: QRThermalCadencePolicy.ThermalLevel,
+        timestamp: TimeInterval
+    ) -> [DetectedQRCode] {
+        // Pass 1: Native full-frame Vision scan (zero copy, handles ~95% of QR & barcodes in 4-8ms)
         let fullRequest = makeBarcodeRequest()
         let fullHandler = VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up, options: [:])
-        if (try? fullHandler.perform([fullRequest])) != nil,
-           let best = pickBestObservation(fullRequest.results) {
-            return makeDetectedCode(from: best, subCropTopLeft: CGRect(x: 0, y: 0, width: 1, height: 1), timestamp: timestamp)
+        if (try? fullHandler.perform([fullRequest])) != nil {
+            let fullCodes = makeDetectedCodes(
+                from: fullRequest.results,
+                subCropTopLeft: CGRect(x: 0, y: 0, width: 1, height: 1),
+                timestamp: timestamp
+            )
+            if !fullCodes.isEmpty {
+                return fullCodes
+            }
         }
 
-        // Skip expensive fallback passes under serious thermal pressure
-        let thermal = ProcessInfo.processInfo.thermalState
-        guard thermal != .serious && thermal != .critical else { return nil }
+        // Lazy thermal-aware gating for GPU CoreImage fallback passes (cuts idle GPU load by ~75%+)
+        let fallbackKind = QRThermalCadencePolicy.fallbackPassKind(thermal: thermal, missCounter: missCounter)
+        guard fallbackKind != 0 else { return [] }
 
         let width = CGFloat(CVPixelBufferGetWidth(buffer))
         let height = CGFloat(CVPixelBufferGetHeight(buffer))
-        guard width >= 160, height >= 160 else { return nil }
+        guard width >= 160, height >= 160 else { return [] }
 
         let baseCI = CIImage(cvPixelBuffer: buffer)
 
-        if missCounter.isMultiple(of: 2) {
+        if fallbackKind == 2 {
             // Pass 2: Center 56% zoom + high-contrast monochrome + sharpen (tiny, distant, dim, or glossy-screen QR)
             let cropFrac: CGFloat = 0.56
             let insetFrac: CGFloat = (1.0 - cropFrac) * 0.5
@@ -220,12 +283,18 @@ private final class QRCodeScannerEngine: @unchecked Sendable {
 
             let pass2Request = makeBarcodeRequest()
             let pass2Handler = VNImageRequestHandler(ciImage: contrasted, orientation: .up, options: [.ciContext: ciContext])
-            if (try? pass2Handler.perform([pass2Request])) != nil,
-               let best = pickBestObservation(pass2Request.results) {
+            if (try? pass2Handler.perform([pass2Request])) != nil {
                 let subCrop = CGRect(x: insetFrac, y: insetFrac, width: cropFrac, height: cropFrac)
-                return makeDetectedCode(from: best, subCropTopLeft: subCrop, timestamp: timestamp)
+                let pass2Codes = makeDetectedCodes(
+                    from: pass2Request.results,
+                    subCropTopLeft: subCrop,
+                    timestamp: timestamp
+                )
+                if !pass2Codes.isEmpty {
+                    return pass2Codes
+                }
             }
-        } else {
+        } else if fallbackKind == 3 {
             // Pass 3: Inverted-polarity center 72% pass (dark-mode white-on-black / neon QR codes)
             let cropFrac: CGFloat = 0.72
             let insetFrac: CGFloat = (1.0 - cropFrac) * 0.5
@@ -246,56 +315,65 @@ private final class QRCodeScannerEngine: @unchecked Sendable {
 
             let pass3Request = makeBarcodeRequest()
             let pass3Handler = VNImageRequestHandler(ciImage: inverted, orientation: .up, options: [.ciContext: ciContext])
-            if (try? pass3Handler.perform([pass3Request])) != nil,
-               let best = pickBestObservation(pass3Request.results) {
+            if (try? pass3Handler.perform([pass3Request])) != nil {
                 let subCrop = CGRect(x: insetFrac, y: insetFrac, width: cropFrac, height: cropFrac)
-                return makeDetectedCode(from: best, subCropTopLeft: subCrop, timestamp: timestamp)
+                let pass3Codes = makeDetectedCodes(
+                    from: pass3Request.results,
+                    subCropTopLeft: subCrop,
+                    timestamp: timestamp
+                )
+                if !pass3Codes.isEmpty {
+                    return pass3Codes
+                }
             }
         }
 
-        return nil
+        return []
     }
 
-    private func pickBestObservation(_ observations: [VNBarcodeObservation]?) -> VNBarcodeObservation? {
-        guard let observations, !observations.isEmpty else { return nil }
-        let valid = observations.filter { obs in
-            guard let payload = obs.payloadStringValue else { return false }
-            return !payload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        guard !valid.isEmpty else { return nil }
-        // Prefer barcode closest to center of the frame
-        return valid.min { a, b in
-            let da = hypot(a.boundingBox.midX - 0.5, a.boundingBox.midY - 0.5)
-            let db = hypot(b.boundingBox.midX - 0.5, b.boundingBox.midY - 0.5)
-            return da < db
-        }
-    }
-
-    private func makeDetectedCode(
-        from observation: VNBarcodeObservation,
+    private func makeDetectedCodes(
+        from observations: [VNBarcodeObservation]?,
         subCropTopLeft: CGRect,
         timestamp: TimeInterval
-    ) -> DetectedQRCode? {
-        guard let raw = observation.payloadStringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !raw.isEmpty else { return nil }
-        let box = QRCodePayloadParser.visionRectToFullFrameTopLeft(
-            observation.boundingBox,
-            subCropTopLeft: subCropTopLeft
-        )
-        let symLabel: String
-        switch observation.symbology {
-        case .microQR: symLabel = "Micro QR"
-        case .aztec: symLabel = "Aztec"
-        case .dataMatrix: symLabel = "DataMatrix"
-        default: symLabel = "QR"
+    ) -> [DetectedQRCode] {
+        guard let observations, !observations.isEmpty else { return [] }
+        var results: [DetectedQRCode] = []
+        results.reserveCapacity(min(8, observations.count))
+        for obs in observations {
+            guard let raw = obs.payloadStringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty else { continue }
+            let box = QRCodePayloadParser.visionRectToFullFrameTopLeft(
+                obs.boundingBox,
+                subCropTopLeft: subCropTopLeft
+            )
+            let symLabel = Self.label(for: obs.symbology)
+            results.append(
+                DetectedQRCode(
+                    rawValue: raw,
+                    kind: QRCodePayloadParser.parse(raw, symbologyLabel: symLabel),
+                    normalizedBoundingBox: box,
+                    symbologyLabel: symLabel,
+                    timestamp: timestamp
+                )
+            )
         }
-        return DetectedQRCode(
-            rawValue: raw,
-            kind: QRCodePayloadParser.parse(raw),
-            normalizedBoundingBox: box,
-            symbologyLabel: symLabel,
-            timestamp: timestamp
-        )
+        return results
+    }
+
+    private static func label(for symbology: VNBarcodeSymbology) -> String {
+        switch symbology {
+        case .qr: return "QR"
+        case .microQR: return "Micro QR"
+        case .aztec: return "Aztec"
+        case .dataMatrix: return "DataMatrix"
+        case .pdf417: return "PDF417"
+        case .ean13: return "EAN-13"
+        case .ean8: return "EAN-8"
+        case .upce: return "UPC-E"
+        case .code128: return "Code 128"
+        case .code39: return "Code 39"
+        default: return "QR"
+        }
     }
 }
 
@@ -307,6 +385,7 @@ private struct CameraFrameProcessingConfiguration: Sendable {
     var isFocusPeakingEnabled = false
     var focusPeakingColor: FocusPeakingColor = .green
     var isRecordingVideo = false
+    var showDetectionBoxes = false
     var showHistogramInViewfinder = true
     var isVideo = false
     var isDualCameraActive = false
@@ -337,9 +416,9 @@ private final class CameraFrameProcessor: @unchecked Sendable {
     @MainActor
     func attach(to owner: CameraViewModel) {
         self.owner = owner
-        qrScanner.onResult = { [weak owner] code in
+        qrScanner.onResults = { [weak owner] codes in
             Task { @MainActor [weak owner] in
-                owner?.handleScannedQRCodeUpdate(code)
+                owner?.handleScannedQRCodesUpdate(codes)
             }
         }
     }
@@ -371,6 +450,14 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         latestFrameContext = nil
         stateLock.unlock()
         qrScanner.reset()
+    }
+
+    func clearMemoryCaches() {
+        stateLock.lock()
+        latestPixelBuffer = nil
+        latestFrameContext = nil
+        stateLock.unlock()
+        qrScanner.clearCaches()
     }
 
     func latestPixelBufferSnapshot() -> CVPixelBuffer? {
@@ -474,18 +561,33 @@ private final class CameraFrameProcessor: @unchecked Sendable {
         // in place avoids an extra frame copy and never sends CMSampleBuffer across
         // another concurrency boundary.
         let now = CACurrentMediaTime()
-        let visionInterval: CFTimeInterval
-        if needsImmediateCapture {
+        let thermal = ProcessInfo.processInfo.thermalState
+        let visionInterval: CFTimeInterval?
+        if needsImmediateCapture || SpatialTrackingEngine.shared.isTrackingActive || snapshot.tracksSuggestions {
+            // 100% full speed during active AI Compose / Target Tracking — zero latency compromise
             visionInterval = 0
         } else if snapshot.isDualCameraActive {
-            visionInterval = 1.0 / 5.0
-        } else if SpatialTrackingEngine.shared.isTrackingActive || snapshot.tracksSuggestions {
-            visionInterval = 0
+            // Dual Camera mode does not run AI Compose or live detection boxes: avoid unnecessary ANE/GPU heat
+            visionInterval = nil
+        } else if snapshot.showDetectionBoxes {
+            switch thermal {
+            case .nominal: visionInterval = 1.0 / 6.0
+            case .fair: visionInterval = 1.0 / 3.5
+            case .serious: visionInterval = 1.0 / 2.0
+            case .critical: visionInterval = nil
+            @unknown default: visionInterval = 1.0 / 4.0
+            }
         } else {
-            let thermal = ProcessInfo.processInfo.thermalState
-            visionInterval = (thermal == .nominal) ? (1.0 / 7.0) : (1.0 / 4.0)
+            // Idle viewfinder: lightweight scene refresh only (~1.5Hz nominal -> cuts idle ANE/CPU heat ~78%)
+            switch thermal {
+            case .nominal: visionInterval = 0.65
+            case .fair: visionInterval = 1.25
+            case .serious: visionInterval = 2.50
+            case .critical: visionInterval = nil
+            @unknown default: visionInterval = 1.0
+            }
         }
-        if visionInterval == 0 || (now - lastVisionProcessTime >= visionInterval) {
+        if let interval = visionInterval, (interval == 0 || (now - lastVisionProcessTime >= interval)) {
             lastVisionProcessTime = now
             if TrackingPerformanceMonitor.shared.isEnabled, let frame {
                 let f2vMs = max(0, (now - frame.timestamp) * 1000.0)
@@ -2118,61 +2220,115 @@ public final class CameraViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Smart Multi-Pass QR Code Scanner (Apple Vision Native)
+    // MARK: - Smart Multi-Pass QR & Barcode Scanner (Apple Vision Native + Multi-QR Selector)
     @Published public var isQRScannerEnabled: Bool = true {
         didSet {
             UserDefaults.standard.set(isQRScannerEnabled, forKey: "isQRScannerEnabled")
             if !isQRScannerEnabled {
+                qrMultiSelector.reset()
+                detectedQRCodes = []
                 detectedQRCode = nil
+                isShowingQRMultiListSheet = false
             }
             updateFrameProcessingConfiguration()
         }
     }
+    @Published public private(set) var detectedQRCodes: [DetectedQRCode] = []
     @Published public private(set) var detectedQRCode: DetectedQRCode? = nil
+    @Published public var isShowingQRMultiListSheet: Bool = false
     @Published public var qrDetailSheetTarget: DetectedQRCode? = nil
+    private var qrMultiSelector = QRCodeMultiSelector()
     private var suppressedQRPayload: String? = nil
     private var suppressedQRUntil: CFTimeInterval = 0
+    private var memoryWarningToken: CameraNotificationToken? = nil
 
-    public func handleScannedQRCodeUpdate(_ code: DetectedQRCode?) {
+    public var activeQRCodeIndex: Int {
+        guard let active = detectedQRCode,
+              let idx = detectedQRCodes.firstIndex(where: { $0.rawValue == active.rawValue }) else {
+            return 0
+        }
+        return idx
+    }
+
+    public func handleScannedQRCodesUpdate(_ codes: [DetectedQRCode]) {
         guard isQRScannerEnabled,
               !isCameraHibernating,
               !isRecordingVideo,
               !isAISessionActive,
               !isShowingPhotographicStylePad,
               !isPhotoboothModeActive else {
-            if detectedQRCode != nil {
+            if detectedQRCode != nil || !detectedQRCodes.isEmpty {
+                qrMultiSelector.reset()
+                detectedQRCodes = []
                 detectedQRCode = nil
-            }
-            return
-        }
-
-        guard let code else {
-            if detectedQRCode != nil {
-                withAnimation(.easeOut(duration: 0.18)) {
-                    detectedQRCode = nil
-                }
+                isShowingQRMultiListSheet = false
             }
             return
         }
 
         let now = CACurrentMediaTime()
-        if let suppressed = suppressedQRPayload, suppressed == code.rawValue, now < suppressedQRUntil {
+        let activeSuppressed: String? = (suppressedQRPayload != nil && now < suppressedQRUntil) ? suppressedQRPayload : nil
+        let selection = qrMultiSelector.select(from: codes, suppressedRawValue: activeSuppressed)
+
+        guard let primary = selection.primary else {
+            if detectedQRCode != nil || !detectedQRCodes.isEmpty {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    detectedQRCodes = []
+                    detectedQRCode = nil
+                }
+                if isShowingQRMultiListSheet {
+                    isShowingQRMultiListSheet = false
+                }
+            }
             return
         }
 
-        let isNewPayload = (detectedQRCode?.rawValue != code.rawValue)
+        // Only publish full array when payload list changes or any box moves past deadband (prevents SwiftUI thrashing)
+        let shouldUpdateList: Bool
+        if detectedQRCodes.count != selection.allCodes.count {
+            shouldUpdateList = true
+        } else {
+            shouldUpdateList = zip(detectedQRCodes, selection.allCodes).contains { prev, next in
+                if prev.rawValue != next.rawValue { return true }
+                let delta = abs(prev.normalizedBoundingBox.midX - next.normalizedBoundingBox.midX)
+                    + abs(prev.normalizedBoundingBox.midY - next.normalizedBoundingBox.midY)
+                    + abs(prev.normalizedBoundingBox.width - next.normalizedBoundingBox.width)
+                return delta >= 0.010
+            }
+        }
+        if shouldUpdateList {
+            detectedQRCodes = selection.allCodes
+        }
+        if selection.allCodes.count <= 1 && isShowingQRMultiListSheet {
+            isShowingQRMultiListSheet = false
+        }
+
+        let isNewPayload = (detectedQRCode?.rawValue != primary.rawValue)
         if isNewPayload {
             haptics.triggerLight()
             withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
-                detectedQRCode = code
+                detectedQRCode = primary
             }
         } else if let prev = detectedQRCode {
-            let boxDelta = abs(prev.normalizedBoundingBox.midX - code.normalizedBoundingBox.midX)
-                + abs(prev.normalizedBoundingBox.midY - code.normalizedBoundingBox.midY)
-                + abs(prev.normalizedBoundingBox.width - code.normalizedBoundingBox.width)
-            if boxDelta >= 0.008 {
-                detectedQRCode = code
+            let boxDelta = abs(prev.normalizedBoundingBox.midX - primary.normalizedBoundingBox.midX)
+                + abs(prev.normalizedBoundingBox.midY - primary.normalizedBoundingBox.midY)
+                + abs(prev.normalizedBoundingBox.width - primary.normalizedBoundingBox.width)
+            if boxDelta >= 0.010 {
+                detectedQRCode = primary
             }
+        }
+    }
+
+    /// Ghim trực tiếp một mã QR bất kỳ trong khung hình (khi có nhiều mã QR cùng lúc).
+    public func selectQRCode(_ code: DetectedQRCode) {
+        if suppressedQRPayload == code.rawValue {
+            suppressedQRPayload = nil
+            suppressedQRUntil = 0
+        }
+        qrMultiSelector.pin(rawValue: code.rawValue)
+        haptics.triggerSelectionChange()
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+            detectedQRCode = code
         }
     }
 
@@ -2180,9 +2336,20 @@ public final class CameraViewModel: ObservableObject {
         if let active = detectedQRCode {
             suppressedQRPayload = active.rawValue
             suppressedQRUntil = CACurrentMediaTime() + 8.0
+            if qrMultiSelector.userPinnedRawValue == active.rawValue {
+                qrMultiSelector.pin(rawValue: nil)
+            }
         }
+        let nextSelection = qrMultiSelector.select(
+            from: detectedQRCodes,
+            suppressedRawValue: suppressedQRPayload
+        )
         withAnimation(.easeOut(duration: 0.18)) {
-            detectedQRCode = nil
+            detectedQRCodes = nextSelection.allCodes
+            detectedQRCode = nextSelection.primary
+        }
+        if nextSelection.allCodes.count <= 1 {
+            isShowingQRMultiListSheet = false
         }
     }
 
@@ -2193,6 +2360,12 @@ public final class CameraViewModel: ObservableObject {
         showHUDNotice(target.copySuccessMessage)
     }
 
+    public func copyCustomQRText(_ text: String, notice: String) {
+        UIPasteboard.general.string = text
+        haptics.triggerSuccess()
+        showHUDNotice(notice)
+    }
+
     public func handleDetectedQRCodePrimaryAction(_ code: DetectedQRCode? = nil) {
         guard let target = code ?? detectedQRCode else { return }
         haptics.triggerSelectionChange()
@@ -2201,6 +2374,30 @@ public final class CameraViewModel: ObservableObject {
         } else {
             qrDetailSheetTarget = target
         }
+    }
+
+    /// Chủ động giải phóng toàn bộ bộ đệm GPU / CoreImage / CoreML / Thumbnail khi iOS cảnh báo áp lực RAM (chống Jetsam).
+    public func handleSystemMemoryWarning() {
+        let beforeMB = CameraLogger.currentMemoryFootprintMB()
+        frameProcessor.clearMemoryCaches()
+        FilmFilterEngine.shared.clearCache()
+        PhotoDarkroomRenderEngine.shared.clearCaches()
+        UnifiedMetalColorEngine.shared.flushCaches()
+        PhotoboothAssetManager.shared.clearCaches()
+        UltraWideWarpEngine.shared.clearCaches()
+        DualCameraAssetRecorder.shared.clearCaches()
+        EffectVideoAssetRecorder.shared.clearCaches()
+        GalleryThumbnailMemoryCache.clearAll()
+        YOLODetectionEngine.shared.releaseTransientCaches()
+        NeuralSubjectIntelligenceEngine.shared.scheduleReleaseAllModelCaches()
+        if !SpatialTrackingEngine.shared.isTrackingActive && aiSessionState == .idle {
+            visionEngine.clearHeldBuffers()
+        }
+        let afterMB = CameraLogger.currentMemoryFootprintMB()
+        CameraLogger.warning(
+            String(format: "MemoryWarning relief executed: %.1fMB -> %.1fMB", beforeMB, afterMB),
+            category: .general
+        )
     }
     @Published public var gyroPitchOffsetDegrees: Double = 0.0 {
         didSet { UserDefaults.standard.set(gyroPitchOffsetDegrees, forKey: "gyroPitchOffsetDegrees") }
@@ -3138,9 +3335,15 @@ public final class CameraViewModel: ObservableObject {
             // 2. Giải phóng toàn bộ buffer camera pool, texture Metal và cache model CoreML đang giữ
             proPhotoService.setPollingPaused(true)
             horizonLevelerService.stop()
-            frameProcessor.clearBuffers()
+            frameProcessor.clearMemoryCaches()
             visionEngine.clearHeldBuffers()
             previewContainerView?.setHibernating(true)
+            FilmFilterEngine.shared.clearCache()
+            PhotoDarkroomRenderEngine.shared.clearCaches()
+            PhotoboothAssetManager.shared.clearCaches()
+            UltraWideWarpEngine.shared.clearCaches()
+            DualCameraAssetRecorder.shared.clearCaches()
+            EffectVideoAssetRecorder.shared.clearCaches()
             YOLODetectionEngine.shared.releaseTransientCaches()
             CameraFramingDirector.resetTemporalState()
             zoomDebugSnapshot = nil
@@ -3203,8 +3406,16 @@ public final class CameraViewModel: ObservableObject {
                 cameraService.stopRecordingVideo()
             }
             suspendSpatialTracking()
-            frameProcessor.clearBuffers()
+            frameProcessor.clearMemoryCaches()
             visionEngine.clearHeldBuffers()
+            FilmFilterEngine.shared.clearCache()
+            PhotoDarkroomRenderEngine.shared.clearCaches()
+            UnifiedMetalColorEngine.shared.flushCaches()
+            PhotoboothAssetManager.shared.clearCaches()
+            UltraWideWarpEngine.shared.clearCaches()
+            DualCameraAssetRecorder.shared.clearCaches()
+            EffectVideoAssetRecorder.shared.clearCaches()
+            GalleryThumbnailMemoryCache.clearAll()
             YOLODetectionEngine.shared.releaseTransientCaches()
             NeuralSubjectIntelligenceEngine.shared.scheduleReleaseAllModelCaches()
             cameraService.stop()
@@ -3228,7 +3439,13 @@ public final class CameraViewModel: ObservableObject {
         didSet { UserDefaults.standard.set(isAutoCaptureOnAlignEnabled, forKey: "isAutoCaptureOnAlignEnabled") }
     }
     @Published public var showDetectionBoxes: Bool = false {
-        didSet { UserDefaults.standard.set(showDetectionBoxes, forKey: "showDetectionBoxes") }
+        didSet {
+            UserDefaults.standard.set(showDetectionBoxes, forKey: "showDetectionBoxes")
+            if !showDetectionBoxes && !liveDetectedEntities.isEmpty {
+                liveDetectedEntities = []
+            }
+            updateFrameProcessingConfiguration()
+        }
     }
     @Published public var showHistogramInViewfinder: Bool = true {
         didSet {
@@ -3552,6 +3769,16 @@ public final class CameraViewModel: ObservableObject {
         setupCallbacks()
         setupMotionCallbacks()
         syncHorizonLevelerLifecycle()
+        let memObs = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleSystemMemoryWarning()
+            }
+        }
+        self.memoryWarningToken = CameraNotificationToken(memObs)
         self.showAbnormalExitBanner = CameraLogger.shouldShowAbnormalExitBanner()
         CameraLogger.updateSessionStateSummary("session=0 hibernate=0 ai=idle zoom=1.00x")
     }
@@ -3575,8 +3802,11 @@ public final class CameraViewModel: ObservableObject {
             && !(aiSessionState == .analyzing && isOneShotCaptured && !localAnalysisFinished)
             && !isShowingPhotographicStylePad
             && !isPhotoboothModeActive
-        if !qrActive && detectedQRCode != nil {
+        if !qrActive && (detectedQRCode != nil || !detectedQRCodes.isEmpty) {
+            qrMultiSelector.reset()
+            detectedQRCodes = []
             detectedQRCode = nil
+            isShowingQRMultiListSheet = false
         }
         frameProcessor.updateConfiguration(
             CameraFrameProcessingConfiguration(
@@ -3587,6 +3817,7 @@ public final class CameraViewModel: ObservableObject {
                 isFocusPeakingEnabled: isFocusPeakingEnabled,
                 focusPeakingColor: focusPeakingColor,
                 isRecordingVideo: isRecordingVideo,
+                showDetectionBoxes: showDetectionBoxes,
                 showHistogramInViewfinder: showHistogramInViewfinder,
                 isVideo: captureMode.isVideo,
                 isDualCameraActive: isDualCameraActive,
@@ -4800,22 +5031,30 @@ public final class CameraViewModel: ObservableObject {
     private func handleVisionDetection(_ detection: SubjectDetectionResult) {
         self.latestSubjectDetectionResult = detection
 
-        if showDetectionBoxes || !detection.detectedEntities.isEmpty {
+        if showDetectionBoxes {
             let smoothed = liveEntitySmoother.update(with: detection.detectedEntities)
             self.liveDetectedEntities = smoothed
             self.detectedFaceRects = smoothed.filter { $0.category == .face }.map { $0.rect }
             self.detectedSubjectRects = smoothed.map { $0.rect }
         } else {
-            self.detectedFaceRects = detection.faceRectangles
-            if let dominant = detection.dominantSubjectRect {
-                self.detectedSubjectRects = [dominant]
+            if !self.liveDetectedEntities.isEmpty {
+                self.liveDetectedEntities = []
+            }
+            if self.detectedFaceRects != detection.faceRectangles {
+                self.detectedFaceRects = detection.faceRectangles
+            }
+            let nextSubjects: [CGRect] = detection.dominantSubjectRect.map { [$0] } ?? []
+            if self.detectedSubjectRects != nextSubjects {
+                self.detectedSubjectRects = nextSubjects
             }
         }
 
         switch aiSessionState {
         case .idle, .done:
-            // Khi o che do idle: cap nhat canh de xu ly bo cuc
-            self.detectedScene = detection.detectedScene
+            // Khi o che do idle: chi cap nhat khi canh thuc su thay doi (tranh SwiftUI re-diff khong can thiet)
+            if self.detectedScene != detection.detectedScene {
+                self.detectedScene = detection.detectedScene
+            }
             return
 
         case .capturing:

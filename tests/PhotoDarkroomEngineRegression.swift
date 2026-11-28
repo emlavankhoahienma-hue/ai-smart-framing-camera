@@ -1,6 +1,19 @@
 import Foundation
 import CoreGraphics
 import CoreImage
+import Darwin
+
+private func currentPhysFootprintMB() -> Double {
+    var info = task_vm_info_data_t()
+    var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+    let kerr = withUnsafeMutablePointer(to: &info) { infoPtr in
+        infoPtr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
+            task_info(task_self_trap(), task_flavor_t(TASK_VM_INFO), intPtr, &count)
+        }
+    }
+    guard kerr == KERN_SUCCESS else { return 0.0 }
+    return Double(info.phys_footprint) / (1024.0 * 1024.0)
+}
 
 // MARK: - Pixel Inspection Helpers
 private struct RGBAImageData {
@@ -475,13 +488,61 @@ struct PhotoDarkroomEngineRegression {
 
         let vietQRSample = "00020101021238540010A00000072701240006970422011003441972120208QRIBFTTA53037045405500005802VN62180814Coffee AlignAI6304ABCD"
         let parsedVietQR = QRCodePayloadParser.parse(vietQRSample)
-        if case .vietQR(let amount, let note, _) = parsedVietQR {
+        if case .vietQR(let bankName, let accountNumber, let amount, let note, _) = parsedVietQR {
             let qr = DetectedQRCode(rawValue: vietQRSample, kind: parsedVietQR, normalizedBoundingBox: .zero)
-            check(amount == "50.000đ" && note == "Coffee AlignAI" && qr.pillTitle == "VietQR · 50.000đ",
-                  "QRCodePayloadParser detects EMVCo VietQR with amount and memo",
+            check(bankName == "MB Bank" && accountNumber == "0344197212" &&
+                  amount == "50.000đ" && note == "Coffee AlignAI" &&
+                  qr.pillTitle == "MB Bank · 50.000đ" && qr.copyableText == "0344197212",
+                  "QRCodePayloadParser detects EMVCo VietQR with Vietnam Bank BIN, STK, amount and memo",
+                  detail: "\(qr.pillTitle) | STK=\(accountNumber ?? "nil")")
+        } else {
+            check(false, "QRCodePayloadParser detects EMVCo VietQR with Vietnam Bank BIN, STK, amount and memo")
+        }
+
+        let cccdSample = "079095001234|215432109|NGUYEN VAN AN|15081995|Nam|123 Le Loi, Q1, TP.HCM|10052021"
+        let parsedCCCD = QRCodePayloadParser.parse(cccdSample)
+        if case .cccdVN(let idNum, let fullName, let dob, let gender, let addr, let issue) = parsedCCCD {
+            let qr = DetectedQRCode(rawValue: cccdSample, kind: parsedCCCD, normalizedBoundingBox: .zero)
+            check(idNum == "079095001234" && fullName == "NGUYEN VAN AN" && dob == "15/08/1995" &&
+                  gender == "Nam" && addr == "123 Le Loi, Q1, TP.HCM" && issue == "10/05/2021" &&
+                  qr.pillTitle == "CCCD · NGUYEN VAN AN" && qr.copyableText == "079095001234",
+                  "QRCodePayloadParser parses Vietnam Chip CCCD 7-field format",
+                  detail: "\(qr.pillTitle) | DOB=\(dob)")
+        } else {
+            check(false, "QRCodePayloadParser parses Vietnam Chip CCCD 7-field format")
+        }
+
+        let otpSample = "otpauth://totp/GitHub:dev@align.app?secret=JBSWY3DPEHPK3PXP&issuer=GitHub"
+        let parsedOTP = QRCodePayloadParser.parse(otpSample)
+        if case .otpAuth(let issuer, let account, _) = parsedOTP {
+            let qr = DetectedQRCode(rawValue: otpSample, kind: parsedOTP, normalizedBoundingBox: .zero)
+            check(issuer == "GitHub" && account == "dev@align.app" &&
+                  qr.pillTitle == "2FA · GitHub (dev@align.app)",
+                  "QRCodePayloadParser parses 2FA otpauth:// TOTP QR",
                   detail: qr.pillTitle)
         } else {
-            check(false, "QRCodePayloadParser detects EMVCo VietQR with amount and memo")
+            check(false, "QRCodePayloadParser parses 2FA otpauth:// TOTP QR")
+        }
+
+        let geoSample = "geo:10.776900,106.700900?q=Bitexco%20Tower"
+        let parsedGeo = QRCodePayloadParser.parse(geoSample)
+        if case .geoLocation(let lat, let lon, let label) = parsedGeo {
+            let qr = DetectedQRCode(rawValue: geoSample, kind: parsedGeo, normalizedBoundingBox: .zero)
+            check(abs(lat - 10.7769) < 1e-4 && abs(lon - 106.7009) < 1e-4 &&
+                  label == "Bitexco Tower" && qr.openableURL?.host == "maps.apple.com",
+                  "QRCodePayloadParser parses Geo URI with Apple Maps link",
+                  detail: qr.pillTitle)
+        } else {
+            check(false, "QRCodePayloadParser parses Geo URI with Apple Maps link")
+        }
+
+        let calSample = "BEGIN:VEVENT\nSUMMARY:Chụp ảnh cưới\nDTSTART:20261201T080000Z\nLOCATION:Nhà thờ Đức Bà\nEND:VEVENT"
+        let parsedCal = QRCodePayloadParser.parse(calSample)
+        if case .calendarEvent(let title, let startText, let location, _) = parsedCal {
+            check(title == "Chụp ảnh cưới" && startText == "20261201T080000Z" && location == "Nhà thờ Đức Bà",
+                  "QRCodePayloadParser parses VEVENT calendar QR")
+        } else {
+            check(false, "QRCodePayloadParser parses VEVENT calendar QR")
         }
 
         let parsedTel = QRCodePayloadParser.parse("tel:+84901234567")
@@ -489,11 +550,48 @@ struct PhotoDarkroomEngineRegression {
         check(qrTel.openableURL != nil && qrTel.pillTitle == "Gọi +84901234567",
               "QRCodePayloadParser handles actionable tel: deep link")
 
-        let parsedVCard = QRCodePayloadParser.parse("BEGIN:VCARD\nVERSION:3.0\nFN:Nguyen Van A\nEND:VCARD")
-        if case .contact(let name, _) = parsedVCard {
-            check(name == "Nguyen Van A", "QRCodePayloadParser extracts vCard FN contact name")
+        let parsedMatmsg = QRCodePayloadParser.parse("MATMSG:TO:support@align.vn;SUB:Gop y;BODY:Xin chao;;")
+        if case .deepLink(let mailURL, let label) = parsedMatmsg {
+            check(mailURL.hasPrefix("mailto:support@align.vn") && label == "Email",
+                  "QRCodePayloadParser converts MATMSG QR to mailto: deep link",
+                  detail: mailURL)
         } else {
-            check(false, "QRCodePayloadParser extracts vCard FN contact name")
+            check(false, "QRCodePayloadParser converts MATMSG QR to mailto: deep link")
+        }
+
+        let parsedMomo = QRCodePayloadParser.parse("momo://app?action=pay")
+        if case .deepLink(_, let label) = parsedMomo {
+            check(label == "Mở MoMo", "QRCodePayloadParser recognizes Vietnam e-wallet deep links (MoMo)")
+        } else {
+            check(false, "QRCodePayloadParser recognizes Vietnam e-wallet deep links (MoMo)")
+        }
+
+        let parsedVCard = QRCodePayloadParser.parse("BEGIN:VCARD\nVERSION:3.0\nFN:Nguyen Van A\nTEL:0901234567\nEMAIL:a@studio.vn\nEND:VCARD")
+        if case .contact(let name, let phone, let email, _) = parsedVCard {
+            check(name == "Nguyen Van A" && phone == "0901234567" && email == "a@studio.vn",
+                  "QRCodePayloadParser extracts vCard FN, TEL and EMAIL")
+        } else {
+            check(false, "QRCodePayloadParser extracts vCard FN, TEL and EMAIL")
+        }
+
+        let parsedMeCard = QRCodePayloadParser.parse("MECARD:N:Nguyen,An;TEL:0988777666;EMAIL:an@align.vn;;")
+        if case .contact(let name, let phone, let email, _) = parsedMeCard {
+            check(name == "An Nguyen" && phone == "0988777666" && email == "an@align.vn",
+                  "QRCodePayloadParser parses MECARD contact QR cleanly",
+                  detail: "\(name) | \(phone ?? "")")
+        } else {
+            check(false, "QRCodePayloadParser parses MECARD contact QR cleanly")
+        }
+
+        let parsedEAN = QRCodePayloadParser.parse("8934563138165", symbologyLabel: "EAN-13")
+        if case .productBarcode(let code, let formatLabel) = parsedEAN {
+            let qr = DetectedQRCode(rawValue: "8934563138165", kind: parsedEAN, normalizedBoundingBox: .zero, symbologyLabel: "EAN-13")
+            check(code == "8934563138165" && formatLabel == "EAN-13" &&
+                  qr.openableURL?.absoluteString.contains("8934563138165") == true,
+                  "QRCodePayloadParser recognizes 1D EAN-13 product barcode with lookup URL",
+                  detail: qr.pillTitle)
+        } else {
+            check(false, "QRCodePayloadParser recognizes 1D EAN-13 product barcode with lookup URL")
         }
 
         let parsedPlain = QRCodePayloadParser.parse("Mã giảm giá ALIGN2026")
@@ -512,6 +610,170 @@ struct PhotoDarkroomEngineRegression {
               abs(subProjected.width - 0.28) < 0.001 && abs(subProjected.height - 0.28) < 0.001,
               "QRCodePayloadParser back-projects sub-crop Vision box to exact full-frame top-left rect",
               detail: String(format: "(%.2f,%.2f,%.2f,%.2f)", subProjected.minX, subProjected.minY, subProjected.width, subProjected.height))
+
+        // 10. Multi-QR Selector Anti-Flicker, Tap-to-Pin, Deduplication & Cap Stress Tests
+        var selector = QRCodeMultiSelector()
+        func makeQR(_ raw: String, cx: CGFloat, cy: CGFloat, w: CGFloat = 0.14) -> DetectedQRCode {
+            DetectedQRCode(
+                rawValue: raw,
+                kind: QRCodePayloadParser.parse(raw),
+                normalizedBoundingBox: CGRect(x: cx - w * 0.5, y: cy - w * 0.5, width: w, height: w)
+            )
+        }
+
+        // 10a. 5 simultaneous cashier QRs with 2 equidistant near center + deterministic hand-shake jitter across 100 frames -> 0 flickers
+        let initialBatch = [
+            makeQR("https://pay.mb.vn/qr1", cx: 0.46, cy: 0.50),
+            makeQR("https://pay.vcb.vn/qr2", cx: 0.54, cy: 0.50),
+            makeQR("WIFI:T:WPA;S:Cafe;P:12345678;;", cx: 0.20, cy: 0.25),
+            makeQR("https://menu.cafe.vn", cx: 0.80, cy: 0.25),
+            makeQR("https://fb.com/cafe", cx: 0.80, cy: 0.78)
+        ]
+        let firstPick = selector.select(from: initialBatch)
+        let lockedFirstRaw = firstPick.primary?.rawValue ?? ""
+        var flickerSwitches = 0
+        for frameIdx in 0..<100 {
+            let jitter = CGFloat(((frameIdx % 2 == 0) ? 1.0 : -1.0)) * 0.014
+            let jitteredBatch = [
+                makeQR("https://pay.mb.vn/qr1", cx: 0.46 + jitter, cy: 0.50 - jitter * 0.5),
+                makeQR("https://pay.vcb.vn/qr2", cx: 0.54 + jitter, cy: 0.50 + jitter * 0.5),
+                makeQR("WIFI:T:WPA;S:Cafe;P:12345678;;", cx: 0.20, cy: 0.25),
+                makeQR("https://menu.cafe.vn", cx: 0.80, cy: 0.25),
+                makeQR("https://fb.com/cafe", cx: 0.80, cy: 0.78)
+            ]
+            let res = selector.select(from: jitteredBatch)
+            if res.primary?.rawValue != lockedFirstRaw {
+                flickerSwitches += 1
+            }
+        }
+        check(firstPick.allCodes.count == 5 && flickerSwitches == 0,
+              "QRCodeMultiSelector holds primary QR with 0 flicker switches across 100 jittered 5-QR frames",
+              detail: "all=\(firstPick.allCodes.count) switches=\(flickerSwitches)")
+
+        // 10b. Explicit user tap-to-pin on edge QR #4 stays 100% locked while visible, falls back cleanly when removed
+        selector.pin(rawValue: "https://menu.cafe.vn")
+        var pinKeptAllFrames = true
+        for frameIdx in 0..<30 {
+            let j = CGFloat(frameIdx % 3 - 1) * 0.01
+            let res = selector.select(from: [
+                makeQR("https://pay.mb.vn/qr1", cx: 0.50, cy: 0.50),
+                makeQR("https://menu.cafe.vn", cx: 0.82 + j, cy: 0.22)
+            ])
+            if res.primary?.rawValue != "https://menu.cafe.vn" || !res.isUserPinned {
+                pinKeptAllFrames = false
+            }
+        }
+        let afterEdgeLeft = selector.select(from: [makeQR("https://pay.mb.vn/qr1", cx: 0.50, cy: 0.50)])
+        check(pinKeptAllFrames && afterEdgeLeft.primary?.rawValue == "https://pay.mb.vn/qr1" && !afterEdgeLeft.isUserPinned,
+              "QRCodeMultiSelector preserves tap-to-pin on edge QR and falls back cleanly when it leaves frame")
+
+        // 10c. Deduplication + hard cap at 8 simultaneous QRs + suppression promotes next QR
+        var crowdBatch: [DetectedQRCode] = []
+        for idx in 0..<11 {
+            crowdBatch.append(makeQR("https://crowd.vn/q\(idx)", cx: 0.12 + CGFloat(idx % 5) * 0.18, cy: 0.20 + CGFloat(idx / 5) * 0.25))
+        }
+        crowdBatch.append(makeQR("https://crowd.vn/q0", cx: 0.50, cy: 0.50)) // duplicate payload closer to center
+        var capSelector = QRCodeMultiSelector()
+        let crowdRes = capSelector.select(from: crowdBatch)
+        let uniqueCrowdRaws = Set(crowdRes.allCodes.map(\.rawValue))
+        let suppressedRes = capSelector.select(from: crowdRes.allCodes, suppressedRawValue: crowdRes.primary?.rawValue)
+        check(crowdRes.allCodes.count == 8 && uniqueCrowdRaws.count == 8 &&
+              suppressedRes.primary != nil && suppressedRes.primary?.rawValue != crowdRes.primary?.rawValue,
+              "QRCodeMultiSelector deduplicates, caps at 8, and promotes next QR on dismiss",
+              detail: "capped=\(crowdRes.allCodes.count) next=\(suppressedRes.primary?.rawValue ?? "nil")")
+
+        // 11. Thermal Cadence & Idle GPU Fallback Gating Policy Verification
+        let nomIdle = QRThermalCadencePolicy.scanInterval(thermal: .nominal, hasActiveDetection: false) ?? 0
+        let fairIdle = QRThermalCadencePolicy.scanInterval(thermal: .fair, hasActiveDetection: false) ?? 0
+        let serIdle = QRThermalCadencePolicy.scanInterval(thermal: .serious, hasActiveDetection: false) ?? 0
+        let critIdle = QRThermalCadencePolicy.scanInterval(thermal: .critical, hasActiveDetection: false)
+        check(nomIdle > 0 && nomIdle < fairIdle && fairIdle < serIdle && critIdle == nil,
+              "QRThermalCadencePolicy throttles scan cadence monotonically under thermal load & pauses at critical",
+              detail: String(format: "nom=%.3fs fair=%.3fs ser=%.3fs crit=nil", nomIdle, fairIdle, serIdle))
+
+        let nomFallbackTicks = (1...60).filter { QRThermalCadencePolicy.fallbackPassKind(thermal: .nominal, missCounter: UInt64($0)) != 0 }.count
+        let fairFallbackTicks = (1...60).filter { QRThermalCadencePolicy.fallbackPassKind(thermal: .fair, missCounter: UInt64($0)) != 0 }.count
+        let serFallbackTicks = (1...60).filter { QRThermalCadencePolicy.fallbackPassKind(thermal: .serious, missCounter: UInt64($0)) != 0 }.count
+        check(nomFallbackTicks == 20 && fairFallbackTicks == 12 && serFallbackTicks == 0,
+              "QRThermalCadencePolicy gates idle GPU fallback passes (>=66% nominal reduction, 0% serious)",
+              detail: "nom=\(nomFallbackTicks)/60 fair=\(fairFallbackTicks)/60 ser=\(serFallbackTicks)/60")
+
+        // 12. High-Load Stress Benchmarks (1,000-Cycle Multi-QR + 50-Pass GPU Darkroom Mach phys_footprint Stability)
+        let qrStressSamples = [vietQRSample, cccdSample, otpSample, geoSample, calSample, "https://www.apple.com/vn/iphone"]
+        let qrWarmupFootMB = currentPhysFootprintMB()
+        let qrStartClock = CFAbsoluteTimeGetCurrent()
+        var stressSelector = QRCodeMultiSelector()
+        var totalSelected = 0
+        for cycle in 0..<1000 {
+            autoreleasepool {
+                var batch: [DetectedQRCode] = []
+                batch.reserveCapacity(qrStressSamples.count)
+                for (i, raw) in qrStressSamples.enumerated() {
+                    let kind = QRCodePayloadParser.parse(raw)
+                    let cx = 0.20 + CGFloat(i) * 0.12 + CGFloat((cycle % 3) - 1) * 0.005
+                    batch.append(DetectedQRCode(rawValue: raw, kind: kind, normalizedBoundingBox: CGRect(x: cx, y: 0.42, width: 0.12, height: 0.12)))
+                }
+                if stressSelector.select(from: batch).primary != nil {
+                    totalSelected += 1
+                }
+            }
+        }
+        let qrElapsedMs = (CFAbsoluteTimeGetCurrent() - qrStartClock) * 1000.0
+        let qrEndFootMB = currentPhysFootprintMB()
+        let qrGrowthMB = qrEndFootMB - qrWarmupFootMB
+        check(totalSelected == 1000 && qrElapsedMs < 1200.0 && qrGrowthMB < 12.0,
+              "Stress: 1,000-cycle multi-QR parse + select (6,000 parses) stays fast & leak-free",
+              detail: String(format: "%.1fms ram=%.1f->%.1fMB (delta=%+.2fMB)", qrElapsedMs, qrWarmupFootMB, qrEndFootMB, qrGrowthMB))
+
+        // GPU Darkroom 50-Pass Sustained Stress + Cache Flush (Mach phys_footprint growth bound)
+        var heavyPresetA = PhotoDarkroomEditState()
+        heavyPresetA.effects.grain = 0.70
+        heavyPresetA.effects.vignette = 0.65
+        heavyPresetA.effects.halation = 0.55
+        heavyPresetA.effects.bloom = 0.50
+        heavyPresetA.tools.exposureEV = 0.25
+        heavyPresetA.tools.sharpness = 0.45
+        heavyPresetA.tools.clarity = 0.30
+
+        var heavyPresetB = PhotoDarkroomEditState()
+        heavyPresetB.effects.fade = 0.60
+        heavyPresetB.effects.expired = 0.55
+        heavyPresetB.effects.flare = 0.45
+        heavyPresetB.tools.saturation = 0.22
+        heavyPresetB.tools.hsl.blue = PhotoHSLBandValue(hue: 0.0, saturation: 0.15, luminance: -0.25)
+
+        // Warmup 10 GPU passes to settle Metal/CoreImage driver pools
+        for i in 0..<10 {
+            autoreleasepool {
+                _ = engine.render(cgImage: chart, state: i.isMultiple(of: 2) ? heavyPresetA : heavyPresetB)
+            }
+        }
+        engine.clearCaches()
+        let gpuPostWarmupMB = currentPhysFootprintMB()
+        var gpuPeakMB = gpuPostWarmupMB
+        let gpuStartClock = CFAbsoluteTimeGetCurrent()
+        for pass in 0..<40 {
+            autoreleasepool {
+                let st = pass.isMultiple(of: 2) ? heavyPresetA : heavyPresetB
+                let out = engine.render(cgImage: chart, state: st)
+                if out.width == 0 || out.height == 0 {
+                    failedTests += 1
+                }
+            }
+            if (pass + 1).isMultiple(of: 10) {
+                engine.clearCaches()
+            }
+            let curMB = currentPhysFootprintMB()
+            if curMB > gpuPeakMB { gpuPeakMB = curMB }
+        }
+        engine.clearCaches()
+        let gpuEndMB = currentPhysFootprintMB()
+        let gpuElapsedMs = (CFAbsoluteTimeGetCurrent() - gpuStartClock) * 1000.0
+        let gpuNetGrowthMB = gpuEndMB - gpuPostWarmupMB
+        check(gpuNetGrowthMB < 25.0,
+              "Stress: 50-pass GPU Darkroom + clearCaches() holds steady Mach phys_footprint without runaway leak",
+              detail: String(format: "%.1fms postWarmup=%.1fMB end=%.1fMB peak=%.1fMB delta=%+.2fMB",
+                             gpuElapsedMs, gpuPostWarmupMB, gpuEndMB, gpuPeakMB, gpuNetGrowthMB))
 
         print("=== Summary: \(passedTests) passed, \(failedTests) failed ===")
         if failedTests > 0 {

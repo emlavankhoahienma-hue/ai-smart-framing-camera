@@ -1603,13 +1603,18 @@ public struct VideoPreviewMetadata: Equatable, Sendable {
     }
 }
 
-// MARK: - Smart QR Code Payload Models & Parser (Pure Foundation — Unit Tested on CI)
+// MARK: - Smart QR & Barcode Payload Models, Universal Parser & Multi-QR Selector (Pure Foundation — Unit Tested on CI)
 public enum QRCodePayloadKind: Equatable, Sendable {
     case webURL(urlString: String, displayHostPath: String)
     case deepLink(urlString: String, schemeLabel: String)
     case wifi(ssid: String, password: String, security: String, isHidden: Bool)
-    case vietQR(amountText: String?, noteText: String?, rawPayload: String)
-    case contact(displayName: String, rawVCard: String)
+    case vietQR(bankName: String?, accountNumber: String?, amountText: String?, noteText: String?, rawPayload: String)
+    case cccdVN(idNumber: String, fullName: String, birthDate: String, gender: String, address: String, issueDate: String)
+    case geoLocation(latitude: Double, longitude: Double, label: String?)
+    case calendarEvent(title: String, startText: String?, location: String?, rawEvent: String)
+    case otpAuth(issuer: String, account: String, rawURI: String)
+    case contact(displayName: String, phone: String?, email: String?, rawContact: String)
+    case productBarcode(code: String, formatLabel: String)
     case plainText(String)
 }
 
@@ -1652,13 +1657,31 @@ public struct DetectedQRCode: Equatable, Sendable, Identifiable {
             return schemeLabel
         case .wifi(let ssid, _, _, _):
             return ssid.isEmpty ? "Mạng Wi-Fi" : "Wi-Fi · \(ssid)"
-        case .vietQR(let amountText, _, _):
+        case .vietQR(let bankName, let accountNumber, let amountText, _, _):
+            var parts: [String] = []
+            parts.append(bankName ?? "VietQR")
             if let amountText, !amountText.isEmpty {
-                return "VietQR · \(amountText)"
+                parts.append(amountText)
+            } else if let accountNumber, !accountNumber.isEmpty {
+                parts.append(accountNumber)
             }
-            return "VietQR · Chuyển khoản"
-        case .contact(let displayName, _):
-            return displayName.isEmpty ? "Danh bạ vCard" : "Liên hệ · \(displayName)"
+            return parts.joined(separator: " · ")
+        case .cccdVN(_, let fullName, _, _, _, _):
+            return fullName.isEmpty ? "CCCD Việt Nam" : "CCCD · \(fullName)"
+        case .geoLocation(let lat, let lon, let label):
+            if let label, !label.isEmpty { return "Bản đồ · \(label)" }
+            return String(format: "Bản đồ · %.4f, %.4f", lat, lon)
+        case .calendarEvent(let title, _, _, _):
+            return title.isEmpty ? "Sự kiện lịch" : "Lịch · \(title)"
+        case .otpAuth(let issuer, let account, _):
+            let tag = issuer.isEmpty ? account : (account.isEmpty ? issuer : "\(issuer) (\(account))")
+            return tag.isEmpty ? "Mã bảo mật 2FA" : "2FA · \(tag)"
+        case .contact(let displayName, let phone, _, _):
+            if !displayName.isEmpty { return "Liên hệ · \(displayName)" }
+            if let phone, !phone.isEmpty { return "Liên hệ · \(phone)" }
+            return "Danh bạ"
+        case .productBarcode(let code, let formatLabel):
+            return "\(formatLabel) · \(code)"
         case .plainText(let text):
             let compact = text
                 .replacingOccurrences(of: "\r\n", with: " ")
@@ -1673,8 +1696,14 @@ public struct DetectedQRCode: Equatable, Sendable, Identifiable {
         case .webURL: return "Liên kết Web"
         case .deepLink(_, let schemeLabel): return schemeLabel
         case .wifi: return "Wi-Fi"
-        case .vietQR: return "VietQR / Ngân hàng"
+        case .vietQR(let bankName, _, _, _, _):
+            return bankName.map { "VietQR · \($0)" } ?? "VietQR / Ngân hàng"
+        case .cccdVN: return "Căn cước công dân"
+        case .geoLocation: return "Vị trí bản đồ"
+        case .calendarEvent: return "Sự kiện lịch"
+        case .otpAuth: return "Xác thực 2 lớp (2FA)"
         case .contact: return "Danh bạ"
+        case .productBarcode(_, let formatLabel): return "Mã vạch \(formatLabel)"
         case .plainText: return "Nội dung QR"
         }
     }
@@ -1690,7 +1719,12 @@ public struct DetectedQRCode: Equatable, Sendable, Identifiable {
             return "arrow.up.forward.app"
         case .wifi: return "wifi"
         case .vietQR: return "qrcode"
+        case .cccdVN: return "person.text.rectangle"
+        case .geoLocation: return "map.fill"
+        case .calendarEvent: return "calendar"
+        case .otpAuth: return "key.fill"
         case .contact: return "person.crop.circle"
+        case .productBarcode: return "barcode"
         case .plainText: return "doc.text"
         }
     }
@@ -1701,7 +1735,12 @@ public struct DetectedQRCode: Equatable, Sendable, Identifiable {
             return URL(string: urlString)
         case .deepLink(let urlString, _):
             return URL(string: urlString)
-        case .wifi, .vietQR, .contact, .plainText:
+        case .geoLocation(let lat, let lon, _):
+            return URL(string: String(format: "https://maps.apple.com/?ll=%.6f,%.6f", lat, lon))
+        case .productBarcode(let code, _):
+            let encoded = code.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? code
+            return URL(string: "https://www.google.com/search?q=\(encoded)")
+        case .wifi, .vietQR, .cccdVN, .calendarEvent, .otpAuth, .contact, .plainText:
             return nil
         }
     }
@@ -1711,8 +1750,14 @@ public struct DetectedQRCode: Equatable, Sendable, Identifiable {
         case .webURL(let urlString, _): return urlString
         case .deepLink(let urlString, _): return urlString
         case .wifi(let ssid, let password, _, _): return password.isEmpty ? ssid : password
-        case .vietQR(_, _, let raw): return raw
-        case .contact(_, let raw): return raw
+        case .vietQR(_, let accountNumber, _, _, let raw):
+            return (accountNumber?.isEmpty == false) ? accountNumber! : raw
+        case .cccdVN(let idNumber, _, _, _, _, _): return idNumber
+        case .geoLocation(let lat, let lon, _): return String(format: "%.6f, %.6f", lat, lon)
+        case .calendarEvent(_, _, _, let raw): return raw
+        case .otpAuth(_, _, let rawURI): return rawURI
+        case .contact(_, let phone, _, let raw): return (phone?.isEmpty == false) ? phone! : raw
+        case .productBarcode(let code, _): return code
         case .plainText(let text): return text
         }
     }
@@ -1721,21 +1766,215 @@ public struct DetectedQRCode: Equatable, Sendable, Identifiable {
         switch kind {
         case .webURL, .deepLink: return "Đã sao chép liên kết"
         case .wifi(_, let password, _, _): return password.isEmpty ? "Đã sao chép tên Wi-Fi" : "Đã sao chép mật khẩu Wi-Fi"
-        case .vietQR: return "Đã sao chép chuỗi VietQR"
-        case .contact: return "Đã sao chép danh bạ"
+        case .vietQR(_, let accountNumber, _, _, _):
+            return (accountNumber?.isEmpty == false) ? "Đã sao chép STK \(accountNumber!)" : "Đã sao chép chuỗi VietQR"
+        case .cccdVN(let idNumber, _, _, _, _, _): return "Đã sao chép số CCCD \(idNumber)"
+        case .geoLocation: return "Đã sao chép tọa độ"
+        case .calendarEvent: return "Đã sao chép sự kiện"
+        case .otpAuth: return "Đã sao chép liên kết 2FA"
+        case .contact(_, let phone, _, _): return (phone?.isEmpty == false) ? "Đã sao chép SĐT \(phone!)" : "Đã sao chép danh bạ"
+        case .productBarcode(let code, _): return "Đã sao chép mã \(code)"
         case .plainText: return "Đã sao chép nội dung QR"
         }
     }
 }
 
+/// Thermal-aware scan cadence & heavy-pass gating policy to prevent heating / battery drain during idle photography.
+public struct QRThermalCadencePolicy: Sendable {
+    public enum ThermalLevel: Int, Sendable {
+        case nominal = 0
+        case fair = 1
+        case serious = 2
+        case critical = 3
+    }
+
+    public static func scanInterval(thermal: ThermalLevel, hasActiveDetection: Bool) -> TimeInterval? {
+        switch thermal {
+        case .nominal:
+            return hasActiveDetection ? 0.125 : 0.28
+        case .fair:
+            return hasActiveDetection ? 0.20 : 0.48
+        case .serious:
+            return hasActiveDetection ? 0.35 : 0.90
+        case .critical:
+            return nil // Pause scanning cleanly when device is thermally critical
+        }
+    }
+
+    /// Returns which fallback pass should run on an idle miss tick:
+    /// 0 = skip fallback (Pass 1 only), 2 = zoomed high-contrast center pass, 3 = inverted dark-mode pass.
+    /// Runs fallback lazily (every 3rd miss tick under nominal, 5th under fair, disabled under serious/critical)
+    /// cutting idle GPU CoreImage load by ~75% compared to running fallback on every frame.
+    public static func fallbackPassKind(thermal: ThermalLevel, missCounter: UInt64) -> Int {
+        switch thermal {
+        case .nominal:
+            guard missCounter > 0, missCounter.isMultiple(of: 3) else { return 0 }
+            let slot = missCounter / 3
+            return slot.isMultiple(of: 2) ? 3 : 2
+        case .fair:
+            guard missCounter > 0, missCounter.isMultiple(of: 5) else { return 0 }
+            let slot = missCounter / 5
+            return slot.isMultiple(of: 2) ? 3 : 2
+        case .serious, .critical:
+            return 0
+        }
+    }
+}
+
+/// Deterministic, flicker-free selector when multiple QR / barcodes appear simultaneously in one frame.
+/// - Deduplicates identical payloads (keeping the largest/most central box)
+/// - Preserves explicit user tap-to-pin selection while visible
+/// - Applies spatial hysteresis (+0.12 center-distance sticky bonus) to prevent oscillation between adjacent QRs
+public struct QRCodeMultiSelector: Sendable {
+    public struct SelectionResult: Equatable, Sendable {
+        public let primary: DetectedQRCode?
+        public let allCodes: [DetectedQRCode]
+        public let isUserPinned: Bool
+    }
+
+    public private(set) var activeRawValue: String? = nil
+    public private(set) var userPinnedRawValue: String? = nil
+
+    public init() {}
+
+    public mutating func pin(rawValue: String?) {
+        userPinnedRawValue = rawValue
+        if let rawValue {
+            activeRawValue = rawValue
+        }
+    }
+
+    public mutating func reset() {
+        activeRawValue = nil
+        userPinnedRawValue = nil
+    }
+
+    public mutating func select(
+        from candidates: [DetectedQRCode],
+        suppressedRawValue: String? = nil
+    ) -> SelectionResult {
+        // 1. Deduplicate identical payloads (prefer closest to center) & filter suppressed payload
+        var uniqueByPayload: [String: DetectedQRCode] = [:]
+        for item in candidates {
+            if let suppressed = suppressedRawValue, item.rawValue == suppressed { continue }
+            if let existing = uniqueByPayload[item.rawValue] {
+                if centerDistance(item.normalizedBoundingBox) < centerDistance(existing.normalizedBoundingBox) {
+                    uniqueByPayload[item.rawValue] = item
+                }
+            } else {
+                uniqueByPayload[item.rawValue] = item
+            }
+        }
+
+        // Order consistently: top-to-bottom, left-to-right (stable list order in tray sheet), capped at 8
+        let deduped = Array(
+            uniqueByPayload.values.sorted { a, b in
+                let da = score(for: a, isSticky: false)
+                let db = score(for: b, isSticky: false)
+                if abs(da - db) > 1e-4 { return da < db }
+                return a.rawValue < b.rawValue
+            }.prefix(8)
+        )
+
+        guard !deduped.isEmpty else {
+            activeRawValue = nil
+            userPinnedRawValue = nil
+            return SelectionResult(primary: nil, allCodes: [], isUserPinned: false)
+        }
+
+        // 2. Respect explicit user tap-to-pin as long as that QR remains visible
+        if let pinned = userPinnedRawValue,
+           let matchedPinned = deduped.first(where: { $0.rawValue == pinned }) {
+            activeRawValue = matchedPinned.rawValue
+            return SelectionResult(primary: matchedPinned, allCodes: deduped, isUserPinned: true)
+        } else {
+            userPinnedRawValue = nil
+        }
+
+        // 3. Pick best candidate with hysteresis sticky bonus so two equidistant QRs never flicker
+        let chosen = deduped.min { a, b in
+            let sa = score(for: a, isSticky: a.rawValue == activeRawValue)
+            let sb = score(for: b, isSticky: b.rawValue == activeRawValue)
+            if abs(sa - sb) > 1e-4 { return sa < sb }
+            return a.rawValue < b.rawValue
+        } ?? deduped[0]
+
+        activeRawValue = chosen.rawValue
+        return SelectionResult(primary: chosen, allCodes: deduped, isUserPinned: false)
+    }
+
+    private func centerDistance(_ box: CGRect) -> CGFloat {
+        hypot(box.midX - 0.5, box.midY - 0.5)
+    }
+
+    /// Lower score wins: distance to viewfinder center minus mild size preference minus sticky hysteresis bonus.
+    private func score(for code: DetectedQRCode, isSticky: Bool) -> CGFloat {
+        let dist = centerDistance(code.normalizedBoundingBox)
+        let area = max(0.0, min(1.0, code.normalizedBoundingBox.width * code.normalizedBoundingBox.height))
+        let sizeBonus = min(0.08, sqrt(area) * 0.14)
+        let stickyBonus: CGFloat = isSticky ? 0.12 : 0.0
+        return dist - sizeBonus - stickyBonus
+    }
+}
+
 public enum QRCodePayloadParser {
-    public static func parse(_ rawInput: String) -> QRCodePayloadKind {
+    /// Common Vietnam NAPAS 247 Bank BIN -> Short Brand Name map (VietQR EMVCo Tag 38.01.00)
+    private static let vietnamBankBINMap: [String: String] = [
+        "970422": "MB Bank",
+        "970436": "Vietcombank",
+        "970407": "Techcombank",
+        "970415": "VietinBank",
+        "970418": "BIDV",
+        "970405": "Agribank",
+        "970416": "ACB",
+        "970432": "VPBank",
+        "970423": "TPBank",
+        "970403": "Sacombank",
+        "970437": "HDBank",
+        "970441": "VIB",
+        "970426": "MSB",
+        "970448": "OCB",
+        "970431": "Eximbank",
+        "970443": "SHB",
+        "970428": "Nam A Bank",
+        "970454": "BVBank",
+        "970449": "LPBank",
+        "970440": "SeABank",
+        "970425": "ABBank",
+        "970409": "Bac A Bank",
+        "970412": "PVcomBank",
+        "970414": "OceanBank",
+        "970424": "Shinhan Bank",
+        "970458": "UOB",
+        "970427": "VietABank",
+        "970433": "VietBank",
+        "970452": "KienlongBank",
+        "970438": "BaoViet Bank",
+        "970406": "DongA Bank",
+        "970429": "SCB",
+        "970439": "Public Bank",
+        "970457": "Woori Bank",
+        "422589": "CIMB",
+        "546034": "CAKE by VPBank",
+        "546035": "Ubank by VPBank",
+        "963388": "Timo"
+    ]
+
+    public static func parse(_ rawInput: String, symbologyLabel: String = "QR") -> QRCodePayloadKind {
         let trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .plainText("") }
 
+        // 0. 1D Retail / Product Barcode (EAN-13, EAN-8, UPC-E, Code 128, Code 39)
+        let is1D = ["EAN-13", "EAN-8", "UPC-E", "Code 128", "Code 39"].contains(symbologyLabel)
+        if is1D && !trimmed.contains("://") && !trimmed.contains(" ") {
+            return .productBarcode(code: trimmed, formatLabel: symbologyLabel)
+        }
+
+        let upper = trimmed.uppercased()
+
         // 1. Wi-Fi QR: WIFI:T:WPA;S:MyNetwork;P:Secret;H:false;;
-        if trimmed.uppercased().hasPrefix("WIFI:") {
-            let fields = parseWiFiFields(String(trimmed.dropFirst(5)))
+        if upper.hasPrefix("WIFI:") {
+            let fields = parseDelimitedFields(String(trimmed.dropFirst(5)))
             let ssid = fields["S"] ?? ""
             let password = fields["P"] ?? ""
             let security = fields["T"] ?? "NOPASS"
@@ -1743,9 +1982,23 @@ public enum QRCodePayloadParser {
             return .wifi(ssid: ssid, password: password, security: security, isHidden: hidden)
         }
 
-        // 2. VietQR / EMVCo Banking QR (starts with 000201 and carries NAPAS AID A000000727 or VietQR TLV structure)
+        // 2. VietQR / EMVCo Banking QR (starts with 000201 + NAPAS AID / VN country code)
         if isEMVCoVietQR(trimmed) {
             let tlv = parseEMVCoTLV(trimmed)
+            var bankName: String? = nil
+            var accountNumber: String? = nil
+            if let merchantInfo = tlv["38"] {
+                let m38 = parseEMVCoTLV(merchantInfo)
+                if let beneficiary = m38["01"] {
+                    let benTLV = parseEMVCoTLV(beneficiary)
+                    if let bin = benTLV["00"] {
+                        bankName = vietnamBankBINMap[bin] ?? "Ngân hàng (\(bin))"
+                    }
+                    if let acc = benTLV["01"], !acc.isEmpty {
+                        accountNumber = acc
+                    }
+                }
+            }
             let amountText = tlv["54"].flatMap { formatVNDAmount($0) }
             var noteText: String? = nil
             if let additional = tlv["62"] {
@@ -1754,16 +2007,60 @@ public enum QRCodePayloadParser {
                     noteText = purpose.trimmingCharacters(in: .whitespacesAndNewlines)
                 }
             }
-            return .vietQR(amountText: amountText, noteText: noteText, rawPayload: trimmed)
+            return .vietQR(
+                bankName: bankName,
+                accountNumber: accountNumber,
+                amountText: amountText,
+                noteText: noteText,
+                rawPayload: trimmed
+            )
         }
 
-        // 3. vCard Contact
-        if trimmed.uppercased().hasPrefix("BEGIN:VCARD") {
-            let displayName = extractVCardName(trimmed)
-            return .contact(displayName: displayName, rawVCard: trimmed)
+        // 3. Vietnam Chip Citizen ID Card (CCCD: 12-digit ID|oldCMND|FullName|ddMMyyyy|Gender|Address|IssueDate)
+        if let cccd = parseVietnamCCCD(trimmed) {
+            return cccd
         }
 
-        // 4. Web URL (explicit http/https)
+        // 4. 2FA Authenticator URI (otpauth://totp/... or otpauth://hotp/...)
+        if let otp = parseOTPAuth(trimmed) {
+            return otp
+        }
+
+        // 5. Geo Location QR (geo:10.7769,106.7009?q=...)
+        if let geo = parseGeoURI(trimmed) {
+            return geo
+        }
+
+        // 6. Calendar Event (BEGIN:VEVENT or BEGIN:VCALENDAR containing VEVENT)
+        if upper.hasPrefix("BEGIN:VEVENT") || (upper.hasPrefix("BEGIN:VCALENDAR") && upper.contains("BEGIN:VEVENT")) {
+            return parseCalendarEvent(trimmed)
+        }
+
+        // 7. Contact QR (BEGIN:VCARD or MECARD:)
+        if upper.hasPrefix("BEGIN:VCARD") {
+            return parseVCardContact(trimmed)
+        }
+        if upper.hasPrefix("MECARD:") {
+            return parseMeCardContact(trimmed)
+        }
+
+        // 8. MATMSG Email QR (MATMSG:TO:a@b.com;SUB:Hi;BODY:Hello;;)
+        if upper.hasPrefix("MATMSG:") {
+            let fields = parseDelimitedFields(String(trimmed.dropFirst(7)))
+            if let to = fields["TO"], !to.isEmpty {
+                var comps = URLComponents()
+                comps.scheme = "mailto"
+                comps.path = to
+                var items: [URLQueryItem] = []
+                if let sub = fields["SUB"], !sub.isEmpty { items.append(URLQueryItem(name: "subject", value: sub)) }
+                if let body = fields["BODY"], !body.isEmpty { items.append(URLQueryItem(name: "body", value: body)) }
+                if !items.isEmpty { comps.queryItems = items }
+                let mailURL = comps.url?.absoluteString ?? "mailto:\(to)"
+                return .deepLink(urlString: mailURL, schemeLabel: "Email")
+            }
+        }
+
+        // 9. Web URL (explicit http/https)
         let lower = trimmed.lowercased()
         if (lower.hasPrefix("https://") || lower.hasPrefix("http://")),
            let url = URL(string: trimmed),
@@ -1771,7 +2068,7 @@ public enum QRCodePayloadParser {
             return .webURL(urlString: trimmed, displayHostPath: conciseHostPath(for: url))
         }
 
-        // 5. Known actionable deep link / tel / mailto / sms schemes
+        // 10. Known actionable deep link / tel / mailto / sms / VN e-wallets / social schemes
         if let colonIndex = trimmed.firstIndex(of: ":") {
             let scheme = String(trimmed[..<colonIndex]).lowercased()
             let allowedSchemes: [String: String] = [
@@ -1781,11 +2078,16 @@ public enum QRCodePayloadParser {
                 "smsto": "Tin nhắn",
                 "facetime": "FaceTime",
                 "zalo": "Mở Zalo",
+                "zalopay": "Mở ZaloPay",
                 "momo": "Mở MoMo",
+                "vnpay": "Mở VNPay",
+                "shopeepay": "Mở ShopeePay",
                 "fb": "Mở Facebook",
                 "instagram": "Mở Instagram",
                 "tiktok": "Mở TikTok",
                 "youtube": "Mở YouTube",
+                "tg": "Mở Telegram",
+                "whatsapp": "Mở WhatsApp",
                 "maps": "Mở Bản đồ"
             ]
             if let label = allowedSchemes[scheme] {
@@ -1803,7 +2105,7 @@ public enum QRCodePayloadParser {
             }
         }
 
-        // 6. Bare domain URL (e.g., "www.apple.com/vn" or "shopee.vn/product") without whitespace
+        // 11. Bare domain URL (e.g., "www.apple.com/vn" or "shopee.vn/product") without whitespace
         if !trimmed.contains(where: { $0.isWhitespace || $0.isNewline }),
            looksLikeBareDomain(trimmed),
            let url = URL(string: "https://\(trimmed)"),
@@ -1868,7 +2170,7 @@ public enum QRCodePayloadParser {
         return commonTLDs.contains(tldStr) || hostPart.lowercased().hasPrefix("www.")
     }
 
-    private static func parseWiFiFields(_ body: String) -> [String: String] {
+    private static func parseDelimitedFields(_ body: String) -> [String: String] {
         var result: [String: String] = [:]
         var key = ""
         var value = ""
@@ -1938,30 +2240,138 @@ public enum QRCodePayloadParser {
         return "\(formatted)đ"
     }
 
-    private static func extractVCardName(_ text: String) -> String {
+    private static func parseVietnamCCCD(_ text: String) -> QRCodePayloadKind? {
+        let parts = text.components(separatedBy: "|")
+        guard parts.count >= 7 else { return nil }
+        let id = parts[0].trimmingCharacters(in: .whitespaces)
+        guard id.count == 12, id.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
+        let fullName = parts[2].trimmingCharacters(in: .whitespaces)
+        guard !fullName.isEmpty else { return nil }
+        let birthDate = formatCCCDDate(parts[3].trimmingCharacters(in: .whitespaces))
+        let gender = parts[4].trimmingCharacters(in: .whitespaces)
+        let address = parts[5].trimmingCharacters(in: .whitespaces)
+        let issueDate = formatCCCDDate(parts[6].trimmingCharacters(in: .whitespaces))
+        return .cccdVN(
+            idNumber: id,
+            fullName: fullName,
+            birthDate: birthDate,
+            gender: gender,
+            address: address,
+            issueDate: issueDate
+        )
+    }
+
+    private static func formatCCCDDate(_ raw: String) -> String {
+        guard raw.count == 8, raw.allSatisfy({ $0.isASCII && $0.isNumber }) else { return raw }
+        let chars = Array(raw)
+        return "\(String(chars[0..<2]))/\(String(chars[2..<4]))/\(String(chars[4..<8]))"
+    }
+
+    private static func parseOTPAuth(_ text: String) -> QRCodePayloadKind? {
+        let lower = text.lowercased()
+        guard lower.hasPrefix("otpauth://totp/") || lower.hasPrefix("otpauth://hotp/"),
+              let comps = URLComponents(string: text) else { return nil }
+        let rawLabel = comps.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let decodedLabel = rawLabel.removingPercentEncoding ?? rawLabel
+        var issuer = comps.queryItems?.first(where: { $0.name.lowercased() == "issuer" })?.value ?? ""
+        var account = decodedLabel
+        if let colon = decodedLabel.firstIndex(of: ":") {
+            let prefix = String(decodedLabel[..<colon]).trimmingCharacters(in: .whitespaces)
+            let suffix = String(decodedLabel[decodedLabel.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            if issuer.isEmpty { issuer = prefix }
+            account = suffix
+        }
+        return .otpAuth(issuer: issuer, account: account, rawURI: text)
+    }
+
+    private static func parseGeoURI(_ text: String) -> QRCodePayloadKind? {
+        guard text.lowercased().hasPrefix("geo:") else { return nil }
+        let body = String(text.dropFirst(4))
+        let mainAndQuery = body.split(separator: "?", maxSplits: 1)
+        let coordPart = String(mainAndQuery[0])
+        let coords = coordPart.split(separator: ",")
+        guard coords.count >= 2,
+              let lat = Double(coords[0].trimmingCharacters(in: .whitespaces)),
+              let lon = Double(coords[1].trimmingCharacters(in: .whitespaces)),
+              lat.isFinite, lon.isFinite, (-90...90).contains(lat), (-180...180).contains(lon) else {
+            return nil
+        }
+        var label: String? = nil
+        if mainAndQuery.count == 2 {
+            let qItems = URLComponents(string: "https://x?\(mainAndQuery[1])")?.queryItems
+            if let q = qItems?.first(where: { $0.name.lowercased() == "q" })?.value, !q.isEmpty {
+                label = q
+            }
+        }
+        return .geoLocation(latitude: lat, longitude: lon, label: label)
+    }
+
+    private static func parseCalendarEvent(_ text: String) -> QRCodePayloadKind {
+        var title = ""
+        var start: String? = nil
+        var location: String? = nil
         for rawLine in text.components(separatedBy: .newlines) {
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
             let upper = line.uppercased()
+            if upper.hasPrefix("SUMMARY") {
+                if let colon = line.firstIndex(of: ":") {
+                    title = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+                }
+            } else if upper.hasPrefix("DTSTART") {
+                if let colon = line.firstIndex(of: ":") {
+                    start = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+                }
+            } else if upper.hasPrefix("LOCATION") {
+                if let colon = line.firstIndex(of: ":") {
+                    location = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+                }
+            }
+        }
+        return .calendarEvent(title: title, startText: start, location: location, rawEvent: text)
+    }
+
+    private static func parseVCardContact(_ text: String) -> QRCodePayloadKind {
+        var displayName = ""
+        var fallbackName = ""
+        var phone: String? = nil
+        var email: String? = nil
+
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            let upper = line.uppercased()
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            let val = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            guard !val.isEmpty else { continue }
+
             if upper.hasPrefix("FN:") || upper.hasPrefix("FN;") {
-                if let colon = line.firstIndex(of: ":") {
-                    let name = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
-                    if !name.isEmpty { return name }
-                }
+                displayName = val
+            } else if (upper.hasPrefix("N:") || upper.hasPrefix("N;")) && fallbackName.isEmpty {
+                let parts = val.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                fallbackName = parts.joined(separator: " ")
+            } else if (upper.hasPrefix("TEL:") || upper.hasPrefix("TEL;")) && phone == nil {
+                phone = val
+            } else if (upper.hasPrefix("EMAIL:") || upper.hasPrefix("EMAIL;")) && email == nil {
+                email = val
             }
         }
-        for rawLine in text.components(separatedBy: .newlines) {
-            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            let upper = line.uppercased()
-            if upper.hasPrefix("N:") || upper.hasPrefix("N;") {
-                if let colon = line.firstIndex(of: ":") {
-                    let parts = String(line[line.index(after: colon)...])
-                        .split(separator: ";")
-                        .map { $0.trimmingCharacters(in: .whitespaces) }
-                        .filter { !$0.isEmpty }
-                    if !parts.isEmpty { return parts.joined(separator: " ") }
-                }
-            }
-        }
-        return ""
+        return .contact(
+            displayName: displayName.isEmpty ? fallbackName : displayName,
+            phone: phone,
+            email: email,
+            rawContact: text
+        )
+    }
+
+    private static func parseMeCardContact(_ text: String) -> QRCodePayloadKind {
+        let fields = parseDelimitedFields(String(text.dropFirst(7)))
+        let rawName = fields["N"] ?? ""
+        let nameParts = rawName.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let formattedName = nameParts.count == 2 ? "\(nameParts[1]) \(nameParts[0])" : rawName
+        return .contact(
+            displayName: formattedName,
+            phone: fields["TEL"],
+            email: fields["EMAIL"],
+            rawContact: text
+        )
     }
 }

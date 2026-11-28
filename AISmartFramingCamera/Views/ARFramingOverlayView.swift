@@ -45,24 +45,52 @@ public struct ARFramingOverlayView: View {
                     }
                 }
 
-                // 2b. Subtle Apple-Style Corner Brackets Framing Detected QR Code
-                if let qr = viewModel.detectedQRCode,
+                // 2b. Subtle Apple-Style Corner Brackets Framing Detected QR / Barcodes
+                // When multiple QRs appear in frame: active QR highlights in Warm Titanium;
+                // secondary QRs show subtle white tappable brackets so user can tap any QR to lock onto it.
+                if !viewModel.detectedQRCodes.isEmpty,
                    !viewModel.isAISessionActive,
-                   !viewModel.hasActiveTargetPoint,
-                   !qr.normalizedBoundingBox.isEmpty {
-                    let qrRect = viewModel.convertMetadataRectToLayerRect(qr.normalizedBoundingBox, in: size)
-                    let clampedW = max(36, min(size.width * 0.92, qrRect.width + 10))
-                    let clampedH = max(36, min(size.height * 0.92, qrRect.height + 10))
-                    CornerBracketsShape(bracketLength: min(18, min(clampedW, clampedH) * 0.28))
-                        .stroke(
-                            AlignTheme.studioAccent.opacity(0.92),
-                            style: StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round)
-                        )
-                        .frame(width: clampedW, height: clampedH)
-                        .position(x: qrRect.midX, y: qrRect.midY)
-                        .shadow(color: Color.black.opacity(0.45), radius: 2, y: 0.5)
-                        .allowsHitTesting(false)
-                        .animation(.spring(response: 0.24, dampingFraction: 0.86), value: qrRect)
+                   !viewModel.hasActiveTargetPoint {
+                    let activeRaw = viewModel.detectedQRCode?.rawValue
+                    let hasMultiple = viewModel.detectedQRCodes.count > 1
+                    ForEach(viewModel.detectedQRCodes) { qr in
+                        if !qr.normalizedBoundingBox.isEmpty {
+                            let isActive = (qr.rawValue == activeRaw)
+                            let qrRect = viewModel.convertMetadataRectToLayerRect(qr.normalizedBoundingBox, in: size)
+                            let clampedW = max(36, min(size.width * 0.92, qrRect.width + 10))
+                            let clampedH = max(36, min(size.height * 0.92, qrRect.height + 10))
+                            let bracketLen = min(18, min(clampedW, clampedH) * 0.28)
+
+                            Group {
+                                if isActive {
+                                    CornerBracketsShape(bracketLength: bracketLen)
+                                        .stroke(
+                                            AlignTheme.studioAccent.opacity(0.94),
+                                            style: StrokeStyle(lineWidth: 2.0, lineCap: .round, lineJoin: .round)
+                                        )
+                                        .frame(width: clampedW, height: clampedH)
+                                        .shadow(color: Color.black.opacity(0.45), radius: 2, y: 0.5)
+                                        .allowsHitTesting(false)
+                                } else if hasMultiple {
+                                    ZStack {
+                                        CornerBracketsShape(bracketLength: max(10, bracketLen * 0.85))
+                                            .stroke(
+                                                Color.white.opacity(0.72),
+                                                style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round)
+                                            )
+                                            .shadow(color: Color.black.opacity(0.45), radius: 2, y: 0.5)
+                                    }
+                                    .frame(width: clampedW, height: clampedH)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        viewModel.selectQRCode(qr)
+                                    }
+                                }
+                            }
+                            .position(x: qrRect.midX, y: qrRect.midY)
+                            .animation(.spring(response: 0.24, dampingFraction: 0.86), value: qrRect)
+                        }
+                    }
                 }
 
                 if case .analyzing = viewModel.aiSessionState {

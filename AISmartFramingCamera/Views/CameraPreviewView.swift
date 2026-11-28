@@ -158,10 +158,13 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
     private let commandQueue: MTLCommandQueue
     private let renderQueue = DispatchQueue(label: "com.alignai.metal.preview", qos: .userInteractive)
     private let inflightSemaphore = DispatchSemaphore(value: 2)
+    private var hasCreatedFallbackCIContext = false
     private lazy var fallbackCIContext: CIContext = {
+        hasCreatedFallbackCIContext = true
         let linearCS = CGColorSpace(name: CGColorSpace.extendedLinearSRGB) ?? CGColorSpaceCreateDeviceRGB()
         return CIContext(mtlCommandQueue: commandQueue, options: [
             .useSoftwareRenderer: false,
+            .cacheIntermediates: false,
             .priorityRequestLow: false,
             .workingColorSpace: linearCS,
             .workingFormat: CIFormat.RGBAh
@@ -312,6 +315,9 @@ final class MetalFilmSimulationRenderer: NSObject, MTKViewDelegate, @unchecked S
         lastPresentedOnce = false
         lastRenderParams = nil
         UnifiedMetalColorEngine.shared.flushCaches()
+        if hasCreatedFallbackCIContext {
+            fallbackCIContext.clearCaches()
+        }
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {

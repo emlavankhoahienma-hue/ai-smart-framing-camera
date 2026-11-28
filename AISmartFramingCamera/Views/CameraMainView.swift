@@ -414,8 +414,14 @@ public struct CameraMainView: View {
                                     if let qr = viewModel.detectedQRCode, !viewModel.isCameraHibernating {
                                         QRCodeFloatingBannerPill(
                                             qrCode: qr,
-                                            maxWidth: min(layout.viewfinderSize.width - 28, 320),
+                                            totalCount: viewModel.detectedQRCodes.count,
+                                            activeIndex: viewModel.activeQRCodeIndex,
+                                            maxWidth: min(layout.viewfinderSize.width - 24, 336),
                                             onPrimaryTap: { viewModel.handleDetectedQRCodePrimaryAction(qr) },
+                                            onShowAllTap: {
+                                                viewModel.haptics.triggerSelectionChange()
+                                                viewModel.isShowingQRMultiListSheet = true
+                                            },
                                             onCopyTap: { viewModel.copyDetectedQRCode(qr) },
                                             onDismissTap: { viewModel.dismissCurrentQRCode() }
                                         )
@@ -678,9 +684,22 @@ public struct CameraMainView: View {
             QRCodeDetailSheetView(
                 qrCode: qr,
                 onCopy: { viewModel.copyDetectedQRCode(qr) },
+                onCopyCustom: { text, notice in viewModel.copyCustomQRText(text, notice: notice) },
                 onOpenURL: { url in UIApplication.shared.open(url) }
             )
-            .presentationDetents([.medium])
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $viewModel.isShowingQRMultiListSheet) {
+            QRCodeMultiListSheetView(
+                codes: viewModel.detectedQRCodes,
+                activeRawValue: viewModel.detectedQRCode?.rawValue,
+                onSelectFocus: { qr in viewModel.selectQRCode(qr) },
+                onCopy: { qr in viewModel.copyDetectedQRCode(qr) },
+                onCopyCustom: { text, notice in viewModel.copyCustomQRText(text, notice: notice) },
+                onOpenURL: { url in UIApplication.shared.open(url) }
+            )
+            .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
         .sheet(item: $viewModel.compositionPreviewPresentation) { presentation in
@@ -2102,11 +2121,14 @@ struct CameraFunctionDrawerView: View {
     }
 }
 
-// MARK: - Single Compact Floating QR Link Pill (Zero Form Deformation)
+// MARK: - Single Compact Floating QR Link Pill (Zero Form Deformation Even With 8 Simultaneous QRs)
 private struct QRCodeFloatingBannerPill: View {
     let qrCode: DetectedQRCode
+    let totalCount: Int
+    let activeIndex: Int
     let maxWidth: CGFloat
     let onPrimaryTap: () -> Void
+    let onShowAllTap: () -> Void
     let onCopyTap: () -> Void
     let onDismissTap: () -> Void
 
@@ -2131,11 +2153,37 @@ private struct QRCodeFloatingBannerPill: View {
                     }
                 }
                 .padding(.leading, 12)
-                .padding(.trailing, 8)
+                .padding(.trailing, totalCount > 1 ? 6 : 8)
                 .frame(height: 36)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+
+            if totalCount > 1 {
+                Button(action: onShowAllTap) {
+                    HStack(spacing: 2.5) {
+                        Text("\(min(activeIndex + 1, totalCount))/\(totalCount)")
+                            .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundColor(AlignTheme.studioAccent)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(AlignTheme.studioAccent.opacity(0.16))
+                            .overlay(
+                                Capsule().stroke(AlignTheme.studioAccentBorder, lineWidth: 0.6)
+                            )
+                    )
+                    .padding(.trailing, 6)
+                    .frame(height: 36)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Xem tất cả \(totalCount) mã QR trong khung hình")
+            }
 
             Rectangle()
                 .fill(Color.white.opacity(0.14))
@@ -2168,98 +2216,35 @@ private struct QRCodeFloatingBannerPill: View {
     }
 }
 
-// MARK: - Studio QR Detail Sheet (Wi-Fi / VietQR / Contact / Full Text)
-private struct QRCodeDetailSheetView: View {
-    let qrCode: DetectedQRCode
-    let onCopy: () -> Void
+// MARK: - Multi-QR Picker Sheet (Shown When 2+ Codes Are In Frame)
+private struct QRCodeMultiListSheetView: View {
+    let codes: [DetectedQRCode]
+    let activeRawValue: String?
+    let onSelectFocus: (DetectedQRCode) -> Void
+    let onCopy: (DetectedQRCode) -> Void
+    let onCopyCustom: (String, String) -> Void
     let onOpenURL: (URL) -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack(spacing: 12) {
-                        ZStack {
-                            Circle()
-                                .fill(AlignTheme.studioElevated)
-                                .frame(width: 42, height: 42)
-                                .overlay(Circle().stroke(AlignTheme.studioHairline, lineWidth: 0.7))
-                            Image(systemName: qrCode.iconName)
-                                .font(.system(size: 17, weight: .medium))
-                                .foregroundColor(AlignTheme.studioAccent)
-                        }
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Phát hiện \(codes.count) mã trong khung hình · Chạm vào mã để xem/mở hoặc ghim trực tiếp trên khung ngắm.")
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
+                        .padding(.horizontal, 2)
+                        .padding(.bottom, 2)
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(qrCode.categoryLabel)
-                                .font(.system(size: 14.5, weight: .semibold, design: .rounded))
-                                .foregroundColor(AlignTheme.studioInkPrimary)
-                            Text("Chuẩn \(qrCode.symbologyLabel)")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundColor(AlignTheme.studioInkSecondary)
-                        }
-                        Spacer()
-                    }
-                    .padding(14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(AlignTheme.studioSurface)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .stroke(AlignTheme.studioHairlineSubtle, lineWidth: 0.7)
-                            )
-                    )
-
-                    structuredContentCard
-
-                    HStack(spacing: 10) {
-                        if let url = qrCode.openableURL {
-                            Button(action: {
-                                onOpenURL(url)
-                                dismiss()
-                            }) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "arrow.up.right")
-                                        .font(.system(size: 13, weight: .bold))
-                                    Text("Mở liên kết")
-                                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                                }
-                                .foregroundColor(.black)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 44)
-                                .background(Capsule().fill(AlignTheme.studioInkPrimary))
-                            }
-                            .buttonStyle(.plain)
-                        }
-
-                        Button(action: {
-                            onCopy()
-                            dismiss()
-                        }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "doc.on.doc")
-                                    .font(.system(size: 13, weight: .semibold))
-                                Text(primaryCopyLabel)
-                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
-                            }
-                            .foregroundColor(qrCode.openableURL == nil ? .black : AlignTheme.studioInkPrimary)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 44)
-                            .background(
-                                Capsule()
-                                    .fill(qrCode.openableURL == nil ? AlignTheme.studioInkPrimary : AlignTheme.studioElevated)
-                                    .overlay(
-                                        Capsule().stroke(qrCode.openableURL == nil ? Color.clear : AlignTheme.studioHairline, lineWidth: 0.7)
-                                    )
-                            )
-                        }
-                        .buttonStyle(.plain)
+                    ForEach(Array(codes.enumerated()), id: \.element.id) { index, code in
+                        let isActive = (code.rawValue == activeRawValue)
+                        multiQRRow(code: code, index: index, isActive: isActive)
                     }
                 }
                 .padding(16)
             }
             .background(AlignTheme.studioCanvas.ignoresSafeArea())
-            .navigationTitle("Nội dung mã QR")
+            .navigationTitle("Mã trong khung hình (\(codes.count))")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -2271,12 +2256,383 @@ private struct QRCodeDetailSheetView: View {
         .preferredColorScheme(.dark)
     }
 
+    @ViewBuilder
+    private func multiQRRow(code: DetectedQRCode, index: Int, isActive: Bool) -> some View {
+        HStack(spacing: 11) {
+            if let url = code.openableURL {
+                Button(action: {
+                    onSelectFocus(code)
+                    onOpenURL(url)
+                    dismiss()
+                }) {
+                    rowSummaryContent(code: code, index: index, isActive: isActive, showsChevron: false, showsExternalArrow: true)
+                }
+                .buttonStyle(.plain)
+            } else {
+                NavigationLink {
+                    QRCodeDetailContentView(
+                        qrCode: code,
+                        onCopy: { onCopy(code) },
+                        onCopyCustom: onCopyCustom,
+                        onOpenURL: { url in
+                            onOpenURL(url)
+                            dismiss()
+                        },
+                        onDoneAfterAction: { dismiss() }
+                    )
+                    .navigationTitle(code.categoryLabel)
+                    .navigationBarTitleDisplayMode(.inline)
+                } label: {
+                    rowSummaryContent(code: code, index: index, isActive: isActive, showsChevron: true, showsExternalArrow: false)
+                }
+                .buttonStyle(.plain)
+                .simultaneousGesture(TapGesture().onEnded {
+                    onSelectFocus(code)
+                })
+            }
+
+            if !isActive {
+                Button(action: {
+                    onSelectFocus(code)
+                    dismiss()
+                }) {
+                    Image(systemName: "scope")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(AlignTheme.studioInkPrimary.opacity(0.86))
+                        .frame(width: 34, height: 34)
+                        .background(
+                            Circle()
+                                .fill(AlignTheme.studioElevated)
+                                .overlay(Circle().stroke(AlignTheme.studioHairline, lineWidth: 0.6))
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Ghim mã này trên khung ngắm")
+            }
+
+            Button(action: {
+                onCopy(code)
+            }) {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundColor(AlignTheme.studioInkPrimary.opacity(0.86))
+                    .frame(width: 34, height: 34)
+                    .background(
+                        Circle()
+                            .fill(AlignTheme.studioElevated)
+                            .overlay(Circle().stroke(AlignTheme.studioHairline, lineWidth: 0.6))
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Sao chép nội dung mã")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(AlignTheme.studioSurface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(
+                            isActive ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle,
+                            lineWidth: isActive ? 1.0 : 0.7
+                        )
+                )
+        )
+    }
+
+    private func rowSummaryContent(
+        code: DetectedQRCode,
+        index: Int,
+        isActive: Bool,
+        showsChevron: Bool,
+        showsExternalArrow: Bool
+    ) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(isActive ? AlignTheme.studioAccent.opacity(0.18) : AlignTheme.studioElevated)
+                    .frame(width: 36, height: 36)
+                    .overlay(
+                        Circle().stroke(
+                            isActive ? AlignTheme.studioAccentBorder : AlignTheme.studioHairline,
+                            lineWidth: 0.65
+                        )
+                    )
+                Image(systemName: code.iconName)
+                    .font(.system(size: 14.5, weight: .semibold))
+                    .foregroundColor(AlignTheme.studioAccent)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(code.pillTitle)
+                        .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                        .foregroundColor(AlignTheme.studioInkPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    if isActive {
+                        Text("ĐANG CHỌN")
+                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                            .foregroundColor(AlignTheme.studioAccent)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule().fill(AlignTheme.studioAccent.opacity(0.16))
+                            )
+                    }
+                }
+
+                Text("#\(index + 1) · \(code.categoryLabel) · \(code.symbologyLabel)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(AlignTheme.studioInkSecondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 4)
+
+            if showsExternalArrow {
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(AlignTheme.studioAccent)
+            } else if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(AlignTheme.studioInkTertiary)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Studio QR Detail Sheet (Wi-Fi / VietQR / CCCD / Geo / Calendar / 2FA / Contact / Barcode / Text)
+private struct QRCodeDetailSheetView: View {
+    let qrCode: DetectedQRCode
+    let onCopy: () -> Void
+    let onCopyCustom: (String, String) -> Void
+    let onOpenURL: (URL) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            QRCodeDetailContentView(
+                qrCode: qrCode,
+                onCopy: onCopy,
+                onCopyCustom: onCopyCustom,
+                onOpenURL: onOpenURL,
+                onDoneAfterAction: { dismiss() }
+            )
+            .navigationTitle("Nội dung mã")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Xong") { dismiss() }
+                        .foregroundColor(.white)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+}
+
+private struct QRCodeDetailContentView: View {
+    let qrCode: DetectedQRCode
+    let onCopy: () -> Void
+    let onCopyCustom: (String, String) -> Void
+    let onOpenURL: (URL) -> Void
+    let onDoneAfterAction: () -> Void
+
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(AlignTheme.studioElevated)
+                            .frame(width: 42, height: 42)
+                            .overlay(Circle().stroke(AlignTheme.studioHairline, lineWidth: 0.7))
+                        Image(systemName: qrCode.iconName)
+                            .font(.system(size: 17, weight: .medium))
+                            .foregroundColor(AlignTheme.studioAccent)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(qrCode.categoryLabel)
+                            .font(.system(size: 14.5, weight: .semibold, design: .rounded))
+                            .foregroundColor(AlignTheme.studioInkPrimary)
+                        Text("Chuẩn \(qrCode.symbologyLabel)")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundColor(AlignTheme.studioInkSecondary)
+                    }
+                    Spacer()
+                }
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(AlignTheme.studioSurface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(AlignTheme.studioHairlineSubtle, lineWidth: 0.7)
+                        )
+                )
+
+                structuredContentCard
+
+                actionButtonsRow
+            }
+            .padding(16)
+        }
+        .background(AlignTheme.studioCanvas.ignoresSafeArea())
+    }
+
+    @ViewBuilder
+    private var actionButtonsRow: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                if let url = qrCode.openableURL {
+                    Button(action: {
+                        onOpenURL(url)
+                        onDoneAfterAction()
+                    }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 13, weight: .bold))
+                            Text(primaryOpenLabel)
+                                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundColor(.black)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(Capsule().fill(AlignTheme.studioInkPrimary))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button(action: {
+                    onCopy()
+                    onDoneAfterAction()
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(primaryCopyLabel)
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundColor(qrCode.openableURL == nil ? .black : AlignTheme.studioInkPrimary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(
+                        Capsule()
+                            .fill(qrCode.openableURL == nil ? AlignTheme.studioInkPrimary : AlignTheme.studioElevated)
+                            .overlay(
+                                Capsule().stroke(qrCode.openableURL == nil ? Color.clear : AlignTheme.studioHairline, lineWidth: 0.7)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Secondary action for VietQR (copy full EMVCo payload when STK is primary copy)
+            if case .vietQR(_, let accountNumber, _, _, let raw) = qrCode.kind,
+               accountNumber?.isEmpty == false {
+                Button(action: {
+                    onCopyCustom(raw, "Đã sao chép chuỗi VietQR")
+                    onDoneAfterAction()
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "qrcode")
+                            .font(.system(size: 12.5, weight: .semibold))
+                        Text("Sao chép toàn bộ chuỗi VietQR")
+                            .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundColor(AlignTheme.studioInkPrimary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 40)
+                    .background(
+                        Capsule()
+                            .fill(AlignTheme.studioElevated)
+                            .overlay(Capsule().stroke(AlignTheme.studioHairline, lineWidth: 0.7))
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Quick call / email actions for Contact QR
+            if case .contact(_, let phone, let email, _) = qrCode.kind {
+                HStack(spacing: 10) {
+                    if let phone, !phone.isEmpty,
+                       let telURL = URL(string: "tel:\(phone.filter { $0.isNumber || $0 == "+" })") {
+                        Button(action: {
+                            onOpenURL(telURL)
+                            onDoneAfterAction()
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "phone.fill")
+                                    .font(.system(size: 12.5, weight: .semibold))
+                                Text("Gọi điện")
+                                    .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                            }
+                            .foregroundColor(AlignTheme.studioInkPrimary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 40)
+                            .background(
+                                Capsule()
+                                    .fill(AlignTheme.studioElevated)
+                                    .overlay(Capsule().stroke(AlignTheme.studioHairline, lineWidth: 0.7))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if let email, !email.isEmpty, let mailURL = URL(string: "mailto:\(email)") {
+                        Button(action: {
+                            onOpenURL(mailURL)
+                            onDoneAfterAction()
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "envelope.fill")
+                                    .font(.system(size: 12.5, weight: .semibold))
+                                Text("Gửi Email")
+                                    .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                            }
+                            .foregroundColor(AlignTheme.studioInkPrimary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 40)
+                            .background(
+                                Capsule()
+                                    .fill(AlignTheme.studioElevated)
+                                    .overlay(Capsule().stroke(AlignTheme.studioHairline, lineWidth: 0.7))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private var primaryOpenLabel: String {
+        switch qrCode.kind {
+        case .geoLocation: return "Mở Bản đồ"
+        case .productBarcode: return "Tra cứu sản phẩm"
+        default: return "Mở liên kết"
+        }
+    }
+
     private var primaryCopyLabel: String {
         switch qrCode.kind {
         case .wifi(_, let password, _, _):
             return password.isEmpty ? "Sao chép tên Wi-Fi" : "Sao chép mật khẩu"
-        case .vietQR:
-            return "Sao chép mã VietQR"
+        case .vietQR(_, let accountNumber, _, _, _):
+            return (accountNumber?.isEmpty == false) ? "Sao chép STK" : "Sao chép VietQR"
+        case .cccdVN:
+            return "Sao chép số CCCD"
+        case .contact(_, let phone, _, _):
+            return (phone?.isEmpty == false) ? "Sao chép SĐT" : "Sao chép danh bạ"
+        case .productBarcode:
+            return "Sao chép mã số"
+        case .otpAuth:
+            return "Sao chép URI 2FA"
         default:
             return "Sao chép"
         }
@@ -2286,13 +2642,22 @@ private struct QRCodeDetailSheetView: View {
     private var structuredContentCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             switch qrCode.kind {
-            case .wifi(let ssid, let password, let security, _):
+            case .wifi(let ssid, let password, let security, let isHidden):
                 detailRow(label: "Tên mạng (SSID)", value: ssid.isEmpty ? "—" : ssid)
                 Divider().background(AlignTheme.studioHairlineSubtle)
                 detailRow(label: "Mật khẩu", value: password.isEmpty ? "Không có mật khẩu" : password)
                 Divider().background(AlignTheme.studioHairlineSubtle)
-                detailRow(label: "Bảo mật", value: security)
-            case .vietQR(let amountText, let noteText, let raw):
+                detailRow(label: "Bảo mật", value: isHidden ? "\(security) (Ẩn)" : security)
+
+            case .vietQR(let bankName, let accountNumber, let amountText, let noteText, let raw):
+                if let bankName {
+                    detailRow(label: "Ngân hàng", value: bankName)
+                    Divider().background(AlignTheme.studioHairlineSubtle)
+                }
+                if let accountNumber {
+                    detailRow(label: "Số tài khoản", value: accountNumber)
+                    Divider().background(AlignTheme.studioHairlineSubtle)
+                }
                 if let amountText {
                     detailRow(label: "Số tiền", value: amountText)
                     Divider().background(AlignTheme.studioHairlineSubtle)
@@ -2311,6 +2676,84 @@ private struct QRCodeDetailSheetView: View {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+
+            case .cccdVN(let idNumber, let fullName, let birthDate, let gender, let address, let issueDate):
+                detailRow(label: "Số CCCD", value: idNumber)
+                if !fullName.isEmpty {
+                    Divider().background(AlignTheme.studioHairlineSubtle)
+                    detailRow(label: "Họ và tên", value: fullName)
+                }
+                if !birthDate.isEmpty {
+                    Divider().background(AlignTheme.studioHairlineSubtle)
+                    detailRow(label: "Ngày sinh", value: birthDate)
+                }
+                if !gender.isEmpty {
+                    Divider().background(AlignTheme.studioHairlineSubtle)
+                    detailRow(label: "Giới tính", value: gender)
+                }
+                if !address.isEmpty {
+                    Divider().background(AlignTheme.studioHairlineSubtle)
+                    detailRow(label: "Thường trú", value: address)
+                }
+                if !issueDate.isEmpty {
+                    Divider().background(AlignTheme.studioHairlineSubtle)
+                    detailRow(label: "Ngày cấp", value: issueDate)
+                }
+
+            case .geoLocation(let lat, let lon, let label):
+                if let label, !label.isEmpty {
+                    detailRow(label: "Địa điểm", value: label)
+                    Divider().background(AlignTheme.studioHairlineSubtle)
+                }
+                detailRow(label: "Vĩ độ", value: String(format: "%.6f", lat))
+                Divider().background(AlignTheme.studioHairlineSubtle)
+                detailRow(label: "Kinh độ", value: String(format: "%.6f", lon))
+
+            case .calendarEvent(let title, let startText, let location, _):
+                detailRow(label: "Sự kiện", value: title.isEmpty ? "—" : title)
+                if let startText, !startText.isEmpty {
+                    Divider().background(AlignTheme.studioHairlineSubtle)
+                    detailRow(label: "Bắt đầu", value: startText)
+                }
+                if let location, !location.isEmpty {
+                    Divider().background(AlignTheme.studioHairlineSubtle)
+                    detailRow(label: "Địa điểm", value: location)
+                }
+
+            case .otpAuth(let issuer, let account, _):
+                if !issuer.isEmpty {
+                    detailRow(label: "Dịch vụ", value: issuer)
+                    Divider().background(AlignTheme.studioHairlineSubtle)
+                }
+                if !account.isEmpty {
+                    detailRow(label: "Tài khoản", value: account)
+                    Divider().background(AlignTheme.studioHairlineSubtle)
+                }
+                Text("Khóa bí mật 2FA đã được ẩn để bảo vệ tài khoản. Chỉ sao chép và dán vào ứng dụng xác thực tin cậy.")
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundColor(AlignTheme.studioInkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+            case .contact(let displayName, let phone, let email, _):
+                if !displayName.isEmpty {
+                    detailRow(label: "Họ và tên", value: displayName)
+                }
+                if let phone, !phone.isEmpty {
+                    if !displayName.isEmpty { Divider().background(AlignTheme.studioHairlineSubtle) }
+                    detailRow(label: "Điện thoại", value: phone)
+                }
+                if let email, !email.isEmpty {
+                    if !displayName.isEmpty || (phone?.isEmpty == false) {
+                        Divider().background(AlignTheme.studioHairlineSubtle)
+                    }
+                    detailRow(label: "Email", value: email)
+                }
+
+            case .productBarcode(let code, let formatLabel):
+                detailRow(label: "Định dạng", value: formatLabel)
+                Divider().background(AlignTheme.studioHairlineSubtle)
+                detailRow(label: "Mã số", value: code)
+
             default:
                 Text(qrCode.rawValue)
                     .font(.system(size: 13, weight: .regular, design: .monospaced))
@@ -2332,7 +2775,7 @@ private struct QRCodeDetailSheetView: View {
     }
 
     private func detailRow(label: String, value: String) -> some View {
-        HStack {
+        HStack(alignment: .top) {
             Text(label)
                 .font(.system(size: 12.5, weight: .medium))
                 .foregroundColor(AlignTheme.studioInkSecondary)

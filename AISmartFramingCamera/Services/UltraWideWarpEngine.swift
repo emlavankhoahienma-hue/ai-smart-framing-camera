@@ -76,6 +76,7 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
         if let dev = dev, let queue = queue {
             self.ciContext = CIContext(mtlCommandQueue: queue, options: [
                 .useSoftwareRenderer: false,
+                .cacheIntermediates: false,
                 .priorityRequestLow: false
             ])
             var state: MTLComputePipelineState?
@@ -85,9 +86,22 @@ public final class UltraWideWarpEngine: @unchecked Sendable {
             }
             self.pipelineState = state
         } else {
-            self.ciContext = CIContext(options: [.useSoftwareRenderer: false])
+            self.ciContext = CIContext(options: [
+                .useSoftwareRenderer: false,
+                .cacheIntermediates: false
+            ])
             self.pipelineState = nil
         }
+    }
+
+    public func clearCaches() {
+        textureLock.lock()
+        pingInTex = nil
+        pingOutTex = nil
+        pongInTex = nil
+        pongOutTex = nil
+        textureLock.unlock()
+        ciContext.clearCaches()
     }
 
     /// Hiệu chuẩn hệ số giãn biên an toàn cho ống kính 0.5x giả lập trên máy không có camera góc siêu rộng vật lý:

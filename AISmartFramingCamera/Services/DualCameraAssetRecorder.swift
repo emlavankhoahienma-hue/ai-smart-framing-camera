@@ -18,7 +18,9 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
     public static let shared = DualCameraAssetRecorder()
 
     private let recordQueue = DispatchQueue(label: "com.alignai.camera.dualRecordQueue", qos: .userInitiated)
+    private var hasCreatedCIContext = false
     private lazy var ciContext: CIContext = {
+        hasCreatedCIContext = true
         let options: [CIContextOption: Any] = [
             .useSoftwareRenderer: false,
             .priorityRequestLow: false,
@@ -334,6 +336,7 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
                 self.lastVideoPTS = nil
                 self.currentOutputURL = nil
                 self.stateLock.unlock()
+                if self.hasCreatedCIContext { self.ciContext.clearCaches() }
                 completion(nil, nil)
                 return
             }
@@ -352,6 +355,10 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
                 self.lastVideoPTS = nil
                 self.currentOutputURL = nil
                 self.stateLock.unlock()
+                self.recordQueue.async { [weak self] in
+                    guard let self, self.hasCreatedCIContext, !self.isRecording else { return }
+                    self.ciContext.clearCaches()
+                }
 
                 if writer.status == .failed {
                     CameraLogger.error("DualCameraAssetRecorder: Ghi video thất bại: \(String(describing: writer.error))", category: .capture)
@@ -361,6 +368,16 @@ public final class DualCameraAssetRecorder: @unchecked Sendable {
                     completion(outURL, nil)
                 }
             }
+        }
+    }
+
+    public func clearCaches() {
+        Self.maskCacheLock.lock()
+        Self.cachedPIPMask = nil
+        Self.maskCacheLock.unlock()
+        recordQueue.async { [weak self] in
+            guard let self, self.hasCreatedCIContext, !self.isRecording else { return }
+            self.ciContext.clearCaches()
         }
     }
 
@@ -499,11 +516,19 @@ public final class EffectVideoAssetRecorder: @unchecked Sendable {
     public static let shared = EffectVideoAssetRecorder()
 
     private let recordQueue = DispatchQueue(label: "com.alignai.camera.effectRecordQueue", qos: .userInitiated)
-    private let ciContext = CIContext(options: [
-        .useSoftwareRenderer: false,
-        .priorityRequestLow: false,
-        .cacheIntermediates: false
-    ])
+    private var hasCreatedCIContext = false
+    private lazy var ciContext: CIContext = {
+        hasCreatedCIContext = true
+        let options: [CIContextOption: Any] = [
+            .useSoftwareRenderer: false,
+            .priorityRequestLow: false,
+            .cacheIntermediates: false
+        ]
+        if let mtlDevice = UnifiedMetalColorEngine.shared.device {
+            return CIContext(mtlDevice: mtlDevice, options: options)
+        }
+        return CIContext(options: options)
+    }()
 
     private var assetWriter: AVAssetWriter?
     private var videoInput: AVAssetWriterInput?
@@ -807,6 +832,7 @@ public final class EffectVideoAssetRecorder: @unchecked Sendable {
                 self.lastVideoPTS = nil
                 self.currentOutputURL = nil
                 self.stateLock.unlock()
+                if self.hasCreatedCIContext { self.ciContext.clearCaches() }
                 completion(nil, nil)
                 return
             }
@@ -825,6 +851,10 @@ public final class EffectVideoAssetRecorder: @unchecked Sendable {
                 self.lastVideoPTS = nil
                 self.currentOutputURL = nil
                 self.stateLock.unlock()
+                self.recordQueue.async { [weak self] in
+                    guard let self, self.hasCreatedCIContext, !self.isRecording else { return }
+                    self.ciContext.clearCaches()
+                }
 
                 if writer.status == .failed {
                     CameraLogger.error("EffectVideoAssetRecorder: Ghi video that bai: \(String(describing: writer.error))", category: .capture)
@@ -834,6 +864,13 @@ public final class EffectVideoAssetRecorder: @unchecked Sendable {
                     completion(outURL, nil)
                 }
             }
+        }
+    }
+
+    public func clearCaches() {
+        recordQueue.async { [weak self] in
+            guard let self, self.hasCreatedCIContext, !self.isRecording else { return }
+            self.ciContext.clearCaches()
         }
     }
 }
