@@ -421,10 +421,12 @@ public final class PhotoDarkroomRenderEngine: @unchecked Sendable {
             }
         }
 
-        // 3c. Contrast (-1...1) & Saturation (-1...1)
+        // 3c. Contrast (-1...1) & Saturation (-1...1; -1.0 reaches exact 0.0 monochrome)
         if abs(tools.contrast) >= 0.008 || abs(tools.saturation) >= 0.008 {
             let contrastVal = max(0.55, min(1.50, 1.0 + tools.contrast * 0.45))
-            let satVal = max(0.0, min(1.80, 1.0 + tools.saturation * 0.80))
+            let satVal = tools.saturation < 0
+                ? max(0.0, 1.0 + tools.saturation)
+                : min(1.80, 1.0 + tools.saturation * 0.80)
             if let cc = CIFilter(name: "CIColorControls") {
                 cc.setValue(output, forKey: kCIInputImageKey)
                 cc.setValue(Float(contrastVal), forKey: kCIInputContrastKey)
@@ -797,16 +799,18 @@ public final class PhotoDarkroomRenderEngine: @unchecked Sendable {
             .transformed(by: CGAffineTransform(scaleX: downScale, y: downScale))
             .cropped(to: smallExt)
 
+        // Calibrated for extendedLinearSRGB working space so highlights above ~0.72 sRGB (~0.48 linear)
+        // produce a lush, authentic Remjet red-orange scatter halo without tinting normal midtones.
         guard let thresh = CIFilter(name: "CIColorMatrix") else { return input }
         thresh.setValue(small, forKey: kCIInputImageKey)
-        thresh.setValue(CIVector(x: 1.55, y: 0.55, z: 0.20, w: 0), forKey: "inputRVector")
-        thresh.setValue(CIVector(x: 0.40, y: 1.35, z: 0.35, w: 0), forKey: "inputGVector")
-        thresh.setValue(CIVector(x: 0.20, y: 0.35, z: 1.15, w: 0), forKey: "inputBVector")
-        thresh.setValue(CIVector(x: -1.48, y: -1.48, z: -1.48, w: 0), forKey: "inputBiasVector")
+        thresh.setValue(CIVector(x: 1.65, y: 0.62, z: 0.25, w: 0), forKey: "inputRVector")
+        thresh.setValue(CIVector(x: 0.45, y: 1.45, z: 0.40, w: 0), forKey: "inputGVector")
+        thresh.setValue(CIVector(x: 0.25, y: 0.40, z: 1.25, w: 0), forKey: "inputBVector")
+        thresh.setValue(CIVector(x: -1.16, y: -1.16, z: -1.16, w: 0), forKey: "inputBiasVector")
         guard let rawHi = thresh.outputImage else { return input }
         let bright = clampPositive(rawHi).cropped(to: smallExt)
 
-        let effectiveRadius = max(1.5, 15.0 * Float(max(0.2, min(8.0, dim / 1000.0)) * downScale))
+        let effectiveRadius = max(2.0, 18.0 * Float(max(0.25, min(8.0, dim / 1000.0)) * downScale))
         guard let blur = CIFilter(name: "CIGaussianBlur") else { return input }
         blur.setValue(bright.clampedToExtent(), forKey: kCIInputImageKey)
         blur.setValue(effectiveRadius, forKey: kCIInputRadiusKey)
@@ -819,9 +823,9 @@ public final class PhotoDarkroomRenderEngine: @unchecked Sendable {
 
         guard let tint = CIFilter(name: "CIColorMatrix") else { return input }
         tint.setValue(blurred, forKey: kCIInputImageKey)
-        tint.setValue(CIVector(x: CGFloat(intensity * 1.45), y: 0, z: 0, w: 0), forKey: "inputRVector")
-        tint.setValue(CIVector(x: 0, y: CGFloat(intensity * 0.34), z: 0, w: 0), forKey: "inputGVector")
-        tint.setValue(CIVector(x: 0, y: 0, z: CGFloat(intensity * 0.08), w: 0), forKey: "inputBVector")
+        tint.setValue(CIVector(x: CGFloat(intensity * 1.78), y: 0, z: 0, w: 0), forKey: "inputRVector")
+        tint.setValue(CIVector(x: 0, y: CGFloat(intensity * 0.44), z: 0, w: 0), forKey: "inputGVector")
+        tint.setValue(CIVector(x: 0, y: 0, z: CGFloat(intensity * 0.10), w: 0), forKey: "inputBVector")
         guard let glow = tint.outputImage else { return input }
         return screenBlend(top: glow, bottom: input, extent: extent)
     }
@@ -1282,29 +1286,29 @@ public final class PhotoDarkroomRenderEngine: @unchecked Sendable {
 
         var rng = DarkroomSplitMix64(seed: UInt64(seed &* 7919 + 4211))
 
-        // Fine white & warm-cream analog film dust specks
-        for _ in 0..<190 {
+        // Fine white & warm-cream analog film dust specks & soft emulsion flecks
+        for _ in 0..<320 {
             let x = CGFloat(rng.nextUnitDouble()) * CGFloat(size)
             let y = CGFloat(rng.nextUnitDouble()) * CGFloat(size)
-            let r = CGFloat(0.6 + pow(rng.nextUnitDouble(), 2.4) * 2.6)
-            let alpha = CGFloat(0.32 + rng.nextUnitDouble() * 0.62)
+            let r = CGFloat(1.1 + pow(rng.nextUnitDouble(), 1.9) * 3.8)
+            let alpha = CGFloat(0.45 + rng.nextUnitDouble() * 0.55)
             let warm = CGFloat(rng.nextUnitDouble() * 0.14)
             ctx.setFillColor(red: 1.0, green: 0.96 - warm * 0.3, blue: 0.90 - warm, alpha: alpha)
             ctx.fillEllipse(in: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
         }
 
         // Delicate micro fiber hairs & subtle vertical film emulsion scratches
-        for i in 0..<18 {
+        for i in 0..<32 {
             let x0 = CGFloat(rng.nextUnitDouble()) * CGFloat(size)
             let y0 = CGFloat(rng.nextUnitDouble()) * CGFloat(size)
-            let len = CGFloat(10.0 + rng.nextUnitDouble() * (i < 4 ? 110.0 : 28.0))
-            let angle = (i < 4) ? CGFloat.pi * 0.5 + CGFloat((rng.nextUnitDouble() - 0.5) * 0.06) : CGFloat(rng.nextUnitDouble() * .pi * 2.0)
+            let len = CGFloat(18.0 + rng.nextUnitDouble() * (i < 7 ? 160.0 : 42.0))
+            let angle = (i < 7) ? CGFloat.pi * 0.5 + CGFloat((rng.nextUnitDouble() - 0.5) * 0.05) : CGFloat(rng.nextUnitDouble() * .pi * 2.0)
             let x1 = x0 + cos(angle) * len
             let y1 = y0 + sin(angle) * len
-            let cx = (x0 + x1) * 0.5 + CGFloat((rng.nextUnitDouble() - 0.5) * 14.0)
-            let cy = (y0 + y1) * 0.5 + CGFloat((rng.nextUnitDouble() - 0.5) * 14.0)
-            ctx.setStrokeColor(red: 1.0, green: 0.96, blue: 0.90, alpha: CGFloat(0.28 + rng.nextUnitDouble() * 0.45))
-            ctx.setLineWidth(CGFloat(0.6 + rng.nextUnitDouble() * 0.7))
+            let cx = (x0 + x1) * 0.5 + CGFloat((rng.nextUnitDouble() - 0.5) * 18.0)
+            let cy = (y0 + y1) * 0.5 + CGFloat((rng.nextUnitDouble() - 0.5) * 18.0)
+            ctx.setStrokeColor(red: 1.0, green: 0.96, blue: 0.90, alpha: CGFloat(0.40 + rng.nextUnitDouble() * 0.52))
+            ctx.setLineWidth(CGFloat(1.0 + rng.nextUnitDouble() * 1.1))
             ctx.setLineCap(.round)
             ctx.beginPath()
             ctx.move(to: CGPoint(x: x0, y: y0))
