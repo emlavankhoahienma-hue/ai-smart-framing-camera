@@ -161,7 +161,7 @@ public struct CameraMainView: View {
                 canvasBackground
                     .ignoresSafeArea()
 
-                if viewModel.hasCameraPermission || Self.isUISnapshotMode {
+                if (!viewModel.isShowingPermissionGate && viewModel.hasCameraPermission) || Self.isUISnapshotMode {
                     let isPhotoStylePadActive = viewModel.isShowingPhotographicStylePad
                         && !visualIsVideo
                         && !viewModel.isCameraHibernating
@@ -515,10 +515,11 @@ public struct CameraMainView: View {
                         .zIndex(20)
                     }
                     .frame(width: geometry.size.width, height: geometry.size.height)
+                    .transition(.opacity.combined(with: .scale(scale: 1.015)))
                 } else {
-                    CameraPermissionPlaceholderView(viewModel: viewModel)
-                        .frame(width: geometry.size.width)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    CameraPermissionOnboardingView(viewModel: viewModel)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .transition(.opacity)
                 }
 
                 // Low-Light Selfie Screen Flash Overlay (Warm 3000K soft flattering light)
@@ -732,7 +733,7 @@ public struct CameraMainView: View {
             if Self.isUISnapshotMode {
                 viewModel.applyUISnapshotState(screen: Self.snapshotScreen)
             } else {
-                viewModel.requestPermissionsAndStart()
+                viewModel.evaluatePermissionsOnLaunch()
             }
         }
         .onDisappear {
@@ -1280,41 +1281,722 @@ struct CompositionRuleRow: View {
     }
 }
 
-// MARK: - Camera Permission Placeholder View
-struct CameraPermissionPlaceholderView: View {
+// MARK: - AlignAI Studio Kinetic Permission Onboarding View
+struct CameraPermissionOnboardingView: View {
     @ObservedObject var viewModel: CameraViewModel
 
+    @State private var appeared: Bool = false
+    @State private var ambientBreath: Bool = false
+    @State private var sheenPhase: CGFloat = -1.2
+
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "camera.aperture")
-                .font(.system(size: 46, weight: .light))
-                .foregroundColor(AlignTheme.studioAccent)
+        let snapshot = viewModel.permissionSnapshot
 
-            Text("Cho phép camera để bắt đầu")
-                .font(.title3.weight(.semibold))
-                .foregroundColor(AlignTheme.studioInkPrimary)
+        GeometryReader { geo in
+            let isCompact = geo.size.height < 720
+            let horizontalPad: CGFloat = isCompact ? 20 : 24
 
-            Text("AlignAI Camera cần quyền truy cập camera để hiển thị khung ngắm thời gian thực và hỗ trợ căn bố cục chuẩn xác.")
-                .font(.subheadline)
-                .foregroundColor(AlignTheme.studioInkSecondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+            ZStack {
+                // 1. Atmospheric Obsidian Darkroom Backdrop + Subtle Rangefinder Ticks
+                permissionAtmosphereBackdrop(size: geo.size, fraction: snapshot.completionFraction)
+                    .ignoresSafeArea()
 
-            Button(action: {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
+                VStack(alignment: .leading, spacing: 0) {
+                    // Top Row: Signature Kinetic Aperture Emblem + Optional Close Pill (Manual Review)
+                    HStack(alignment: .top) {
+                        AlignKineticApertureEmblem(
+                            grantedCount: snapshot.grantedCount,
+                            isCameraGranted: snapshot.camera.isSatisfied,
+                            isAllReady: snapshot.isAllSatisfied
+                        )
+                        .scaleEffect(appeared ? 1.0 : 0.78)
+                        .opacity(appeared ? 1.0 : 0.0)
+                        .animation(.spring(response: 0.62, dampingFraction: 0.78).delay(0.04), value: appeared)
+
+                        Spacer()
+
+                        if viewModel.isManualPermissionReview && viewModel.hasCameraPermission {
+                            Button(action: {
+                                viewModel.completePermissionOnboardingAndEnterCamera()
+                            }) {
+                                HStack(spacing: 5) {
+                                    Text("Quay lại")
+                                        .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 10, weight: .bold))
+                                }
+                                .foregroundColor(AlignTheme.studioInkPrimary.opacity(0.90))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(StudioGlassCapsule(tintOpacity: 0.65, borderOpacity: 0.16))
+                            }
+                            .buttonStyle(.plain)
+                            .opacity(appeared ? 1.0 : 0.0)
+                            .animation(.easeOut(duration: 0.35).delay(0.15), value: appeared)
+                        }
+                    }
+                    .padding(.top, max(geo.safeAreaInsets.top + (isCompact ? 14 : 24), 26))
+
+                    // Editorial Eyebrow + Headline + Optical Readiness Gauge
+                    VStack(alignment: .leading, spacing: isCompact ? 8 : 11) {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(snapshot.isAllSatisfied ? AlignTheme.studioPositive : AlignTheme.studioAccent)
+                                .frame(width: 6, height: 6)
+                                .shadow(
+                                    color: (snapshot.isAllSatisfied ? AlignTheme.studioPositive : AlignTheme.studioAccent).opacity(0.8),
+                                    radius: ambientBreath ? 5 : 2
+                                )
+
+                            Text("ALIGN AI STUDIO")
+                                .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                                .tracking(1.6)
+                                .foregroundColor(AlignTheme.studioInkSecondary)
+
+                            Text("·")
+                                .foregroundColor(AlignTheme.studioInkTertiary)
+
+                            Text("\(snapshot.grantedCount)/\(AppPermissionKind.allCases.count)")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundColor(snapshot.isAllSatisfied ? AlignTheme.studioPositive : AlignTheme.studioAccent)
+                                .contentTransition(.numericText())
+                                .animation(.spring(response: 0.34, dampingFraction: 0.80), value: snapshot.grantedCount)
+                        }
+
+                        Text(snapshot.headlineText)
+                            .font(.system(size: isCompact ? 25 : 29, weight: .semibold, design: .rounded))
+                            .foregroundColor(AlignTheme.studioInkPrimary)
+                            .tracking(-0.3)
+                            .contentTransition(.opacity)
+                            .animation(.easeInOut(duration: 0.25), value: snapshot.headlineText)
+
+                        Text(snapshot.subtitleText)
+                            .font(.system(size: isCompact ? 13 : 13.8, weight: .regular))
+                            .foregroundColor(AlignTheme.studioInkSecondary)
+                            .lineSpacing(2.5)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .contentTransition(.opacity)
+                            .animation(.easeInOut(duration: 0.25), value: snapshot.subtitleText)
+
+                        // Precision Optical Readiness Hairline Bar
+                        opticalProgressGauge(snapshot: snapshot)
+                            .padding(.top, isCompact ? 4 : 8)
+                    }
+                    .padding(.top, isCompact ? 18 : 26)
+                    .offset(y: appeared ? 0 : 14)
+                    .opacity(appeared ? 1.0 : 0.0)
+                    .animation(.spring(response: 0.56, dampingFraction: 0.84).delay(0.12), value: appeared)
+
+                    Spacer(minLength: isCompact ? 14 : 24)
+
+                    // Interactive Architectural Permission Checklist (Clean Hairline Rhythm)
+                    VStack(spacing: 0) {
+                        Rectangle()
+                            .fill(AlignTheme.studioHairlineSubtle)
+                            .frame(height: 0.65)
+
+                        ForEach(Array(AppPermissionKind.allCases.enumerated()), id: \.element.id) { index, kind in
+                            let state = snapshot.state(for: kind)
+                            let isNextActive = (snapshot.nextPendingPermission == kind) && !viewModel.isSteppingPermissionsSequentially
+
+                            PermissionChecklistRowView(
+                                kind: kind,
+                                state: state,
+                                isNextActive: isNextActive,
+                                compact: isCompact,
+                                onTap: {
+                                    viewModel.requestSinglePermission(kind)
+                                }
+                            )
+                            .offset(y: appeared ? 0 : 18)
+                            .opacity(appeared ? 1.0 : 0.0)
+                            .animation(
+                                .spring(response: 0.54, dampingFraction: 0.84)
+                                    .delay(0.20 + Double(index) * 0.08),
+                                value: appeared
+                            )
+
+                            Rectangle()
+                                .fill(AlignTheme.studioHairlineSubtle)
+                                .frame(height: 0.65)
+                        }
+                    }
+
+                    // Bottom Full-Width Architectural Studio CTA + Optional Skip Link
+                    VStack(spacing: isCompact ? 10 : 12) {
+                        Button(action: {
+                            viewModel.runPrimaryPermissionAction()
+                        }) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(snapshot.isAllSatisfied ? AlignTheme.studioInkPrimary : AlignTheme.studioAccent)
+                                    .overlay(
+                                        // Subtle animated metallic light sheen sweep
+                                        GeometryReader { btnGeo in
+                                            LinearGradient(
+                                                colors: [
+                                                    Color.white.opacity(0.0),
+                                                    Color.white.opacity(snapshot.isAllSatisfied ? 0.35 : 0.24),
+                                                    Color.white.opacity(0.0)
+                                                ],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                            .frame(width: btnGeo.size.width * 0.45)
+                                            .offset(x: sheenPhase * btnGeo.size.width)
+                                        }
+                                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                        .allowsHitTesting(false)
+                                    )
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                            .stroke(Color.white.opacity(0.20), lineWidth: 0.6)
+                                    )
+
+                                HStack(spacing: 8) {
+                                    if viewModel.isSteppingPermissionsSequentially {
+                                        ProgressView()
+                                            .scaleEffect(0.82)
+                                            .tint(.black)
+                                    }
+                                    Text(viewModel.isSteppingPermissionsSequentially ? "Đang xác nhận quyền…" : snapshot.primaryCTATitle)
+                                        .font(.system(size: 15.5, weight: .semibold, design: .rounded))
+                                        .foregroundColor(Color(red: 0.05, green: 0.05, blue: 0.06))
+                                        .contentTransition(.opacity)
+
+                                    if !viewModel.isSteppingPermissionsSequentially {
+                                        Image(systemName: snapshot.camera.needsSettingsRedirect ? "arrow.up.right" : "arrow.right")
+                                            .font(.system(size: 13, weight: .bold))
+                                            .foregroundColor(Color(red: 0.05, green: 0.05, blue: 0.06))
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: isCompact ? 50 : 54)
+                            .shadow(
+                                color: (snapshot.isAllSatisfied ? Color.white : AlignTheme.studioAccent).opacity(0.22),
+                                radius: 16,
+                                y: 6
+                            )
+                        }
+                        .buttonStyle(PermissionTactileButtonStyle())
+                        .disabled(viewModel.isSteppingPermissionsSequentially)
+
+                        if snapshot.canEnterCamera && snapshot.nextPendingPermission != nil {
+                            Button(action: {
+                                viewModel.completePermissionOnboardingAndEnterCamera()
+                            }) {
+                                HStack(spacing: 5) {
+                                    Text("Bỏ qua quyền tùy chọn · Vào máy ảnh")
+                                        .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 10, weight: .semibold))
+                                }
+                                .foregroundColor(AlignTheme.studioInkSecondary)
+                                .padding(.vertical, 4)
+                            }
+                            .buttonStyle(.plain)
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        } else {
+                            Text("Xử lý hoàn toàn trên thiết bị · Bạn có thể đổi quyền bất cứ lúc nào trong Cài đặt.")
+                                .font(.system(size: 11, weight: .regular))
+                                .foregroundColor(AlignTheme.studioInkTertiary)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .padding(.top, isCompact ? 16 : 22)
+                    .padding(.bottom, max(geo.safeAreaInsets.bottom + (isCompact ? 14 : 18), 20))
+                    .offset(y: appeared ? 0 : 16)
+                    .opacity(appeared ? 1.0 : 0.0)
+                    .animation(.spring(response: 0.56, dampingFraction: 0.84).delay(0.42), value: appeared)
                 }
-            }) {
-                Text("Mở Cài đặt")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.black)
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 13)
-                    .background(AlignTheme.studioAccent)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .padding(.horizontal, horizontalPad)
             }
         }
-        .padding()
+        .onAppear {
+            appeared = true
+            withAnimation(.easeInOut(duration: 3.2).repeatForever(autoreverses: true)) {
+                ambientBreath = true
+            }
+            withAnimation(.easeInOut(duration: 3.4).repeatForever(autoreverses: false)) {
+                sheenPhase = 1.6
+            }
+        }
+    }
+
+    // MARK: - Atmospheric Obsidian & Optical Rangefinder Backdrop
+    private func permissionAtmosphereBackdrop(size: CGSize, fraction: Double) -> some View {
+        ZStack {
+            AlignTheme.studioCanvas
+
+            // Warm Titanium ambient lens glow blooming gently as permissions unlock
+            RadialGradient(
+                colors: [
+                    AlignTheme.studioAccent.opacity(0.11 + fraction * 0.10 + (ambientBreath ? 0.03 : 0.0)),
+                    AlignTheme.studioAccent.opacity(0.035 + fraction * 0.03),
+                    Color.clear
+                ],
+                center: UnitPoint(x: 0.18, y: 0.14),
+                startRadius: 12,
+                endRadius: max(size.width, size.height) * (0.58 + fraction * 0.14)
+            )
+            .animation(.easeInOut(duration: 0.65), value: fraction)
+
+            // Secondary subtle bottom warm reflection behind CTA
+            RadialGradient(
+                colors: [
+                    AlignTheme.studioAccent.opacity(0.06 + fraction * 0.05),
+                    Color.clear
+                ],
+                center: UnitPoint(x: 0.5, y: 0.96),
+                startRadius: 10,
+                endRadius: size.width * 0.72
+            )
+
+            // Delicate rangefinder calibration ticks along left & right borders
+            HStack {
+                rangefinderEdgeTicks(alignment: .leading)
+                Spacer()
+                rangefinderEdgeTicks(alignment: .trailing)
+            }
+            .padding(.horizontal, 8)
+            .opacity(0.28)
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func rangefinderEdgeTicks(alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: 18) {
+            ForEach(0..<12, id: \.self) { idx in
+                Rectangle()
+                    .fill(Color.white.opacity(idx.isMultiple(of: 3) ? 0.26 : 0.12))
+                    .frame(width: idx.isMultiple(of: 3) ? 8 : 4, height: 0.65)
+            }
+        }
+    }
+
+    // MARK: - Precision Optical Readiness Gauge
+    private func opticalProgressGauge(snapshot: AppPermissionSnapshot) -> some View {
+        VStack(spacing: 6) {
+            GeometryReader { barGeo in
+                let fillW = max(snapshot.grantedCount > 0 ? 10 : 0, barGeo.size.width * CGFloat(snapshot.completionFraction))
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.08))
+                        .frame(height: 2.2)
+
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: snapshot.isAllSatisfied
+                                    ? [AlignTheme.studioAccent, AlignTheme.studioPositive]
+                                    : [AlignTheme.studioAccent.opacity(0.70), AlignTheme.studioAccent],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: fillW, height: 2.2)
+                        .animation(.spring(response: 0.48, dampingFraction: 0.80), value: snapshot.completionFraction)
+
+                    if snapshot.grantedCount > 0 {
+                        Circle()
+                            .fill(snapshot.isAllSatisfied ? AlignTheme.studioPositive : AlignTheme.studioAccent)
+                            .frame(width: 5.5, height: 5.5)
+                            .shadow(color: AlignTheme.studioAccent.opacity(0.85), radius: 4)
+                            .offset(x: max(0, fillW - 3))
+                            .animation(.spring(response: 0.48, dampingFraction: 0.80), value: snapshot.completionFraction)
+                    }
+                }
+            }
+            .frame(height: 6)
+
+            HStack {
+                gaugeStepTag("01 CAM", satisfied: snapshot.camera.isSatisfied, denied: snapshot.camera.needsSettingsRedirect)
+                Spacer()
+                gaugeStepTag("02 PHOTOS", satisfied: snapshot.photos.isSatisfied, denied: snapshot.photos.needsSettingsRedirect)
+                Spacer()
+                gaugeStepTag("03 MIC", satisfied: snapshot.microphone.isSatisfied, denied: snapshot.microphone.needsSettingsRedirect)
+            }
+        }
+    }
+
+    private func gaugeStepTag(_ text: String, satisfied: Bool, denied: Bool) -> some View {
+        Text(text)
+            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+            .tracking(0.8)
+            .foregroundColor(
+                satisfied
+                    ? AlignTheme.studioAccent
+                    : (denied ? Color.orange.opacity(0.75) : AlignTheme.studioInkTertiary)
+            )
+            .animation(.easeInOut(duration: 0.25), value: satisfied)
+    }
+}
+
+// MARK: - Bespoke Kinetic 6-Blade Mechanical Aperture Iris Emblem (AlignAI Signature)
+private struct AlignKineticApertureEmblem: View {
+    let grantedCount: Int
+    let isCameraGranted: Bool
+    let isAllReady: Bool
+
+    @State private var bezelRotation: Double = 0
+    @State private var glowPulse: Bool = false
+
+    private var openFraction: CGFloat {
+        CGFloat(max(0, min(3, grantedCount))) / 3.0
+    }
+
+    var body: some View {
+        ZStack {
+            // 1. Soft breathing Warm Titanium lens halo
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            (isAllReady ? AlignTheme.studioPositive : AlignTheme.studioAccent)
+                                .opacity(isCameraGranted ? 0.28 : 0.14),
+                            Color.clear
+                        ],
+                        center: .center,
+                        startRadius: 6,
+                        endRadius: 42
+                    )
+                )
+                .frame(width: 82, height: 82)
+                .scaleEffect(glowPulse ? 1.08 : 0.94)
+
+            // 2. Precision 4-Corner Viewfinder Reticle Brackets (Lock inward when 3/3 ready)
+            CornerBracketsShape(bracketLength: 10)
+                .stroke(
+                    isAllReady
+                        ? AlignTheme.studioPositive.opacity(0.90)
+                        : AlignTheme.studioAccent.opacity(isCameraGranted ? 0.72 : 0.34),
+                    style: StrokeStyle(lineWidth: 1.35, lineCap: .round, lineJoin: .round)
+                )
+                .frame(width: 72, height: 72)
+                .scaleEffect(isAllReady ? 0.96 : (glowPulse ? 1.04 : 1.00))
+                .animation(.spring(response: 0.50, dampingFraction: 0.76), value: isAllReady)
+
+            // 3. Slowly Rotating Milled Lens Bezel with 24 Engraved Ticks
+            Circle()
+                .stroke(Color.white.opacity(0.14), lineWidth: 0.9)
+                .frame(width: 58, height: 58)
+
+            Circle()
+                .stroke(
+                    AlignTheme.studioAccent.opacity(0.45),
+                    style: StrokeStyle(lineWidth: 1.8, dash: [1.4, 5.2])
+                )
+                .frame(width: 53, height: 53)
+                .rotationEffect(.degrees(bezelRotation))
+
+            // 4. Inner Optical Barrel + 6 Articulated Iris Blades Opening Dynamically
+            ZStack {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [
+                                isCameraGranted
+                                    ? AlignTheme.studioAccent.opacity(0.32 + Double(openFraction) * 0.20)
+                                    : Color.white.opacity(0.05),
+                                Color(red: 0.05, green: 0.05, blue: 0.06)
+                            ],
+                            center: .center,
+                            startRadius: 2,
+                            endRadius: 22
+                        )
+                    )
+
+                ForEach(0..<6, id: \.self) { index in
+                    let angle = Double(index) * 60.0
+                    ApertureBladeShape()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.16, green: 0.16, blue: 0.18),
+                                    AlignTheme.studioAccent.opacity(0.55 + Double(openFraction) * 0.25)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(
+                            ApertureBladeShape()
+                                .stroke(AlignTheme.studioAccent.opacity(0.65), lineWidth: 0.6)
+                        )
+                        .frame(width: 24, height: 24)
+                        .offset(x: 9.5 + openFraction * 4.8, y: -3.5 - openFraction * 1.4)
+                        .rotationEffect(.degrees(angle))
+                }
+                .rotationEffect(.degrees(Double(grantedCount) * 18.0))
+                .animation(.spring(response: 0.58, dampingFraction: 0.72), value: grantedCount)
+
+                // Optical lens center glint
+                Circle()
+                    .fill(isAllReady ? AlignTheme.studioPositive : AlignTheme.studioAccent)
+                    .frame(width: 4.5 + openFraction * 3.0, height: 4.5 + openFraction * 3.0)
+                    .opacity(isCameraGranted ? 0.95 : 0.25)
+                    .shadow(color: AlignTheme.studioAccent.opacity(0.85), radius: 5)
+                    .animation(.spring(response: 0.45, dampingFraction: 0.76), value: grantedCount)
+            }
+            .frame(width: 44, height: 44)
+            .clipShape(Circle())
+            .overlay(
+                Circle().stroke(Color.white.opacity(0.18), lineWidth: 0.75)
+            )
+        }
+        .frame(width: 76, height: 76)
+        .onAppear {
+            withAnimation(.linear(duration: 28.0).repeatForever(autoreverses: false)) {
+                bezelRotation = 360.0
+            }
+            withAnimation(.easeInOut(duration: 2.6).repeatForever(autoreverses: true)) {
+                glowPulse = true
+            }
+        }
+    }
+}
+
+private struct ApertureBladeShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.midY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.18),
+            control: CGPoint(x: rect.midX, y: rect.minY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX * 0.86, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.midY),
+            control: CGPoint(x: rect.midX * 0.75, y: rect.maxY * 0.86)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+// MARK: - Interactive Permission Checklist Row with Bursting Checkmark Ripple
+private struct PermissionChecklistRowView: View {
+    let kind: AppPermissionKind
+    let state: AppPermissionGrantState
+    let isNextActive: Bool
+    let compact: Bool
+    let onTap: () -> Void
+
+    @State private var pulseActive: Bool = false
+    @State private var spinAngle: Double = 0
+    @State private var rippleScale: CGFloat = 0.85
+    @State private var rippleOpacity: Double = 0.0
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(alignment: .center, spacing: 13) {
+                // Left Icon Medallion
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(
+                            state.isSatisfied
+                                ? AlignTheme.studioAccent.opacity(0.14)
+                                : (isNextActive ? AlignTheme.studioElevated : AlignTheme.studioSurface)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(
+                                    state.isSatisfied
+                                        ? AlignTheme.studioAccentBorder
+                                        : (state.needsSettingsRedirect
+                                            ? Color.orange.opacity(0.45)
+                                            : (isNextActive ? AlignTheme.studioHairline : AlignTheme.studioHairlineSubtle)),
+                                    lineWidth: 0.75
+                                )
+                        )
+
+                    Image(systemName: kind.iconName)
+                        .font(.system(size: 15.5, weight: .medium))
+                        .foregroundColor(
+                            state.isSatisfied
+                                ? AlignTheme.studioAccent
+                                : (state.needsSettingsRedirect ? Color.orange : AlignTheme.studioInkPrimary.opacity(0.86))
+                        )
+                        .scaleEffect(state.isSatisfied ? 1.06 : 1.0)
+                        .animation(.spring(response: 0.36, dampingFraction: 0.65), value: state)
+                }
+                .frame(width: 38, height: 38)
+
+                // Center Title + Tag + Honest Explanation
+                VStack(alignment: .leading, spacing: 3.5) {
+                    HStack(spacing: 6) {
+                        Text(kind.title)
+                            .font(.system(size: compact ? 14.5 : 15, weight: .semibold, design: .rounded))
+                            .foregroundColor(AlignTheme.studioInkPrimary)
+
+                        let badgeText = state.statusBadgeText ?? kind.requirementTag
+                        Text(badgeText)
+                            .font(.system(size: 8.8, weight: .bold, design: .monospaced))
+                            .tracking(0.5)
+                            .foregroundColor(badgeForegroundColor)
+                            .padding(.horizontal, 5.5)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(badgeBackgroundColor)
+                            )
+                            .contentTransition(.opacity)
+                            .animation(.easeInOut(duration: 0.22), value: badgeText)
+                    }
+
+                    Text(kind.subtitle)
+                        .font(.system(size: compact ? 11.8 : 12.2, weight: .regular))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 6)
+
+                // Right Kinetic State Ring
+                statusRingIndicator
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, compact ? 13 : 15.5)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isNextActive ? AlignTheme.studioSurface.opacity(0.75) : Color.clear)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(isNextActive ? AlignTheme.studioAccentBorder.opacity(0.35) : Color.clear, lineWidth: 0.65)
+                    )
+                    .padding(.vertical, 3)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
+                pulseActive = true
+            }
+            if state == .requesting {
+                startSpinner()
+            }
+        }
+        .onChangeCompatible(of: state) { newState in
+            if newState == .requesting {
+                startSpinner()
+            } else if newState.isSatisfied {
+                rippleScale = 0.85
+                rippleOpacity = 0.75
+                withAnimation(.easeOut(duration: 0.58)) {
+                    rippleScale = 1.85
+                    rippleOpacity = 0.0
+                }
+            }
+        }
+    }
+
+    private func startSpinner() {
+        spinAngle = 0
+        withAnimation(.linear(duration: 0.95).repeatForever(autoreverses: false)) {
+            spinAngle = 360
+        }
+    }
+
+    private var badgeForegroundColor: Color {
+        switch state {
+        case .granted: return AlignTheme.studioAccent
+        case .limited: return AlignTheme.studioAccent
+        case .denied: return Color.orange
+        case .requesting: return AlignTheme.studioInkPrimary
+        case .notDetermined: return kind.isRequired ? AlignTheme.studioAccent : AlignTheme.studioInkTertiary
+        }
+    }
+
+    private var badgeBackgroundColor: Color {
+        switch state {
+        case .granted, .limited: return AlignTheme.studioAccent.opacity(0.16)
+        case .denied: return Color.orange.opacity(0.16)
+        case .requesting: return Color.white.opacity(0.12)
+        case .notDetermined: return kind.isRequired ? AlignTheme.studioAccent.opacity(0.11) : Color.white.opacity(0.06)
+        }
+    }
+
+    private var statusRingIndicator: some View {
+        ZStack {
+            // Bursting concentric ripple when granted
+            Circle()
+                .stroke(AlignTheme.studioAccent, lineWidth: 1.5)
+                .frame(width: 26, height: 26)
+                .scaleEffect(rippleScale)
+                .opacity(rippleOpacity)
+                .allowsHitTesting(false)
+
+            switch state {
+            case .notDetermined:
+                ZStack {
+                    if isNextActive {
+                        Circle()
+                            .stroke(AlignTheme.studioAccent.opacity(pulseActive ? 0.14 : 0.45), lineWidth: 1.2)
+                            .frame(width: 26, height: 26)
+                            .scaleEffect(pulseActive ? 1.32 : 0.98)
+                    }
+                    Circle()
+                        .stroke(
+                            isNextActive ? AlignTheme.studioAccent.opacity(0.85) : Color.white.opacity(0.24),
+                            lineWidth: 1.45
+                        )
+                        .frame(width: 24, height: 24)
+                }
+
+            case .requesting:
+                ZStack {
+                    Circle()
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1.6)
+                        .frame(width: 24, height: 24)
+                    Circle()
+                        .trim(from: 0.08, to: 0.72)
+                        .stroke(
+                            AlignTheme.studioAccent,
+                            style: StrokeStyle(lineWidth: 1.8, lineCap: .round)
+                        )
+                        .frame(width: 24, height: 24)
+                        .rotationEffect(.degrees(spinAngle))
+                }
+
+            case .granted, .limited:
+                ZStack {
+                    Circle()
+                        .fill(state == .granted ? AlignTheme.studioAccent : AlignTheme.studioAccent.opacity(0.82))
+                        .frame(width: 25, height: 25)
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11.5, weight: .bold))
+                        .foregroundColor(Color(red: 0.05, green: 0.05, blue: 0.06))
+                }
+                .transition(.scale(scale: 0.35).combined(with: .opacity))
+
+            case .denied:
+                ZStack {
+                    Circle()
+                        .fill(Color.orange.opacity(0.16))
+                        .frame(width: 25, height: 25)
+                        .overlay(Circle().stroke(Color.orange.opacity(0.65), lineWidth: 1.1))
+                    Image(systemName: "exclamationmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.orange)
+                }
+                .transition(.scale(scale: 0.6).combined(with: .opacity))
+            }
+        }
+        .frame(width: 28, height: 28)
+        .animation(.spring(response: 0.38, dampingFraction: 0.68), value: state)
+    }
+}
+
+private struct PermissionTactileButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.975 : 1.0)
+            .brightness(configuration.isPressed ? -0.05 : 0.0)
+            .animation(.spring(response: 0.22, dampingFraction: 0.78), value: configuration.isPressed)
     }
 }
 

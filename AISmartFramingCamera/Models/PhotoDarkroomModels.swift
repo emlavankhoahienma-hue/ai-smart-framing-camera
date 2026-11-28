@@ -2375,3 +2375,183 @@ public enum QRCodePayloadParser {
         )
     }
 }
+
+// MARK: - First-Launch Permission Onboarding State Machine (Pure Foundation — Unit Tested on CI)
+public enum AppPermissionKind: String, CaseIterable, Identifiable, Sendable {
+    case camera
+    case photos
+    case microphone
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .camera: return "Camera"
+        case .photos: return "Thư viện ảnh"
+        case .microphone: return "Micro"
+        }
+    }
+
+    public var subtitle: String {
+        switch self {
+        case .camera:
+            return "Mở khung ngắm thời gian thực, căn bố cục AI Neural Engine và quét mã QR."
+        case .photos:
+            return "Lưu ảnh RAW/HEIF, video và xem ảnh gần nhất. Vẫn chụp được nếu bỏ qua."
+        case .microphone:
+            return "Thu âm thanh Stereo và đo mức âm khi quay video & Dual Cam. Tùy chọn khi chụp ảnh."
+        }
+    }
+
+    public var iconName: String {
+        switch self {
+        case .camera: return "camera.aperture"
+        case .photos: return "photo.on.rectangle.angled"
+        case .microphone: return "mic"
+        }
+    }
+
+    public var isRequired: Bool {
+        self == .camera
+    }
+
+    public var requirementTag: String {
+        isRequired ? "BẮT BUỘC" : "TÙY CHỌN"
+    }
+}
+
+public enum AppPermissionGrantState: Int, Equatable, Sendable {
+    case notDetermined = 0
+    case requesting = 1
+    case granted = 2
+    case limited = 3
+    case denied = 4
+
+    public var isSatisfied: Bool {
+        self == .granted || self == .limited
+    }
+
+    public var needsSettingsRedirect: Bool {
+        self == .denied
+    }
+
+    public var statusBadgeText: String? {
+        switch self {
+        case .granted: return "ĐÃ CẤP"
+        case .limited: return "GIỚI HẠN"
+        case .denied: return "CÀI ĐẶT ↗"
+        case .requesting: return "ĐANG XIN…"
+        case .notDetermined: return nil
+        }
+    }
+}
+
+public struct AppPermissionSnapshot: Equatable, Sendable {
+    public var camera: AppPermissionGrantState
+    public var photos: AppPermissionGrantState
+    public var microphone: AppPermissionGrantState
+    public var hasCompletedOnboarding: Bool
+
+    public init(
+        camera: AppPermissionGrantState = .notDetermined,
+        photos: AppPermissionGrantState = .notDetermined,
+        microphone: AppPermissionGrantState = .notDetermined,
+        hasCompletedOnboarding: Bool = false
+    ) {
+        self.camera = camera
+        self.photos = photos
+        self.microphone = microphone
+        self.hasCompletedOnboarding = hasCompletedOnboarding
+    }
+
+    public func state(for kind: AppPermissionKind) -> AppPermissionGrantState {
+        switch kind {
+        case .camera: return camera
+        case .photos: return photos
+        case .microphone: return microphone
+        }
+    }
+
+    public mutating func setState(_ state: AppPermissionGrantState, for kind: AppPermissionKind) {
+        switch kind {
+        case .camera: camera = state
+        case .photos: photos = state
+        case .microphone: microphone = state
+        }
+    }
+
+    public var grantedCount: Int {
+        AppPermissionKind.allCases.reduce(0) { partial, kind in
+            partial + (state(for: kind).isSatisfied ? 1 : 0)
+        }
+    }
+
+    public var completionFraction: Double {
+        Double(grantedCount) / Double(AppPermissionKind.allCases.count)
+    }
+
+    public var canEnterCamera: Bool {
+        camera.isSatisfied
+    }
+
+    public var isAllSatisfied: Bool {
+        grantedCount == AppPermissionKind.allCases.count
+    }
+
+    public var nextPendingPermission: AppPermissionKind? {
+        for kind in AppPermissionKind.allCases {
+            if state(for: kind) == .notDetermined {
+                return kind
+            }
+        }
+        return nil
+    }
+
+    /// Shows the Studio Permission Gate on first launch when any permission is undecided,
+    /// or anytime required Camera access is not yet granted. Returning users who already
+    /// granted Camera and answered optional prompts enter the viewfinder with zero friction.
+    public var shouldPresentPermissionGate: Bool {
+        if !camera.isSatisfied { return true }
+        if !hasCompletedOnboarding && nextPendingPermission != nil { return true }
+        return false
+    }
+
+    public var primaryCTATitle: String {
+        if camera.needsSettingsRedirect {
+            return "Mở Cài đặt Camera"
+        }
+        if let next = nextPendingPermission {
+            if grantedCount == 0 {
+                return "Tiếp tục & Cấp quyền"
+            }
+            if next == .camera {
+                return "Cấp quyền Camera"
+            }
+            return "Cấp quyền \(next.title)"
+        }
+        return canEnterCamera ? "Bắt đầu chụp" : "Cấp quyền Camera"
+    }
+
+    public var headlineText: String {
+        if isAllSatisfied {
+            return "Ống kính đã sẵn sàng."
+        }
+        if camera.needsSettingsRedirect {
+            return "Cần mở quyền Camera."
+        }
+        if camera.isSatisfied {
+            return "Hoàn tất thiết lập."
+        }
+        return "Chuẩn bị ống kính."
+    }
+
+    public var subtitleText: String {
+        if isAllSatisfied {
+            return "Toàn bộ cảm biến AI, thư viện RAW và micro Stereo đã được kích hoạt."
+        }
+        if camera.needsSettingsRedirect {
+            return "Bạn đã tắt quyền Camera trước đó. Mở Cài đặt iOS để bật lại cho AlignAI Studio."
+        }
+        return "Cấp quyền từng bước để mở khóa khung ngắm AI, lưu ảnh chất lượng cao và thu âm Stereo."
+    }
+}

@@ -793,6 +793,12 @@ public final class CameraViewModel: ObservableObject {
     // MARK: - Published UI States (Persisted)
     @Published public var isCameraReady: Bool = false
     @Published public var hasCameraPermission: Bool = false
+    @Published public private(set) var permissionSnapshot: AppPermissionSnapshot = AppPermissionSnapshot()
+    @Published public var isShowingPermissionGate: Bool = false
+    @Published public private(set) var isManualPermissionReview: Bool = false
+    @Published public private(set) var isSteppingPermissionsSequentially: Bool = false
+    private var permissionFlowTask: Task<Void, Never>? = nil
+    private static let permissionOnboardingDoneKey = "hasCompletedPermissionOnboarding_v2"
 
     @Published public var activeCompositionRule: CompositionRule = .goldenRatio {
         didSet { UserDefaults.standard.set(activeCompositionRule.rawValue, forKey: "activeCompositionRule") }
@@ -3422,7 +3428,8 @@ public final class CameraViewModel: ObservableObject {
         } else if phase == .active {
             SpatialTrackingEngine.shared.prepare()
             syncHorizonLevelerLifecycle()
-            guard hasCameraPermission else { return }
+            refreshPermissionStatuses(autoEnterIfReady: isShowingPermissionGate && !isManualPermissionReview)
+            guard hasCameraPermission && !isShowingPermissionGate else { return }
             if !cameraService.isSessionRunning {
                 cameraService.start { [weak self] running in
                     self?.isCameraReady = running
@@ -4032,40 +4039,250 @@ public final class CameraViewModel: ObservableObject {
     }
 
     // MARK: - Initialization & Permissions
+    private static func mapAVStatus(_ status: AVAuthorizationStatus) -> AppPermissionGrantState {
+        switch status {
+        case .authorized: return .granted
+        case .notDetermined: return .notDetermined
+        case .denied, .restricted: return .denied
+        @unknown default: return .denied
+        }
+    }
+
+    private static func mapPhotoStatus(_ status: PHAuthorizationStatus) -> AppPermissionGrantState {
+        switch status {
+        case .authorized: return .granted
+        case .limited: return .limited
+        case .notDetermined: return .notDetermined
+        case .denied, .restricted: return .denied
+        @unknown default: return .denied
+        }
+    }
+
+    private static func readLivePermissionSnapshot() -> AppPermissionSnapshot {
+        let onboardingDone = UserDefaults.standard.bool(forKey: permissionOnboardingDoneKey)
+        return AppPermissionSnapshot(
+            camera: mapAVStatus(AVCaptureDevice.authorizationStatus(for: .video)),
+            photos: mapPhotoStatus(PHPhotoLibrary.authorizationStatus(for: .readWrite)),
+            microphone: mapAVStatus(AVCaptureDevice.authorizationStatus(for: .audio)),
+            hasCompletedOnboarding: onboardingDone
+        )
+    }
+
+    /// Đánh giá trạng thái quyền khi vừa mở app:
+    /// - Người dùng mới (hoặc chưa cấp Camera): mở màn hình Permission Studio đẹp thay vì bung 3 popup hệ thống chồng chéo.
+    /// - Người dùng cũ đã cấp đủ quyền: vào thẳng khung ngắm 0ms không làm phiền.
+    public func evaluatePermissionsOnLaunch() {
+        let live = Self.readLivePermissionSnapshot()
+        permissionSnapshot = live
+        hasCameraPermission = live.canEnterCamera
+
+        if live.shouldPresentPermissionGate {
+            isManualPermissionReview = false
+            isShowingPermissionGate = true
+        } else {
+            isShowingPermissionGate = false
+            isManualPermissionReview = false
+            if live.photos.isSatisfied {
+                loadLatestPhotoFromAlbum()
+            }
+            startCamera()
+        }
+    }
+
+    public func refreshPermissionStatuses(autoEnterIfReady: Bool = false) {
+        let previous = permissionSnapshot
+        var updated = Self.readLivePermissionSnapshot()
+        // Keep active requesting spinner if a system prompt is currently presented
+        for kind in AppPermissionKind.allCases where previous.state(for: kind) == .requesting && updated.state(for: kind) == .notDetermined {
+            updated.setState(.requesting, for: kind)
+        }
+
+        let newlyGranted = AppPermissionKind.allCases.contains { kind in
+            !previous.state(for: kind).isSatisfied && updated.state(for: kind).isSatisfied
+        }
+
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.80)) {
+            permissionSnapshot = updated
+        }
+        hasCameraPermission = updated.canEnterCamera
+        if newlyGranted {
+            haptics.triggerSuccess()
+        }
+        if updated.photos.isSatisfied {
+            loadLatestPhotoFromAlbum()
+        }
+        if autoEnterIfReady && !updated.shouldPresentPermissionGate {
+            completePermissionOnboardingAndEnterCamera()
+        }
+    }
+
+    public func openSystemAppSettings() {
+        haptics.triggerSelectionChange()
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
+        }
+    }
+
+    /// Xin một quyền cụ thể khi người dùng chạm trực tiếp vào dòng tương ứng trên màn hình cấp quyền.
+    public func requestSinglePermission(_ kind: AppPermissionKind) {
+        guard !isSteppingPermissionsSequentially else { return }
+        let current = permissionSnapshot.state(for: kind)
+        if current.needsSettingsRedirect {
+            openSystemAppSettings()
+            return
+        }
+        if current.isSatisfied {
+            haptics.triggerLight()
+            return
+        }
+        permissionFlowTask?.cancel()
+        permissionFlowTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            _ = await self.performSinglePermissionRequest(kind)
+            if !self.isManualPermissionReview && self.permissionSnapshot.isAllSatisfied {
+                try? await Task.sleep(nanoseconds: 520_000_000)
+                if !Task.isCancelled && self.isShowingPermissionGate && self.permissionSnapshot.canEnterCamera {
+                    self.completePermissionOnboardingAndEnterCamera()
+                }
+            }
+        }
+    }
+
+    /// Nút CTA chính: dẫn người dùng đi qua từng quyền một cách nhịp nhàng (Camera -> Thư viện ảnh -> Micro)
+    /// để mỗi dấu tick & lá khẩu độ nở sáng mượt mà trước khi hiện hộp thoại tiếp theo.
+    public func runPrimaryPermissionAction() {
+        guard !isSteppingPermissionsSequentially else { return }
+        haptics.triggerSelectionChange()
+
+        if permissionSnapshot.camera.needsSettingsRedirect {
+            openSystemAppSettings()
+            return
+        }
+
+        if permissionSnapshot.nextPendingPermission == nil {
+            if permissionSnapshot.canEnterCamera {
+                completePermissionOnboardingAndEnterCamera()
+            } else {
+                openSystemAppSettings()
+            }
+            return
+        }
+
+        permissionFlowTask?.cancel()
+        permissionFlowTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.isSteppingPermissionsSequentially = true
+            defer { self.isSteppingPermissionsSequentially = false }
+
+            for kind in AppPermissionKind.allCases {
+                if Task.isCancelled { return }
+                if self.permissionSnapshot.state(for: kind) != .notDetermined { continue }
+
+                let granted = await self.performSinglePermissionRequest(kind)
+                if Task.isCancelled { return }
+
+                // Nếu người dùng từ chối quyền Camera bắt buộc -> dừng tại bước 1 để hiện hướng dẫn Mở Cài đặt rõ ràng
+                if kind == .camera && !granted {
+                    return
+                }
+
+                // Nhịp dừng 320ms cho hiệu ứng vòng sáng + lá khẩu độ kịp hoàn tất trước popup kế tiếp
+                if self.permissionSnapshot.nextPendingPermission != nil {
+                    try? await Task.sleep(nanoseconds: 320_000_000)
+                }
+            }
+
+            if !Task.isCancelled && self.permissionSnapshot.canEnterCamera && !self.isManualPermissionReview {
+                try? await Task.sleep(nanoseconds: 520_000_000)
+                if !Task.isCancelled && self.isShowingPermissionGate {
+                    self.completePermissionOnboardingAndEnterCamera()
+                }
+            }
+        }
+    }
+
+    @discardableResult
+    private func performSinglePermissionRequest(_ kind: AppPermissionKind) async -> Bool {
+        withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
+            permissionSnapshot.setState(.requesting, for: kind)
+        }
+
+        let resolved: AppPermissionGrantState
+        switch kind {
+        case .camera:
+            let ok = await AVCaptureDevice.requestAccess(for: .video)
+            resolved = ok ? .granted : Self.mapAVStatus(AVCaptureDevice.authorizationStatus(for: .video))
+        case .photos:
+            let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+            resolved = Self.mapPhotoStatus(status)
+        case .microphone:
+            let ok = await AVCaptureDevice.requestAccess(for: .audio)
+            resolved = ok ? .granted : Self.mapAVStatus(AVCaptureDevice.authorizationStatus(for: .audio))
+        }
+
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.74)) {
+            permissionSnapshot.setState(resolved, for: kind)
+        }
+        hasCameraPermission = permissionSnapshot.canEnterCamera
+
+        if resolved.isSatisfied {
+            haptics.triggerSuccess()
+            if kind == .photos {
+                loadLatestPhotoFromAlbum()
+            }
+        } else {
+            haptics.triggerLight()
+        }
+        return resolved.isSatisfied
+    }
+
+    public func completePermissionOnboardingAndEnterCamera() {
+        permissionFlowTask?.cancel()
+        permissionFlowTask = nil
+        isSteppingPermissionsSequentially = false
+
+        guard permissionSnapshot.canEnterCamera else {
+            openSystemAppSettings()
+            return
+        }
+
+        UserDefaults.standard.set(true, forKey: Self.permissionOnboardingDoneKey)
+        permissionSnapshot.hasCompletedOnboarding = true
+        hasCameraPermission = true
+        isManualPermissionReview = false
+        haptics.triggerMedium()
+
+        withAnimation(.spring(response: 0.44, dampingFraction: 0.88)) {
+            isShowingPermissionGate = false
+        }
+        if permissionSnapshot.photos.isSatisfied {
+            loadLatestPhotoFromAlbum()
+        }
+        startCamera()
+    }
+
+    public func presentPermissionSetupManually() {
+        haptics.triggerSelectionChange()
+        isShowingSettings = false
+        refreshPermissionStatuses(autoEnterIfReady: false)
+        isManualPermissionReview = true
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+            isShowingPermissionGate = true
+        }
+    }
+
     public func requestPermissionsAndStart() {
-        // 1. Camera Permission (.video)
-        switch AVCaptureDevice.authorizationStatus(for: .video) {
-        case .authorized:
-            self.hasCameraPermission = true
-            self.startCamera()
-        case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
-                DispatchQueue.main.async {
-                    self?.hasCameraPermission = granted
-                    if granted { self?.startCamera() }
-                }
+        refreshPermissionStatuses(autoEnterIfReady: false)
+        if permissionSnapshot.canEnterCamera {
+            isShowingPermissionGate = false
+            isManualPermissionReview = false
+            if permissionSnapshot.photos.isSatisfied {
+                loadLatestPhotoFromAlbum()
             }
-        default:
-            self.hasCameraPermission = false
-        }
-
-        // 2. Microphone Permission (.audio) cho quay video
-        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
-            AVCaptureDevice.requestAccess(for: .audio) { _ in }
-        }
-
-        // 3. Photo Library Full Permission (.readWrite) để tải ảnh mới nhất và quản lý album
-        let photoStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-        if photoStatus == .authorized || photoStatus == .limited {
-            self.loadLatestPhotoFromAlbum()
-        } else if photoStatus == .notDetermined {
-            PHPhotoLibrary.requestAuthorization(for: .readWrite) { [weak self] status in
-                if status == .authorized || status == .limited {
-                    DispatchQueue.main.async {
-                        self?.loadLatestPhotoFromAlbum()
-                    }
-                }
-            }
+            startCamera()
+        } else {
+            isManualPermissionReview = false
+            isShowingPermissionGate = true
         }
     }
 

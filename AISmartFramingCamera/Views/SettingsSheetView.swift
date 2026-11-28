@@ -2101,6 +2101,16 @@ struct AdvancedSettingsSection: View {
                 dividerLine
 
                 SettingsActionRow(
+                    title: "Quyền truy cập thiết bị",
+                    subtitle: "\(viewModel.permissionSnapshot.grantedCount)/\(AppPermissionKind.allCases.count) quyền đã cấp · Camera, Thư viện ảnh, Micro",
+                    icon: "lock.shield"
+                ) {
+                    viewModel.presentPermissionSetupManually()
+                }
+
+                dividerLine
+
+                SettingsActionRow(
                     title: "Đặt lại cài đặt phiên căn góc",
                     subtitle: "Hủy khóa chủ thể và đưa camera về trạng thái ngắm tự do",
                     icon: "arrow.counterclockwise.circle.fill"

@@ -775,6 +775,40 @@ struct PhotoDarkroomEngineRegression {
               detail: String(format: "%.1fms postWarmup=%.1fMB end=%.1fMB peak=%.1fMB delta=%+.2fMB",
                              gpuElapsedMs, gpuPostWarmupMB, gpuEndMB, gpuPeakMB, gpuNetGrowthMB))
 
+        // 13. First-Launch Permission Onboarding State Machine Verification
+        var perm = AppPermissionSnapshot()
+        check(perm.shouldPresentPermissionGate && !perm.canEnterCamera &&
+              perm.grantedCount == 0 && perm.nextPendingPermission == .camera &&
+              perm.primaryCTATitle == "Tiếp tục & Cấp quyền",
+              "AppPermissionSnapshot gates fresh install and starts with Camera first")
+
+        perm.setState(.granted, for: .camera)
+        check(perm.canEnterCamera && perm.grantedCount == 1 &&
+              perm.shouldPresentPermissionGate && perm.nextPendingPermission == .photos &&
+              perm.primaryCTATitle == "Cấp quyền Thư viện ảnh",
+              "AppPermissionSnapshot advances sequentially to Photos after Camera granted")
+
+        perm.setState(.limited, for: .photos)
+        check(perm.photos.isSatisfied && perm.grantedCount == 2 &&
+              perm.nextPendingPermission == .microphone &&
+              perm.primaryCTATitle == "Cấp quyền Micro",
+              "AppPermissionSnapshot treats iOS Limited Photos as satisfied and advances to Microphone")
+
+        perm.setState(.granted, for: .microphone)
+        check(perm.isAllSatisfied && abs(perm.completionFraction - 1.0) < 1e-6 &&
+              perm.nextPendingPermission == nil && !perm.shouldPresentPermissionGate &&
+              perm.primaryCTATitle == "Bắt đầu chụp",
+              "AppPermissionSnapshot reaches 3/3 ready state cleanly")
+
+        let deniedCam = AppPermissionSnapshot(camera: .denied, photos: .granted, microphone: .granted, hasCompletedOnboarding: true)
+        check(deniedCam.shouldPresentPermissionGate && !deniedCam.canEnterCamera &&
+              deniedCam.camera.needsSettingsRedirect && deniedCam.primaryCTATitle == "Mở Cài đặt Camera",
+              "AppPermissionSnapshot redirects to Settings when required Camera access is denied")
+
+        let returningPartial = AppPermissionSnapshot(camera: .granted, photos: .notDetermined, microphone: .denied, hasCompletedOnboarding: true)
+        check(!returningPartial.shouldPresentPermissionGate && returningPartial.canEnterCamera,
+              "AppPermissionSnapshot lets returning users with Camera granted bypass gate cleanly")
+
         print("=== Summary: \(passedTests) passed, \(failedTests) failed ===")
         if failedTests > 0 {
             exit(1)
