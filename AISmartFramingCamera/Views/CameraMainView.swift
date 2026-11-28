@@ -152,9 +152,10 @@ public struct CameraMainView: View {
 
     public var body: some View {
         GeometryReader { geometry in
+            let visualIsVideo = viewModel.visualCaptureMode.isVideo
             let layout = CameraFormFactorLayout(availableSize: geometry.size,
                                                 safeAreaInsets: geometry.safeAreaInsets,
-                                                isVideo: viewModel.captureMode.isVideo)
+                                                isVideo: visualIsVideo)
             ZStack {
                 // 1. Pure Matte Carbon Canvas
                 canvasBackground
@@ -162,7 +163,7 @@ public struct CameraMainView: View {
 
                 if viewModel.hasCameraPermission || Self.isUISnapshotMode {
                     let isPhotoStylePadActive = viewModel.isShowingPhotographicStylePad
-                        && !viewModel.captureMode.isVideo
+                        && !visualIsVideo
                         && !viewModel.isCameraHibernating
 
                     ZStack(alignment: .top) {
@@ -283,6 +284,15 @@ public struct CameraMainView: View {
                                     Spacer()
                                 }
                                 .transition(.scale(scale: 0.94).combined(with: .opacity))
+                            }
+
+                            // GPU Smoked-Glass Mode Transition Veil (eliminates black flash & aspect pop during Photo <-> Video switch)
+                            if viewModel.isModeTransitionVeilVisible && !Self.isUISnapshotMode {
+                                Rectangle()
+                                    .fill(.ultraThinMaterial)
+                                    .overlay(AlignTheme.studioCanvas.opacity(0.32))
+                                    .allowsHitTesting(false)
+                                    .transition(.opacity)
                             }
 
                             // Standby when AVFoundation is configuring
@@ -420,7 +430,8 @@ public struct CameraMainView: View {
                             x: geometry.size.width * 0.5,
                             y: layout.viewfinderTopY + layout.viewfinderSize.height * 0.5
                         )
-                        .animation(.easeInOut(duration: 0.24), value: viewModel.captureMode.isVideo)
+                        .animation(.spring(response: 0.28, dampingFraction: 0.90), value: visualIsVideo)
+                        .animation(.easeOut(duration: 0.16), value: viewModel.isModeTransitionVeilVisible)
                         .zIndex(0)
 
                         // 2. Persistent Top Toolbar + Bottom Control Deck Chrome (Stands Still, Translucent over 9:16 Video)
@@ -473,7 +484,7 @@ public struct CameraMainView: View {
                             .padding(.bottom, layout.bottomComfort)
                             .background(
                                 Group {
-                                    if viewModel.captureMode.isVideo && !isPhotoStylePadActive {
+                                    if visualIsVideo && !isPhotoStylePadActive {
                                         LinearGradient(
                                             colors: [
                                                 Color.black.opacity(0.30),
@@ -665,7 +676,7 @@ public struct CameraMainView: View {
         .sheet(isPresented: $viewModel.isCompositionRuleSheetPresented) {
             CompositionRuleSheet(viewModel: viewModel)
         }
-        .sheet(isPresented: $viewModel.isShowingGallerySheet) {
+        .fullScreenCover(isPresented: $viewModel.isShowingGallerySheet) {
             PhotoGallerySheetView(viewModel: viewModel)
         }
         .fullScreenCover(isPresented: $viewModel.isShowingPhotoDetail) {
@@ -676,7 +687,7 @@ public struct CameraMainView: View {
         .fullScreenCover(isPresented: $viewModel.isShowingPhotoboothEditor) {
             PhotoboothEditorSheetView(viewModel: viewModel)
         }
-        .sheet(isPresented: $viewModel.isShowingVideoPreview) {
+        .fullScreenCover(isPresented: $viewModel.isShowingVideoPreview) {
             if let videoURL = viewModel.recordedVideoURL {
                 VideoPreviewSheetView(videoURL: videoURL, viewModel: viewModel)
             }
@@ -798,7 +809,7 @@ struct TopCameraBar: View {
         ZStack {
             // Center: Quiet Tabular Exposure / Mode Telemetry Pill
             HStack(spacing: 5) {
-                if viewModel.isProPhotoModeEnabled && !viewModel.captureMode.isVideo {
+                if viewModel.isVisualProPhotoSelected {
                     Text("PRO")
                         .font(.system(size: 9.5, weight: .bold, design: .monospaced))
                         .foregroundColor(AlignTheme.studioAccent)
@@ -817,7 +828,7 @@ struct TopCameraBar: View {
                         .foregroundColor(AlignTheme.studioInkPrimary)
                 }
 
-                if viewModel.isUltraSharpEnabled && !viewModel.captureMode.isVideo && !viewModel.isProPhotoModeEnabled {
+                if viewModel.isUltraSharpEnabled && !viewModel.visualCaptureMode.isVideo && !viewModel.isVisualProPhotoSelected {
                     Rectangle()
                         .fill(Color.white.opacity(0.18))
                         .frame(width: 0.7, height: 10)
@@ -870,7 +881,7 @@ struct TopCameraBar: View {
                             .padding(.trailing, 2)
                     } else {
                         Button(action: {
-                            if viewModel.captureMode.isVideo {
+                            if viewModel.visualCaptureMode.isVideo {
                                 viewModel.attemptFeature(.videoQualityAndCodec) {
                                     viewModel.toggleVideoFormat()
                                 }
@@ -992,7 +1003,7 @@ struct TopCameraBar: View {
     }
 
     private var currentFormatLabel: String {
-        if viewModel.captureMode.isVideo {
+        if viewModel.visualCaptureMode.isVideo {
             let w = viewModel.selectedVideoFormatOption.width
             let fps = Int(round(viewModel.selectedVideoFormatOption.fps))
             return w >= 3840 ? "4K·\(fps)" : "1080·\(fps)"

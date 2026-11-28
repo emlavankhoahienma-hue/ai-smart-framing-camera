@@ -111,7 +111,10 @@ public final class CameraService: NSObject {
     private let sessionQueue = DispatchQueue(label: "com.alignai.camera.sessionQueue", qos: .userInteractive)
     private let videoDataQueue = DispatchQueue(label: "com.alignai.camera.videoDataQueue", qos: .userInteractive)
     private let audioDataQueue = DispatchQueue(label: "com.alignai.camera.audioDataQueue", qos: .userInitiated)
+    private let audioSessionQueue = DispatchQueue(label: "com.alignai.camera.audioSessionQueue", qos: .userInitiated)
     private let photoProcessingQueue = DispatchQueue(label: "com.alignai.camera.photoProcessingQueue", qos: .userInitiated)
+    private var lastConfiguredAudioPosition: AVCaptureDevice.Position? = nil
+    private var isAudioSessionPreparedForVideo: Bool = false
 
     private var activeCamera: AVCaptureDevice?
     private var wideCameraDevice: AVCaptureDevice?
@@ -1102,7 +1105,7 @@ public final class CameraService: NSObject {
                         }
                         if self.currentCaptureMode.isVideo {
                             self.addAudioInputAndOutputInternal()
-                            self.configureAudioSessionForStereoCapture()
+                            self.configureAudioSessionForStereoCaptureAsync(cameraPosition: self.currentCameraPosition, force: true)
                         }
                         self.publishSessionRunning(self.wantsSessionRunning && self.captureSession.isRunning && !self.captureSession.isInterrupted)
                     }
@@ -1118,12 +1121,16 @@ public final class CameraService: NSObject {
                           let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
                     self?.sessionQueue.async { [weak self] in
                         guard let self else { return }
-                        if type == .ended {
+                        if type == .began {
+                            self.audioSessionQueue.async { [weak self] in
+                                self?.isAudioSessionPreparedForVideo = false
+                            }
+                        } else if type == .ended {
                             CameraLogger.info("CameraService: Cuoc goi ket thuc, phuc hoi san sang cho audio capture", category: .capture)
                             self.isAudioInputDisabledForCall = false
                             if self.currentCaptureMode.isVideo {
                                 self.addAudioInputAndOutputInternal()
-                                self.configureAudioSessionForStereoCapture()
+                                self.configureAudioSessionForStereoCaptureAsync(cameraPosition: self.currentCameraPosition, force: true)
                             }
                         }
                     }
@@ -2957,18 +2964,27 @@ public final class CameraService: NSObject {
     }
 
     @discardableResult
-    private func switchInputDeviceInternal(to newCamera: AVCaptureDevice, initialDisplayZoom: CGFloat? = nil) -> Bool {
+    private func switchInputDeviceInternal(
+        to newCamera: AVCaptureDevice,
+        initialDisplayZoom: CGFloat? = nil,
+        managesSessionTransaction: Bool = true
+    ) -> Bool {
         guard self.recordingState == .idle, !self.movieFileOutput.isRecording else { return false }
         if self.activeCamera == newCamera { return true }
-        let preservedBeforeSwitch = self.zoomStateLock.withLock {
-            self.zoomController.beginCameraReconfiguration(reason: "switchInputDevice", at: CACurrentMediaTime())
+        let preservedBeforeSwitch: CGFloat
+        if managesSessionTransaction {
+            preservedBeforeSwitch = self.zoomStateLock.withLock {
+                self.zoomController.beginCameraReconfiguration(reason: "switchInputDevice", at: CACurrentMediaTime())
+            }
+        } else {
+            preservedBeforeSwitch = self.convertDeviceZoomToDisplayZoom(self.currentZoom)
         }
         let targetDisplayToRestore = (initialDisplayZoom?.isFinite == true && (initialDisplayZoom ?? 0) > 0)
             ? initialDisplayZoom!
             : preservedBeforeSwitch
-        var reconfigEnded = false
+        var reconfigEnded = !managesSessionTransaction
         defer {
-            if !reconfigEnded {
+            if managesSessionTransaction && !reconfigEnded {
                 let fallbackCfg = self.buildCurrentZoomHardwareConfig()
                 self.zoomStateLock.withLock {
                     _ = self.zoomController.endCameraReconfiguration(
@@ -2982,10 +2998,12 @@ public final class CameraService: NSObject {
         }
         do {
             let newInput = try AVCaptureDeviceInput(device: newCamera)
-            captureSession.beginConfiguration()
-            var configurationCommitted = false
+            if managesSessionTransaction {
+                captureSession.beginConfiguration()
+            }
+            var configurationCommitted = !managesSessionTransaction
             defer {
-                if !configurationCommitted {
+                if managesSessionTransaction && !configurationCommitted {
                     captureSession.commitConfiguration()
                 }
             }
@@ -3001,8 +3019,10 @@ public final class CameraService: NSObject {
                 if let oldInput = previousInput {
                     captureSession.addInput(oldInput)
                 }
-                configurationCommitted = true
-                captureSession.commitConfiguration()
+                if managesSessionTransaction {
+                    configurationCommitted = true
+                    captureSession.commitConfiguration()
+                }
                 return false
             }
             captureSession.addInput(newInput)
@@ -3042,76 +3062,78 @@ public final class CameraService: NSObject {
             }
             updateMaxPhotoDimensions(for: newCamera)
 
-            let newCfg = self.buildCurrentZoomHardwareConfig(for: newCamera)
-            let restored = self.zoomStateLock.withLock {
-                self.zoomController.endCameraReconfiguration(
-                    newConfig: newCfg,
-                    overrideDisplayZoom: targetDisplayToRestore,
-                    reason: "switchInputDevice.\(newCamera.deviceType.rawValue)",
-                    at: CACurrentMediaTime()
-                )
-            }
-            reconfigEnded = true
+            if managesSessionTransaction {
+                let newCfg = self.buildCurrentZoomHardwareConfig(for: newCamera)
+                let restored = self.zoomStateLock.withLock {
+                    self.zoomController.endCameraReconfiguration(
+                        newConfig: newCfg,
+                        overrideDisplayZoom: targetDisplayToRestore,
+                        reason: "switchInputDevice.\(newCamera.deviceType.rawValue)",
+                        at: CACurrentMediaTime()
+                    )
+                }
+                reconfigEnded = true
 
-            do {
-                try newCamera.lockForConfiguration()
-                defer { newCamera.unlockForConfiguration() }
+                do {
+                    try newCamera.lockForConfiguration()
+                    defer { newCamera.unlockForConfiguration() }
 
-                if newCamera.isFocusModeSupported(.continuousAutoFocus) {
-                    newCamera.focusMode = .continuousAutoFocus
-                }
-                if newCamera.isExposureModeSupported(.continuousAutoExposure) {
-                    newCamera.exposureMode = .continuousAutoExposure
-                }
-                if newCamera.isSmoothAutoFocusSupported {
-                    newCamera.isSmoothAutoFocusEnabled = true
-                }
-                if newCamera.activeFormat.supportedColorSpaces.contains(.P3_D65) {
-                    newCamera.activeColorSpace = .P3_D65
-                }
-                newCamera.isSubjectAreaChangeMonitoringEnabled = true
-                if newCamera.deviceType == .builtInTripleCamera || newCamera.deviceType == .builtInDualCamera || newCamera.deviceType == .builtInDualWideCamera {
-                    self.configureConstituentDeviceSwitching(for: newCamera)
+                    if newCamera.isFocusModeSupported(.continuousAutoFocus) {
+                        newCamera.focusMode = .continuousAutoFocus
+                    }
+                    if newCamera.isExposureModeSupported(.continuousAutoExposure) {
+                        newCamera.exposureMode = .continuousAutoExposure
+                    }
+                    if newCamera.isSmoothAutoFocusSupported {
+                        newCamera.isSmoothAutoFocusEnabled = true
+                    }
+                    if newCamera.activeFormat.supportedColorSpaces.contains(.P3_D65) {
+                        newCamera.activeColorSpace = .P3_D65
+                    }
+                    newCamera.isSubjectAreaChangeMonitoringEnabled = true
+                    if newCamera.deviceType == .builtInTripleCamera || newCamera.deviceType == .builtInDualCamera || newCamera.deviceType == .builtInDualWideCamera {
+                        self.configureConstituentDeviceSwitching(for: newCamera)
+                    }
+
+                    _ = self.commitDeviceZoomUnlocked(
+                        on: newCamera,
+                        targetDeviceZoom: restored.deviceZoom,
+                        displayZoom: restored.displayZoom,
+                        source: .systemRestore,
+                        reason: "switchInputDevice.restore",
+                        logToFile: true
+                    )
+                } catch {
+                    CameraLogger.error("CameraService: Khong the lockForConfiguration cho \(newCamera.localizedName), dang rollback", error: error, category: .capture)
+                    captureSession.removeInput(newInput)
+                    if let oldInput = previousInput, captureSession.canAddInput(oldInput) {
+                        captureSession.addInput(oldInput)
+                        self.videoDeviceInput = oldInput
+                        self.activeCamera = previousCamera
+                        self.displayMultiplier = previousDisplayMultiplier
+                        self.hasUltraWideLens = previousHasUltraWide
+                    }
+                    reconfigEnded = false
+                    configurationCommitted = true
+                    captureSession.commitConfiguration()
+                    return false
                 }
 
-                _ = self.commitDeviceZoomUnlocked(
-                    on: newCamera,
-                    targetDeviceZoom: restored.deviceZoom,
-                    displayZoom: restored.displayZoom,
-                    source: .systemRestore,
-                    reason: "switchInputDevice.restore",
-                    logToFile: true
-                )
-            } catch {
-                CameraLogger.error("CameraService: Khong the lockForConfiguration cho \(newCamera.localizedName), dang rollback", error: error, category: .capture)
-                captureSession.removeInput(newInput)
-                if let oldInput = previousInput, captureSession.canAddInput(oldInput) {
-                    captureSession.addInput(oldInput)
-                    self.videoDeviceInput = oldInput
-                    self.activeCamera = previousCamera
-                    self.displayMultiplier = previousDisplayMultiplier
-                    self.hasUltraWideLens = previousHasUltraWide
-                }
-                reconfigEnded = false
                 configurationCommitted = true
                 captureSession.commitConfiguration()
-                return false
-            }
-
-            configurationCommitted = true
-            captureSession.commitConfiguration()
-            // Re-assert restored zoom after commitConfiguration() in case AVFoundation reset videoZoomFactor to 1.0
-            if abs(newCamera.videoZoomFactor - restored.deviceZoom) > 0.01,
-               let _ = try? newCamera.lockForConfiguration() {
-                _ = self.commitDeviceZoomUnlocked(
-                    on: newCamera,
-                    targetDeviceZoom: restored.deviceZoom,
-                    displayZoom: restored.displayZoom,
-                    source: .systemRestore,
-                    reason: "switchInputDevice.postCommitRestore",
-                    logToFile: false
-                )
-                newCamera.unlockForConfiguration()
+                // Re-assert restored zoom after commitConfiguration() in case AVFoundation reset videoZoomFactor to 1.0
+                if abs(newCamera.videoZoomFactor - restored.deviceZoom) > 0.01,
+                   let _ = try? newCamera.lockForConfiguration() {
+                    _ = self.commitDeviceZoomUnlocked(
+                        on: newCamera,
+                        targetDeviceZoom: restored.deviceZoom,
+                        displayZoom: restored.displayZoom,
+                        source: .systemRestore,
+                        reason: "switchInputDevice.postCommitRestore",
+                        logToFile: false
+                    )
+                    newCamera.unlockForConfiguration()
+                }
             }
 
             if newCamera.deviceType == .builtInTelephotoCamera {
@@ -3127,13 +3149,17 @@ public final class CameraService: NSObject {
         }
     }
 
-    private func configureVideoFormatInternal(option: VideoFormatOption) {
+    @discardableResult
+    private func configureVideoFormatInternal(
+        option: VideoFormatOption,
+        managesSessionTransaction: Bool = true
+    ) -> Double? {
         guard !self.isDualCameraActive else {
             CameraLogger.info("CameraService: Bỏ qua configureVideoFormatInternal khi Dual Camera đang kích hoạt", category: .capture)
-            return
+            return nil
         }
         appliedVideoFormatOption = nil
-        guard let currentCamera = self.activeCamera else { return }
+        guard let currentCamera = self.activeCamera else { return nil }
 
         var targetCamera = currentCamera
         var effectiveOption = option
@@ -3143,12 +3169,12 @@ public final class CameraService: NSObject {
         // nhung camera goc rong vat ly (.builtInWideAngleCamera) co ho tro:
         // Tu dong chuyen input sang camera goc rong vat ly de quay 4K 60FPS muot ma nhat!
         if candidates.isEmpty && currentCameraPosition == .back {
-            if let wideCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+            if let wideCamera = self.wideCameraDevice ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
                wideCamera != targetCamera {
                 let wideCandidates = Self.findCandidateVideoFormats(for: wideCamera, option: effectiveOption)
                 if !wideCandidates.isEmpty {
                     CameraLogger.info("CameraService: Chuyen sang camera goc rong vat ly (.builtInWideAngleCamera) de ho tro \(effectiveOption.rawValue) tren iPhone XS", category: .capture)
-                    if switchInputDeviceInternal(to: wideCamera) {
+                    if switchInputDeviceInternal(to: wideCamera, managesSessionTransaction: managesSessionTransaction) {
                         targetCamera = wideCamera
                         candidates = wideCandidates
                     }
@@ -3214,17 +3240,20 @@ public final class CameraService: NSObject {
 
         guard let targetFormat = selectedFormat else {
             CameraLogger.warning("CameraService: Khong tim thay format video phan cung cho \(effectiveOption.rawValue)", category: .capture)
-            return
+            return nil
         }
 
         do {
-            let reconfigPreserved = self.zoomStateLock.withLock {
-                self.zoomController.beginCameraReconfiguration(reason: "configureVideoFormat", at: CACurrentMediaTime())
+            var effectivePreservedDisplay = preservedDisplayZoom
+            var endedZoomReconfig = !managesSessionTransaction
+            if managesSessionTransaction {
+                let reconfigPreserved = self.zoomStateLock.withLock {
+                    self.zoomController.beginCameraReconfiguration(reason: "configureVideoFormat", at: CACurrentMediaTime())
+                }
+                effectivePreservedDisplay = (preservedDisplayZoom.isFinite && preservedDisplayZoom > 0) ? preservedDisplayZoom : reconfigPreserved
             }
-            let effectivePreservedDisplay = (preservedDisplayZoom.isFinite && preservedDisplayZoom > 0) ? preservedDisplayZoom : reconfigPreserved
-            var endedZoomReconfig = false
             defer {
-                if !endedZoomReconfig {
+                if managesSessionTransaction && !endedZoomReconfig {
                     let fallbackCfg = self.buildCurrentZoomHardwareConfig(for: targetCamera)
                     self.zoomStateLock.withLock {
                         _ = self.zoomController.endCameraReconfiguration(
@@ -3240,7 +3269,7 @@ public final class CameraService: NSObject {
             try targetCamera.lockForConfiguration()
             defer { targetCamera.unlockForConfiguration() }
 
-            let needsSessionReconfig = (targetCamera.activeFormat != targetFormat) || (self.captureSession.sessionPreset != .inputPriority)
+            let needsSessionReconfig = managesSessionTransaction && ((targetCamera.activeFormat != targetFormat) || (self.captureSession.sessionPreset != .inputPriority))
             var sessionCommitted = false
             if needsSessionReconfig {
                 self.captureSession.beginConfiguration()
@@ -3251,38 +3280,39 @@ public final class CameraService: NSObject {
                 }
             }
 
-            if needsSessionReconfig {
-                if self.captureSession.canSetSessionPreset(.inputPriority) && self.captureSession.sessionPreset != .inputPriority {
-                    self.captureSession.sessionPreset = .inputPriority
-                }
-                if targetCamera.activeFormat != targetFormat {
-                    targetCamera.activeFormat = targetFormat
-                }
+            if self.captureSession.canSetSessionPreset(.inputPriority) && self.captureSession.sessionPreset != .inputPriority {
+                self.captureSession.sessionPreset = .inputPriority
+            }
+            if targetCamera.activeFormat != targetFormat {
+                targetCamera.activeFormat = targetFormat
             }
             self.minZoom = targetCamera.minAvailableVideoZoomFactor
             self.maxZoom = min(targetCamera.maxAvailableVideoZoomFactor, 10.0)
-            let updatedCfg = self.buildCurrentZoomHardwareConfig(for: targetCamera)
-            let restored = self.zoomStateLock.withLock {
-                self.zoomController.endCameraReconfiguration(
-                    newConfig: updatedCfg,
-                    overrideDisplayZoom: effectivePreservedDisplay,
+
+            if managesSessionTransaction {
+                let updatedCfg = self.buildCurrentZoomHardwareConfig(for: targetCamera)
+                let restored = self.zoomStateLock.withLock {
+                    self.zoomController.endCameraReconfiguration(
+                        newConfig: updatedCfg,
+                        overrideDisplayZoom: effectivePreservedDisplay,
+                        reason: "configureVideoFormat.restore",
+                        at: CACurrentMediaTime()
+                    )
+                }
+                endedZoomReconfig = true
+                let reportedZoom = self.commitDeviceZoomUnlocked(
+                    on: targetCamera,
+                    targetDeviceZoom: restored.deviceZoom,
+                    displayZoom: restored.displayZoom,
+                    source: .systemRestore,
                     reason: "configureVideoFormat.restore",
-                    at: CACurrentMediaTime()
+                    logToFile: true
                 )
-            }
-            endedZoomReconfig = true
-            let reportedZoom = self.commitDeviceZoomUnlocked(
-                on: targetCamera,
-                targetDeviceZoom: restored.deviceZoom,
-                displayZoom: restored.displayZoom,
-                source: .systemRestore,
-                reason: "configureVideoFormat.restore",
-                logToFile: true
-            )
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.onLiveZoomFactorChanged?(reportedZoom)
-                self.delegate?.cameraService(self, didChangeZoomFactor: reportedZoom)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.onLiveZoomFactorChanged?(reportedZoom)
+                    self.delegate?.cameraService(self, didChangeZoomFactor: reportedZoom)
+                }
             }
 
             self.lockCameraFrameRate(for: targetCamera, targetFPS: targetFPS)
@@ -3305,13 +3335,16 @@ public final class CameraService: NSObject {
                 targetCamera.automaticallyAdjustsVideoHDREnabled = false
                 targetCamera.isVideoHDREnabled = true
             }
+            if abs(targetCamera.exposureTargetBias) > 0.01 {
+                targetCamera.setExposureTargetBias(0.0, completionHandler: nil)
+            }
 
             if needsSessionReconfig {
                 sessionCommitted = true
                 self.captureSession.commitConfiguration()
+                // Khoa lai fps SAU commit de session khong reset frame duration ve range rong (5-15fps)
+                self.lockCameraFrameRate(for: targetCamera, targetFPS: targetFPS)
             }
-            // Khoa lai fps SAU commit de session khong reset frame duration ve range rong (5-15fps)
-            self.lockCameraFrameRate(for: targetCamera, targetFPS: targetFPS)
 
             // Ở chế độ Video, chọn độ phân giải ảnh tĩnh nhẹ nhất của format để ISP không cấp phát bộ đệm 48MP gây lag luồng video 4K60
             let lightVideoPhotoDim = targetFormat.supportedMaxPhotoDimensions.min(by: {
@@ -3326,13 +3359,17 @@ public final class CameraService: NSObject {
             appliedVideoFormatOption = effectiveOption
             selectedVideoFormatOption = effectiveOption
 
-            let formatStr = getActiveVideoResolutionAndFPS()
-            DispatchQueue.main.async { [weak self] in
-                self?.onActiveVideoFormatChanged?(formatStr)
+            if managesSessionTransaction {
+                let formatStr = getActiveVideoResolutionAndFPS()
+                DispatchQueue.main.async { [weak self] in
+                    self?.onActiveVideoFormatChanged?(formatStr)
+                }
             }
             CameraLogger.info("CameraService: Khoa cung phan cung video thanh cong \(effectiveOption.rawValue) @ \(targetFPS) FPS", category: .capture)
+            return targetFPS
         } catch {
             CameraLogger.error("CameraService: Loi cau hinh video format \(effectiveOption.rawValue)", error: error, category: .capture)
+            return nil
         }
     }
 
@@ -3389,7 +3426,7 @@ public final class CameraService: NSObject {
             currentCaptureMode = desiredCaptureMode
             if desiredCaptureMode.isVideo {
                 self.audioDataOutput.setSampleBufferDelegate(self, queue: self.audioDataQueue)
-                self.configureAudioSessionForStereoCapture()
+                self.configureAudioSessionForStereoCaptureAsync(cameraPosition: self.currentCameraPosition)
                 DispatchQueue.main.async { [weak self] in
                     self?.onActiveVideoFormatChanged?("1080P 30FPS · DUAL PIP")
                 }
@@ -3414,8 +3451,18 @@ public final class CameraService: NSObject {
             return
         }
 
+        let switchSpan = CameraLogger.beginTrace("MODE_SWITCH", detail: "\(currentCaptureMode.rawValue)->\(mode.rawValue)", category: .capture)
+
         if mode.isVideo {
+            // Single atomic AVCaptureSession transaction for Photo -> Video:
+            // batches Live Photo disable + movieFileOutput + audioInput/Output + preset + video format/device switch
+            // into ONE hardware commit instead of 3-4 sequential ISP rebuilds.
+            let preservedDisplayZoom = self.zoomStateLock.withLock {
+                self.zoomController.beginCameraReconfiguration(reason: "applyCaptureMode.video", at: CACurrentMediaTime())
+            }
             var canAddMovie = true
+            var configuredFPS: Double? = nil
+
             captureSession.beginConfiguration()
             if photoOutput.isLivePhotoCaptureEnabled { photoOutput.isLivePhotoCaptureEnabled = false }
             if !captureSession.outputs.contains(movieFileOutput) {
@@ -3436,57 +3483,124 @@ public final class CameraService: NSObject {
                 videoDataConn.preferredVideoStabilizationMode = .off
             }
             if canAddMovie {
-                captureSession.sessionPreset = .inputPriority
+                if captureSession.canSetSessionPreset(.inputPriority) && captureSession.sessionPreset != .inputPriority {
+                    captureSession.sessionPreset = .inputPriority
+                }
+                self.addAudioInputAndOutputInternal(managesSessionTransaction: false)
+                configuredFPS = self.configureVideoFormatInternal(
+                    option: selectedVideoFormatOption,
+                    managesSessionTransaction: false
+                )
             }
             captureSession.commitConfiguration()
 
-            if let camera = self.activeCamera {
-                do {
-                    try camera.lockForConfiguration()
-                    if camera.isLowLightBoostSupported {
-                        camera.automaticallyEnablesLowLightBoostWhenAvailable = false
-                    }
-                    camera.setExposureTargetBias(0.0, completionHandler: nil)
-                    camera.unlockForConfiguration()
-                } catch {}
-            }
-
             guard canAddMovie else {
+                let rollbackCfg = self.buildCurrentZoomHardwareConfig()
+                self.zoomStateLock.withLock {
+                    _ = self.zoomController.endCameraReconfiguration(
+                        newConfig: rollbackCfg,
+                        overrideDisplayZoom: preservedDisplayZoom,
+                        reason: "applyCaptureMode.videoRollback",
+                        at: CACurrentMediaTime()
+                    )
+                }
                 desiredCaptureMode = currentCaptureMode
                 completePendingMode(false)
+                CameraLogger.endTrace(switchSpan, detail: "failed:canAddMovie=false")
                 return
             }
 
-            self.addAudioInputAndOutputInternal()
-            self.configureAudioSessionForStereoCapture()
-            configureVideoFormatInternal(option: selectedVideoFormatOption)
-            pendingVideoFormatChange = false
-        } else {
-            if currentCameraPosition == .back, activeCamera?.deviceType == .builtInWideAngleCamera {
-                let dualDiscovery = AVCaptureDevice.DiscoverySession(
-                    deviceTypes: [.builtInTripleCamera, .builtInDualCamera, .builtInDualWideCamera],
-                    mediaType: .video,
-                    position: .back
-                )
-                if let multiCam = dualDiscovery.devices.first, multiCam != activeCamera {
-                    CameraLogger.info("CameraService: Khoi phuc multi-camera cho che do Chup anh", category: .capture)
-                    _ = switchInputDeviceInternal(to: multiCam)
+            if let camera = self.activeCamera {
+                let videoCfg = self.buildCurrentZoomHardwareConfig(for: camera)
+                let restoredVideo = self.zoomStateLock.withLock {
+                    self.zoomController.endCameraReconfiguration(
+                        newConfig: videoCfg,
+                        overrideDisplayZoom: preservedDisplayZoom,
+                        reason: "applyCaptureMode.videoRestore",
+                        at: CACurrentMediaTime()
+                    )
+                }
+                do {
+                    try camera.lockForConfiguration()
+                    defer { camera.unlockForConfiguration() }
+                    self.minZoom = camera.minAvailableVideoZoomFactor
+                    self.maxZoom = min(camera.maxAvailableVideoZoomFactor, 10.0)
+                    if let targetFPS = configuredFPS {
+                        self.lockCameraFrameRate(for: camera, targetFPS: targetFPS)
+                    }
+                    if camera.isLowLightBoostSupported {
+                        camera.automaticallyEnablesLowLightBoostWhenAvailable = false
+                    }
+                    if abs(camera.exposureTargetBias) > 0.01 {
+                        camera.setExposureTargetBias(0.0, completionHandler: nil)
+                    }
+                    let reportedZoom = self.commitDeviceZoomUnlocked(
+                        on: camera,
+                        targetDeviceZoom: restoredVideo.deviceZoom,
+                        displayZoom: restoredVideo.displayZoom,
+                        source: .systemRestore,
+                        reason: "applyCaptureMode.videoRestore",
+                        logToFile: true
+                    )
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        self.onLiveZoomFactorChanged?(reportedZoom)
+                        self.delegate?.cameraService(self, didChangeZoomFactor: reportedZoom)
+                    }
+                } catch {
+                    CameraLogger.warning("CameraService: Post-commit video lock error: \(error.localizedDescription)", category: .capture)
+                }
+            } else {
+                let fallbackCfg = self.buildCurrentZoomHardwareConfig()
+                self.zoomStateLock.withLock {
+                    _ = self.zoomController.endCameraReconfiguration(
+                        newConfig: fallbackCfg,
+                        overrideDisplayZoom: preservedDisplayZoom,
+                        reason: "applyCaptureMode.videoNoCamera",
+                        at: CACurrentMediaTime()
+                    )
                 }
             }
 
-            self.removeAudioInputAndOutputInternal()
-
+            pendingVideoFormatChange = false
+        } else {
+            // Single atomic AVCaptureSession transaction for Video -> Photo:
+            // batches optional multi-cam restore + audio removal + movieFileOutput removal + Live Photo + .photo preset
+            // into ONE hardware commit.
             self.zoomStateLock.withLock {
                 _ = self.zoomController.beginCameraReconfiguration(reason: "applyCaptureMode.photo", at: CACurrentMediaTime())
             }
             captureSession.beginConfiguration()
+            if currentCameraPosition == .back, activeCamera?.deviceType == .builtInWideAngleCamera {
+                let restoredMultiCam: AVCaptureDevice? = self.multiCameraDevice ?? AVCaptureDevice.DiscoverySession(
+                    deviceTypes: [.builtInTripleCamera, .builtInDualCamera, .builtInDualWideCamera],
+                    mediaType: .video,
+                    position: .back
+                ).devices.first
+                if let multiCam = restoredMultiCam, multiCam != activeCamera {
+                    CameraLogger.info("CameraService: Khoi phuc multi-camera cho che do Chup anh", category: .capture)
+                    _ = switchInputDeviceInternal(
+                        to: multiCam,
+                        initialDisplayZoom: self.defaultDisplayZoom,
+                        managesSessionTransaction: false
+                    )
+                }
+            }
+
+            self.removeAudioInputAndOutputInternal(managesSessionTransaction: false)
+
             if captureSession.outputs.contains(movieFileOutput) {
                 captureSession.removeOutput(movieFileOutput)
             }
             if photoOutput.isLivePhotoCaptureSupported {
                 photoOutput.isLivePhotoCaptureEnabled = isLivePhotoMode
             }
-            captureSession.sessionPreset = .photo
+            if captureSession.canSetSessionPreset(.photo) && captureSession.sessionPreset != .photo {
+                captureSession.sessionPreset = .photo
+            }
+            if let camera = activeCamera {
+                updateMaxPhotoDimensions(for: camera)
+            }
             captureSession.commitConfiguration()
 
             if let camera = activeCamera {
@@ -3502,12 +3616,22 @@ public final class CameraService: NSObject {
                 do {
                     try camera.lockForConfiguration()
                     defer { camera.unlockForConfiguration() }
+                    if camera.isFocusModeSupported(.continuousAutoFocus) {
+                        camera.focusMode = .continuousAutoFocus
+                    }
+                    if camera.isExposureModeSupported(.continuousAutoExposure) {
+                        camera.exposureMode = .continuousAutoExposure
+                    }
+                    if camera.isSmoothAutoFocusSupported {
+                        camera.isSmoothAutoFocusEnabled = true
+                    }
                     if camera.activeFormat.supportedColorSpaces.contains(.P3_D65) {
                         camera.activeColorSpace = .P3_D65
                     }
                     if camera.activeFormat.isVideoHDRSupported {
                         camera.automaticallyAdjustsVideoHDREnabled = true
                     }
+                    camera.isSubjectAreaChangeMonitoringEnabled = true
                     self.configureConstituentDeviceSwitching(for: camera)
                     self.minZoom = camera.minAvailableVideoZoomFactor
                     self.maxZoom = min(camera.maxAvailableVideoZoomFactor, 10.0)
@@ -3527,7 +3651,6 @@ public final class CameraService: NSObject {
                 } catch {
                     CameraLogger.error("CameraService: Khong the khoi phuc P3 color space", error: error, category: .capture)
                 }
-                updateMaxPhotoDimensions(for: camera)
             } else {
                 let fallbackCfg = self.buildCurrentZoomHardwareConfig()
                 self.zoomStateLock.withLock {
@@ -3544,12 +3667,18 @@ public final class CameraService: NSObject {
             pendingVideoFormatChange = false
             appliedVideoFormatOption = nil
         }
+
         currentCaptureMode = mode
+        if mode.isVideo {
+            // Configure stereo AVAudioSession asynchronously off sessionQueue so CoreAudio IPC never stalls viewfinder switch
+            self.configureAudioSessionForStereoCaptureAsync(cameraPosition: self.currentCameraPosition)
+        }
         let formatStr = mode.isVideo && appliedVideoFormatOption == nil
             ? "Khong ho tro \(selectedVideoFormatOption.rawValue) tren camera hien tai"
             : getActiveVideoResolutionAndFPS()
         DispatchQueue.main.async { [weak self] in self?.onActiveVideoFormatChanged?(formatStr) }
         completePendingMode(true)
+        CameraLogger.endTrace(switchSpan, detail: "\(mode.rawValue) (\(formatStr))")
         CameraLogger.info("Da chuyen che do: \(mode.rawValue) (\(formatStr))", category: .capture)
     }
 
@@ -3755,13 +3884,19 @@ public final class CameraService: NSObject {
     }
 
     // MARK: - Dynamic Audio Input & Output Management
-    private func addAudioInputAndOutputInternal() {
+    private func addAudioInputAndOutputInternal(managesSessionTransaction: Bool = true) {
         guard audioDeviceInput == nil, !isAudioInputDisabledForCall else { return }
         guard let audioDevice = AVCaptureDevice.default(for: .audio) else { return }
         do {
             let audioInput = try AVCaptureDeviceInput(device: audioDevice)
-            captureSession.beginConfiguration()
-            defer { captureSession.commitConfiguration() }
+            if managesSessionTransaction {
+                captureSession.beginConfiguration()
+            }
+            defer {
+                if managesSessionTransaction {
+                    captureSession.commitConfiguration()
+                }
+            }
             if captureSession.canAddInput(audioInput) {
                 captureSession.addInput(audioInput)
                 self.audioDeviceInput = audioInput
@@ -3776,9 +3911,16 @@ public final class CameraService: NSObject {
         }
     }
 
-    private func removeAudioInputAndOutputInternal() {
-        captureSession.beginConfiguration()
-        defer { captureSession.commitConfiguration() }
+    private func removeAudioInputAndOutputInternal(managesSessionTransaction: Bool = true) {
+        guard self.audioDeviceInput != nil || captureSession.outputs.contains(audioDataOutput) else { return }
+        if managesSessionTransaction {
+            captureSession.beginConfiguration()
+        }
+        defer {
+            if managesSessionTransaction {
+                captureSession.commitConfiguration()
+            }
+        }
         if let audioInput = self.audioDeviceInput {
             if captureSession.inputs.contains(audioInput) {
                 captureSession.removeInput(audioInput)
@@ -3794,42 +3936,55 @@ public final class CameraService: NSObject {
 
     // MARK: - Audio Session Configuration for Stereo Multi-Mic Capture
     public func configureAudioSessionForStereoCapture() {
-        guard currentCaptureMode.isVideo else { return }
-        let audioSession = AVAudioSession.sharedInstance()
-        do {
-            try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP, .mixWithOthers])
+        guard currentCaptureMode.isVideo || desiredCaptureMode.isVideo else { return }
+        configureAudioSessionForStereoCaptureAsync(cameraPosition: self.currentCameraPosition, force: false)
+    }
 
-            if let builtInMic = audioSession.availableInputs?.first(where: { $0.portType == .builtInMic }) {
-                try audioSession.setPreferredInput(builtInMic)
+    private func configureAudioSessionForStereoCaptureAsync(cameraPosition: AVCaptureDevice.Position, force: Bool = false) {
+        audioSessionQueue.async { [weak self] in
+            guard let self else { return }
+            if !force && self.isAudioSessionPreparedForVideo && self.lastConfiguredAudioPosition == cameraPosition {
+                return
+            }
+            let audioSession = AVAudioSession.sharedInstance()
+            do {
+                try audioSession.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP, .mixWithOthers])
 
-                if let dataSources = builtInMic.dataSources {
-                    let targetOrientation: AVAudioSession.Orientation = (self.currentCameraPosition == .front) ? .front : .back
-                    let stereoDataSource = dataSources.first(where: {
-                        $0.orientation == targetOrientation && ($0.supportedPolarPatterns?.contains(.stereo) == true)
-                    }) ?? dataSources.first(where: {
-                        $0.supportedPolarPatterns?.contains(.stereo) == true
-                    })
+                if let builtInMic = audioSession.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+                    try audioSession.setPreferredInput(builtInMic)
 
-                    if let stereoDataSource = stereoDataSource {
-                        try stereoDataSource.setPreferredPolarPattern(.stereo)
-                        try builtInMic.setPreferredDataSource(stereoDataSource)
+                    if let dataSources = builtInMic.dataSources {
+                        let targetOrientation: AVAudioSession.Orientation = (cameraPosition == .front) ? .front : .back
+                        let stereoDataSource = dataSources.first(where: {
+                            $0.orientation == targetOrientation && ($0.supportedPolarPatterns?.contains(.stereo) == true)
+                        }) ?? dataSources.first(where: {
+                            $0.supportedPolarPatterns?.contains(.stereo) == true
+                        })
+
+                        if let stereoDataSource = stereoDataSource {
+                            try stereoDataSource.setPreferredPolarPattern(.stereo)
+                            try builtInMic.setPreferredDataSource(stereoDataSource)
+                        }
                     }
                 }
-            }
 
-            let maxChannels = audioSession.maximumInputNumberOfChannels
-            if maxChannels >= 2 {
-                try audioSession.setPreferredInputNumberOfChannels(2)
-            }
+                let maxChannels = audioSession.maximumInputNumberOfChannels
+                if maxChannels >= 2 {
+                    try audioSession.setPreferredInputNumberOfChannels(2)
+                }
 
-            if #available(iOS 14.0, *) {
-                try audioSession.setPreferredInputOrientation(.portrait)
-            }
+                if #available(iOS 14.0, *) {
+                    try audioSession.setPreferredInputOrientation(.portrait)
+                }
 
-            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-            CameraLogger.info("CameraService: AudioSession configured for stereo capture with \(audioSession.inputNumberOfChannels) channels", category: .capture)
-        } catch {
-            CameraLogger.warning("CameraService: AudioSession khong the kich hoat doc quyen (co the dang co cuoc goi / nhac nen): \(error.localizedDescription)", category: .capture)
+                try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+                self.lastConfiguredAudioPosition = cameraPosition
+                self.isAudioSessionPreparedForVideo = true
+                CameraLogger.info("CameraService: AudioSession configured for stereo capture with \(audioSession.inputNumberOfChannels) channels", category: .capture)
+            } catch {
+                self.isAudioSessionPreparedForVideo = false
+                CameraLogger.warning("CameraService: AudioSession khong the kich hoat doc quyen (co the dang co cuoc goi / nhac nen): \(error.localizedDescription)", category: .capture)
+            }
         }
     }
 }

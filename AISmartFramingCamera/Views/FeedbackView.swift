@@ -11,16 +11,35 @@ public enum FeedbackCategory: String, CaseIterable, Identifiable {
 
     public var id: String { rawValue }
 
+    public var shortTitle: String {
+        switch self {
+        case .bug: return "Báo lỗi"
+        case .feature: return "Tính năng"
+        case .other: return "Góp ý khác"
+        }
+    }
+
     public var icon: String {
         switch self {
-        case .bug: return "exclamationmark.triangle.fill"
+        case .bug: return "exclamationmark.triangle"
         case .feature: return "sparkles"
-        case .other: return "bubble.left.and.bubble.right.fill"
+        case .other: return "bubble.left.and.text.bubble.right"
+        }
+    }
+
+    public var placeholderText: String {
+        switch self {
+        case .bug:
+            return "Mô tả lỗi bạn gặp phải, các bước thực hiện và thời điểm xảy ra để đội ngũ tái hiện và xử lý nhanh nhất..."
+        case .feature:
+            return "Chia sẻ tính năng mới hoặc điểm bạn muốn cải thiện trên Align Studio Camera..."
+        case .other:
+            return "Góp ý của bạn về giao diện, chất lượng ảnh/video hoặc trải nghiệm sử dụng hàng ngày..."
         }
     }
 }
 
-// MARK: - Feedback View (Pro-Camera Luxury Edition)
+// MARK: - Feedback View (Unified Align Studio Monochrome + Warm Titanium Form)
 public struct FeedbackView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedCategory: FeedbackCategory = .bug
@@ -29,21 +48,16 @@ public struct FeedbackView: View {
     @State private var selectedImagesData: [Data] = []
     @State private var showMailComposer = false
     @State private var showNoMailAlert = false
+    @State private var toastMessage: String? = nil
     @FocusState private var isTextEditorFocused: Bool
 
     private let maxCharLimit = 1000
     private let recipientEmail = "cskhgopyalignai@gmail.com"
 
-    // Design System Constants
-    private let canvasBackground = Color(red: 0.035, green: 0.035, blue: 0.045)
-    private let cardBackground = Color(red: 0.075, green: 0.075, blue: 0.090)
-    private let amberGold = Color(red: 1.0, green: 0.72, blue: 0.0)
-    private let cardStroke = Color.white.opacity(0.08)
-
     private var appVersionString: String {
         let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "171"
-        return "\(short) (build \(build))"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+        return "\(short) (\(build))"
     }
 
     private var timestampString: String {
@@ -55,26 +69,35 @@ public struct FeedbackView: View {
     public init() {}
 
     public var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                // MARK: - 1. Category Selector Chips
-                categorySelectorView
+        ZStack {
+            AlignTheme.studioCanvas
+                .ignoresSafeArea()
 
-                // MARK: - 2. Content Card with Character Counter
-                contentEditorCard
-
-                // MARK: - 3. Photo Attachments Card (Max 3)
-                photoAttachmentsCard
-
-                // MARK: - 4. Submit Button
-                submitButton
-
-                // MARK: - 5. System Info Note
-                systemNoteView
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 18) {
+                    studioIntroHeader
+                    categorySelectorSection
+                    contentEditorSection
+                    photoAttachmentsSection
+                    diagnosticSummaryCard
+                    submitActionSection
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 32)
             }
-            .padding(16)
+            .scrollDismissesKeyboard(.interactively)
+
+            if let msg = toastMessage {
+                VStack {
+                    Spacer()
+                    ToastBanner(message: msg)
+                        .padding(.bottom, 22)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+                .allowsHitTesting(false)
+            }
         }
-        .background(canvasBackground.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .navigationTitle("Góp ý & Hỗ trợ")
         .navigationBarTitleDisplayMode(.inline)
@@ -84,8 +107,8 @@ public struct FeedbackView: View {
                 Button("Xong") {
                     isTextEditorFocused = false
                 }
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundColor(amberGold)
+                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                .foregroundColor(AlignTheme.studioAccent)
             }
         }
         .sheet(isPresented: $showMailComposer) {
@@ -98,108 +121,139 @@ public struct FeedbackView: View {
                 onFinish: { dismiss() }
             )
         }
-        .alert("Chưa cấu hình app Mail", isPresented: $showNoMailAlert) {
-            Button("Mở Mail mặc định (không kèm ảnh/log)") { openFallbackMailto() }
+        .alert("Chưa cấu hình ứng dụng Mail", isPresented: $showNoMailAlert) {
+            Button("Mở ứng dụng thư mặc định") { openFallbackMailto() }
+            Button("Sao chép email hỗ trợ") { copySupportEmail() }
             Button("Hủy", role: .cancel) {}
         } message: {
-            Text("Máy chưa có tài khoản trong ứng dụng Mail của Apple nên không thể tự động đính kèm ảnh/nhật ký kỹ thuật. Bạn có thể mở ứng dụng gửi thư mặc định để gửi nhanh.")
+            Text("Thiết bị chưa đăng nhập tài khoản trong ứng dụng Apple Mail nên không thể tự động đính kèm ảnh và tệp log. Bạn có thể mở ứng dụng thư mặc định hoặc sao chép địa chỉ email để gửi thủ công.")
         }
     }
 
-    // MARK: - Category Selector Chips
-    private var categorySelectorView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(amberGold.opacity(0.16))
-                        .frame(width: 22, height: 22)
-                    Image(systemName: "tag.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(amberGold)
-                }
-
-                Text("CHUYÊN MỤC GÓP Ý")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.50))
+    // MARK: - 1. Calm Studio Intro Header
+    private var studioIntroHeader: some View {
+        HStack(spacing: 13) {
+            ZStack {
+                Circle()
+                    .fill(AlignTheme.studioElevated)
+                    .frame(width: 44, height: 44)
+                    .overlay(
+                        Circle().stroke(AlignTheme.studioHairline, lineWidth: 0.7)
+                    )
+                Image(systemName: "envelope.open")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(AlignTheme.studioAccent)
             }
 
-            HStack(spacing: 8) {
-                ForEach(FeedbackCategory.allCases) { category in
-                    let isSelected = selectedCategory == category
-                    Button(action: {
-                        UISelectionFeedbackGenerator().selectionChanged()
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
-                            selectedCategory = category
-                        }
-                    }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: category.icon)
-                                .font(.system(size: 12, weight: .semibold))
-                            Text(category.rawValue)
-                                .font(.system(size: 12.5, weight: isSelected ? .bold : .medium, design: .rounded))
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 9)
-                        .background(
-                            Capsule()
-                                .fill(isSelected ? amberGold : Color(red: 0.08, green: 0.08, blue: 0.10))
-                        )
-                        .overlay(
-                            Capsule()
-                                .stroke(isSelected ? amberGold : Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                        .foregroundColor(isSelected ? .black : Color.white.opacity(0.85))
-                        .shadow(color: isSelected ? amberGold.opacity(0.3) : Color.clear, radius: 6)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Gửi phản hồi tới Align Studio")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundColor(AlignTheme.studioInkPrimary)
+
+                Text("Mọi góp ý được đọc trực tiếp. Nhật ký kỹ thuật sẽ được đính kèm an toàn để xử lý lỗi nhanh hơn.")
+                    .font(.system(size: 12))
+                    .foregroundColor(AlignTheme.studioInkSecondary)
+                    .lineSpacing(2)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(AlignTheme.studioSurface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(AlignTheme.studioHairlineSubtle, lineWidth: 0.7)
+                )
+        )
     }
 
-    // MARK: - Content Editor Card
-    private var contentEditorCard: some View {
+    // MARK: - 2. Equal 3-Column Category Cards (Zero Clipping / Zero Wrapping)
+    private var categorySelectorSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(amberGold.opacity(0.16))
-                        .frame(width: 22, height: 22)
-                    Image(systemName: "text.bubble.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(amberGold)
-                }
+            Text("CHUYÊN MỤC")
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .tracking(0.8)
+                .foregroundColor(AlignTheme.studioInkSecondary)
+                .padding(.horizontal, 2)
 
+            HStack(spacing: 8) {
+                ForEach(FeedbackCategory.allCases) { category in
+                    let isSelected = (selectedCategory == category)
+                    Button(action: {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
+                            selectedCategory = category
+                        }
+                    }) {
+                        VStack(spacing: 7) {
+                            Image(systemName: category.icon)
+                                .font(.system(size: 15, weight: isSelected ? .semibold : .regular))
+                                .foregroundColor(isSelected ? AlignTheme.studioAccent : AlignTheme.studioInkSecondary)
+
+                            Text(category.shortTitle)
+                                .font(.system(size: 12, weight: isSelected ? .semibold : .medium, design: .rounded))
+                                .foregroundColor(isSelected ? AlignTheme.studioInkPrimary : AlignTheme.studioInkSecondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(isSelected ? AlignTheme.studioAccentSoft : AlignTheme.studioSurface)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .stroke(isSelected ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle, lineWidth: isSelected ? 0.9 : 0.65)
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    // MARK: - 3. Refined Multi-line Content Editor
+    private var contentEditorSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
                 Text("NỘI DUNG CHI TIẾT")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.50))
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .tracking(0.8)
+                    .foregroundColor(AlignTheme.studioInkSecondary)
 
                 Spacer()
 
                 Text("\(feedbackText.count)/\(maxCharLimit)")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(feedbackText.count >= maxCharLimit ? .red : (feedbackText.count > 900 ? amberGold : Color.white.opacity(0.40)))
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundColor(
+                        feedbackText.count >= maxCharLimit
+                            ? AlignTheme.studioRecordRed
+                            : (feedbackText.count > 850 ? AlignTheme.studioAccent : AlignTheme.studioInkTertiary)
+                    )
             }
+            .padding(.horizontal, 2)
 
             ZStack(alignment: .topLeading) {
                 if feedbackText.isEmpty {
-                    Text("Mô tả chi tiết lỗi bạn gặp phải hoặc đề xuất tính năng mới mà bạn muốn có trong AlignAI Camera...")
+                    Text(selectedCategory.placeholderText)
                         .font(.system(size: 14))
-                        .foregroundColor(Color.white.opacity(0.35))
+                        .foregroundColor(AlignTheme.studioInkTertiary)
                         .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 14)
                         .lineSpacing(3)
+                        .allowsHitTesting(false)
                 }
 
                 TextEditor(text: $feedbackText)
                     .focused($isTextEditorFocused)
                     .scrollContentBackground(.hidden)
                     .font(.system(size: 14))
-                    .foregroundColor(.white)
-                    .padding(10)
-                    .frame(minHeight: 150)
+                    .foregroundColor(AlignTheme.studioInkPrimary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(minHeight: 148)
                     .onChangeCompatible(of: feedbackText) { newValue in
                         if newValue.count > maxCharLimit {
                             feedbackText = String(newValue.prefix(maxCharLimit))
@@ -207,117 +261,134 @@ public struct FeedbackView: View {
                     }
             }
             .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(cardBackground)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(AlignTheme.studioSurface)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(cardStroke, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(
+                                isTextEditorFocused ? AlignTheme.studioAccentBorder : AlignTheme.studioHairlineSubtle,
+                                lineWidth: isTextEditorFocused ? 0.9 : 0.7
+                            )
                     )
             )
+            .animation(.easeInOut(duration: 0.16), value: isTextEditorFocused)
         }
     }
 
-    // MARK: - Photo Attachments Card (Max 3)
-    private var photoAttachmentsCard: some View {
+    // MARK: - 4. Uniform 3-Slot Photo Attachment Tray
+    private var photoAttachmentsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(amberGold.opacity(0.16))
-                        .frame(width: 22, height: 22)
-                    Image(systemName: "photo.stack.fill")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(amberGold)
-                }
-
-                Text("ẢNH MINH HỌA (TỐI ĐA 3 ẢNH)")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.50))
+            HStack {
+                Text("ẢNH MINH HỌA")
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .tracking(0.8)
+                    .foregroundColor(AlignTheme.studioInkSecondary)
 
                 Spacer()
 
                 Text("\(selectedImagesData.count)/3")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundColor(amberGold)
+                    .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                    .foregroundColor(selectedImagesData.isEmpty ? AlignTheme.studioInkTertiary : AlignTheme.studioAccent)
             }
+            .padding(.horizontal, 2)
 
-            HStack(spacing: 12) {
-                if selectedImagesData.count < 3 {
-                    addPhotoPickerButton
-                }
-
+            HStack(spacing: 10) {
                 ForEach(0..<selectedImagesData.count, id: \.self) { idx in
-                    thumbnailPreview(index: idx)
+                    attachmentThumbnailSlot(index: idx)
                 }
 
-                Spacer()
+                if selectedImagesData.count < 3 {
+                    addPhotoSlotButton
+                }
+
+                if selectedImagesData.count < 2 {
+                    ForEach(0..<(2 - selectedImagesData.count), id: \.self) { _ in
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(AlignTheme.studioSurface.opacity(0.45))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 88)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(AlignTheme.studioHairlineSubtle.opacity(0.6), lineWidth: 0.6)
+                            )
+                    }
+                }
             }
-            .padding(.vertical, 2)
         }
     }
 
-    private var addPhotoPickerButton: some View {
+    private var addPhotoSlotButton: some View {
         PhotosPicker(
             selection: $selectedPhotoItems,
             maxSelectionCount: max(1, 3 - selectedImagesData.count),
             matching: .images
         ) {
             VStack(spacing: 6) {
-                Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundColor(amberGold)
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(AlignTheme.studioAccent)
                 Text("Thêm ảnh")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundColor(Color.white.opacity(0.85))
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundColor(AlignTheme.studioInkSecondary)
             }
-            .frame(width: 84, height: 84)
+            .frame(maxWidth: .infinity)
+            .frame(height: 88)
             .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(cardBackground)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(AlignTheme.studioSurface)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(amberGold.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [5]))
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(AlignTheme.studioHairline, style: StrokeStyle(lineWidth: 0.9, dash: [4, 4]))
                     )
             )
         }
+        .buttonStyle(.plain)
         .onChangeCompatible(of: selectedPhotoItems) { newItems in
             handlePickedPhotos(newItems)
         }
     }
 
     @ViewBuilder
-    private func thumbnailPreview(index: Int) -> some View {
+    private func attachmentThumbnailSlot(index: Int) -> some View {
         if index < selectedImagesData.count, let uiImg = UIImage(data: selectedImagesData[index]) {
             ZStack(alignment: .topTrailing) {
                 Image(uiImage: uiImg)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(width: 84, height: 84)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 88)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(AlignTheme.studioHairline, lineWidth: 0.7)
                     )
 
                 Button(action: {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.82)) {
                         if index < selectedImagesData.count {
                             selectedImagesData.remove(at: index)
                         }
                     }
                 }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(.red)
-                        .background(Circle().fill(Color.black).padding(2))
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: 22, height: 22)
+                        .background(Circle().fill(Color.black.opacity(0.72)))
+                        .overlay(Circle().stroke(Color.white.opacity(0.20), lineWidth: 0.6))
                 }
-                .offset(x: 6, y: -6)
+                .buttonStyle(.plain)
+                .padding(5)
+                .accessibilityLabel("Xóa ảnh đính kèm")
             }
+            .frame(maxWidth: .infinity)
+            .frame(height: 88)
         }
     }
 
     private func handlePickedPhotos(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
         Task {
             for item in items {
                 if let data = try? await item.loadTransferable(type: Data.self) {
@@ -334,8 +405,100 @@ public struct FeedbackView: View {
         }
     }
 
-    // MARK: - Submit Button
-    private var submitButton: some View {
+    // MARK: - 5. Diagnostic & Support Channel Summary Card
+    private var diagnosticSummaryCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("THÔNG TIN ĐÍNH KÈM")
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .tracking(0.8)
+                .foregroundColor(AlignTheme.studioInkSecondary)
+                .padding(.horizontal, 2)
+
+            VStack(spacing: 0) {
+                summaryRow(label: "Phiên bản ứng dụng", value: "v\(appVersionString)")
+                Divider().background(AlignTheme.studioHairlineSubtle)
+                summaryRow(label: "Hệ thống", value: "\(UIDevice.current.model) · iOS \(UIDevice.current.systemVersion)")
+                Divider().background(AlignTheme.studioHairlineSubtle)
+
+                HStack {
+                    Text("Nhật ký CameraLogger")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
+                    Spacer()
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(AlignTheme.studioPositive)
+                            .frame(width: 6, height: 6)
+                        Text("Tự động đính kèm")
+                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                            .foregroundColor(AlignTheme.studioInkPrimary)
+                    }
+                }
+                .padding(.vertical, 10)
+
+                Divider().background(AlignTheme.studioHairlineSubtle)
+
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Email hỗ trợ")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundColor(AlignTheme.studioInkSecondary)
+                        Text(recipientEmail)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundColor(AlignTheme.studioInkPrimary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    Button(action: { copySupportEmail() }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "doc.on.doc")
+                                .font(.system(size: 10.5, weight: .semibold))
+                            Text("Sao chép")
+                                .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                        }
+                        .foregroundColor(AlignTheme.studioInkPrimary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(AlignTheme.studioElevated)
+                                .overlay(Capsule().stroke(AlignTheme.studioHairline, lineWidth: 0.65))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.vertical, 10)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(AlignTheme.studioSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(AlignTheme.studioHairlineSubtle, lineWidth: 0.7)
+                    )
+            )
+        }
+    }
+
+    private func summaryRow(label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundColor(AlignTheme.studioInkSecondary)
+            Spacer()
+            Text(value)
+                .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                .foregroundColor(AlignTheme.studioInkPrimary)
+        }
+        .padding(.vertical, 10)
+    }
+
+    // MARK: - 6. High-Contrast Studio Primary CTA Pill
+    private var submitActionSection: some View {
         Button(action: {
             isTextEditorFocused = false
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -347,44 +510,52 @@ public struct FeedbackView: View {
         }) {
             HStack(spacing: 8) {
                 Image(systemName: "paperplane.fill")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(.system(size: 13.5, weight: .semibold))
                 Text("Gửi phản hồi")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.system(size: 14.5, weight: .semibold, design: .rounded))
             }
-            .foregroundColor(.black)
+            .foregroundColor(isSubmitDisabled ? AlignTheme.studioInkTertiary : .black)
             .frame(maxWidth: .infinity)
-            .frame(height: 50)
+            .frame(height: 48)
             .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(isSubmitDisabled ? amberGold.opacity(0.35) : amberGold)
+                Capsule()
+                    .fill(isSubmitDisabled ? AlignTheme.studioElevated : AlignTheme.studioInkPrimary)
+                    .overlay(
+                        Capsule()
+                            .stroke(isSubmitDisabled ? AlignTheme.studioHairlineSubtle : Color.clear, lineWidth: 0.7)
+                    )
             )
-            .shadow(color: isSubmitDisabled ? Color.clear : amberGold.opacity(0.35), radius: 10, x: 0, y: 3)
         }
+        .buttonStyle(.plain)
         .disabled(isSubmitDisabled)
-        .padding(.top, 4)
+        .padding(.top, 2)
     }
 
     private var isSubmitDisabled: Bool {
         feedbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    // MARK: - System Note
-    private var systemNoteView: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "info.circle.fill")
-                .font(.system(size: 13))
-                .foregroundColor(amberGold)
-                .padding(.top, 1)
-
-            Text("Thư góp ý sẽ tự động đính kèm thông tin thiết bị (model máy, phiên bản iOS, phiên bản app \(appVersionString)) và trích xuất nhật ký lỗi kỹ thuật gần nhất từ CameraLogger để hỗ trợ xử lý nhanh nhất.")
-                .font(.system(size: 11))
-                .foregroundColor(Color.white.opacity(0.50))
-                .lineSpacing(2.5)
-        }
-        .padding(.horizontal, 4)
+    // MARK: - Helpers
+    private func copySupportEmail() {
+        UIPasteboard.general.string = recipientEmail
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showToast("Đã sao chép email: \(recipientEmail)")
     }
 
-    // MARK: - Helpers
+    private func showToast(_ msg: String) {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+            toastMessage = msg
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            withAnimation(.easeInOut(duration: 0.22)) {
+                if toastMessage == msg {
+                    toastMessage = nil
+                }
+            }
+        }
+    }
+
     private func buildEmailBody() -> String {
         let screen = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }

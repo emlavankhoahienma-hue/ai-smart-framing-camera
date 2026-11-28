@@ -2104,23 +2104,31 @@ struct AdvancedSettingsSection: View {
 
     // Card 2: Hỗ trợ & Thông tin bản quyền
     private var supportInfoCard: some View {
-        SettingsSectionCard(title: "Hỗ trợ & Thông tin", icon: "info.circle.fill") {
+        let appShortVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        let appBuildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "2026"
+        return SettingsSectionCard(title: "Hỗ trợ & Thông tin", icon: "info.circle.fill") {
             VStack(spacing: 0) {
                 NavigationLink(destination: FeedbackView()) {
                     HStack(spacing: 12) {
                         SettingsRowIcon("envelope.fill")
 
-                        Text("Gửi góp ý & phản hồi")
-                            .font(.system(size: 14.5, weight: .medium))
-                            .foregroundColor(Color(red: 228/255, green: 228/255, blue: 231/255))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Góp ý & Hỗ trợ")
+                                .font(.system(size: 14.5, weight: .medium))
+                                .foregroundColor(AlignTheme.studioInkPrimary)
+                            Text("Báo lỗi, đề xuất tính năng và gửi kèm log")
+                                .font(.system(size: 11.5))
+                                .foregroundColor(AlignTheme.studioInkSecondary)
+                                .lineLimit(1)
+                        }
 
                         Spacer()
 
                         Image(systemName: "chevron.right")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(Color.white.opacity(0.35))
+                            .foregroundColor(AlignTheme.studioInkTertiary)
                     }
-                    .frame(minHeight: 52)
+                    .frame(minHeight: 54)
                 }
 
                 dividerLine
@@ -2129,25 +2137,31 @@ struct AdvancedSettingsSection: View {
                     HStack(spacing: 12) {
                         SettingsRowIcon("cup.and.saucer.fill")
 
-                        Text("Ủng hộ tác giả")
-                            .font(.system(size: 14.5, weight: .bold, design: .rounded))
-                            .foregroundColor(AlignTheme.studioAccent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Ủng hộ tác giả")
+                                .font(.system(size: 14.5, weight: .semibold, design: .rounded))
+                                .foregroundColor(AlignTheme.studioAccent)
+                            Text("Mời tác giả một ly cà phê qua MB Bank / VietQR")
+                                .font(.system(size: 11.5))
+                                .foregroundColor(AlignTheme.studioInkSecondary)
+                                .lineLimit(1)
+                        }
 
                         Spacer()
 
                         Image(systemName: "chevron.right")
                             .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(Color.white.opacity(0.35))
+                            .foregroundColor(AlignTheme.studioInkTertiary)
                     }
-                    .frame(minHeight: 52)
+                    .frame(minHeight: 54)
                 }
 
                 dividerLine
 
                 VStack(spacing: 8) {
-                    infoRow(label: "Tác giả", value: "ace4youblade ( VanKhoa )")
+                    infoRow(label: "Tác giả", value: "ace4youblade (VanKhoa)")
                     infoRow(label: "Liên hệ", value: "tranvantrinhhd@gmail.com")
-                    infoRow(label: "Phiên bản", value: "Free (Build 2026.3)")
+                    infoRow(label: "Phiên bản", value: "v\(appShortVersion) (Build \(appBuildNumber))")
                 }
                 .padding(.vertical, 8)
             }
@@ -2158,11 +2172,11 @@ struct AdvancedSettingsSection: View {
         HStack {
             Text(label)
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(Color.white.opacity(0.70))
+                .foregroundColor(AlignTheme.studioInkSecondary)
             Spacer()
             Text(value)
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundColor(.white)
+                .foregroundColor(AlignTheme.studioInkPrimary)
                 .lineLimit(2)
                 .multilineTextAlignment(.trailing)
         }
@@ -2184,43 +2198,54 @@ public struct SupportDeveloperView: View {
     public init() {}
 
     public var body: some View {
-        ScrollView {
+        ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 16) {
-                // Hero Header
-                VStack(spacing: 8) {
+                // Calm Monochrome Studio Hero Card
+                VStack(spacing: 10) {
                     ZStack {
                         Circle()
-                            .fill(AlignTheme.studioAccent.opacity(0.18))
-                            .frame(width: 72, height: 72)
+                            .fill(AlignTheme.studioElevated)
+                            .frame(width: 60, height: 60)
+                            .overlay(
+                                Circle().stroke(AlignTheme.studioHairline, lineWidth: 0.7)
+                            )
 
                         Image(systemName: "cup.and.saucer.fill")
-                            .font(.system(size: 32, weight: .bold))
+                            .font(.system(size: 24, weight: .medium))
                             .foregroundColor(AlignTheme.studioAccent)
                     }
-                    .padding(.top, 10)
 
                     Text("Ủng hộ tác giả")
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .foregroundColor(AlignTheme.studioInkPrimary)
 
-                    Text("Nếu bạn yêu thích AI Smart Framing Camera và thấy ứng dụng hỗ trợ đắc lực trong nhiếp ảnh, bạn có thể mời tác giả một ly cà phê để tiếp thêm năng lượng phát triển.")
-                        .font(.system(size: 13))
-                        .foregroundColor(Color.white.opacity(0.65))
+                    Text("Nếu Align Studio hỗ trợ tốt trong quá trình chụp và quay của bạn, bạn có thể mời tác giả một ly cà phê để tiếp thêm động lực phát triển.")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(AlignTheme.studioInkSecondary)
                         .multilineTextAlignment(.center)
                         .lineSpacing(3)
-                        .padding(.horizontal, 16)
                 }
-                .padding(.bottom, 6)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 20)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(AlignTheme.studioSurface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .stroke(AlignTheme.studioHairlineSubtle, lineWidth: 0.7)
+                        )
+                )
 
                 // MB Bank Card
                 SettingsSectionCard(title: "NGÂN HÀNG QUÂN ĐỘI (MB BANK)", icon: "building.columns.fill") {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text("TRAN VAN TRINH")
-                                .font(.system(size: 14, weight: .bold, design: .rounded))
-                                .foregroundColor(.white)
-                            Text("STK: 0344197212")
-                                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                .foregroundColor(AlignTheme.studioInkPrimary)
+                            Text("0344197212")
+                                .font(.system(size: 13.5, weight: .semibold, design: .monospaced))
                                 .foregroundColor(AlignTheme.studioAccent)
                         }
 
@@ -2229,19 +2254,20 @@ public struct SupportDeveloperView: View {
                         Button(action: {
                             UIPasteboard.general.string = "0344197212"
                             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            showToast("Đã chép STK MB Bank: 0344197212")
+                            showToast("Đã sao chép STK MB Bank: 0344197212")
                         }) {
                             HStack(spacing: 5) {
                                 Image(systemName: "doc.on.doc")
+                                    .font(.system(size: 11, weight: .semibold))
                                 Text("Sao chép")
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
                             }
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 13)
                             .padding(.vertical, 8)
-                            .background(AlignTheme.studioAccent.opacity(0.25))
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .background(Capsule().fill(AlignTheme.studioInkPrimary))
                         }
+                        .buttonStyle(.plain)
                     }
                 }
 
@@ -2249,20 +2275,24 @@ public struct SupportDeveloperView: View {
                 SettingsSectionCard(title: "MÃ VIETQR CHUYỂN KHOẢN NHANH", icon: "qrcode.viewfinder") {
                     VStack(spacing: 12) {
                         Button(action: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
                                 showVietQR.toggle()
                             }
                         }) {
-                            HStack {
+                            HStack(spacing: 8) {
                                 Image(systemName: showVietQR ? "qrcode.viewfinder" : "qrcode")
-                                Text(showVietQR ? "Thu gọn mã QR" : "Hiện mã VietQR tự động điền số tiền")
-                                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(AlignTheme.studioAccent)
+                                Text(showVietQR ? "Thu gọn mã QR" : "Hiện mã VietQR chuyển khoản nhanh")
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                    .foregroundColor(AlignTheme.studioInkPrimary)
                                 Spacer()
                                 Image(systemName: showVietQR ? "chevron.up" : "chevron.down")
-                                    .font(.system(size: 12))
+                                    .font(.system(size: 11.5, weight: .semibold))
+                                    .foregroundColor(AlignTheme.studioInkTertiary)
                             }
-                            .foregroundColor(.white)
                         }
+                        .buttonStyle(.plain)
 
                         if showVietQR {
                             AsyncImage(url: URL(string: vietQRURLString)) { phase in
@@ -2275,31 +2305,35 @@ public struct SupportDeveloperView: View {
                                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                                                .stroke(AlignTheme.studioHairline, lineWidth: 0.7)
                                         )
                                 case .failure:
                                     VStack(spacing: 8) {
                                         Image(systemName: "wifi.slash")
-                                            .font(.system(size: 32))
-                                            .foregroundColor(.gray)
-                                        Text("Không thể tải mã VietQR (Vui lòng kiểm tra mạng)")
-                                            .font(.system(size: 11))
-                                            .foregroundColor(.gray)
+                                            .font(.system(size: 26, weight: .medium))
+                                            .foregroundColor(AlignTheme.studioInkTertiary)
+                                        Text("Không thể tải mã VietQR — vui lòng kiểm tra kết nối mạng")
+                                            .font(.system(size: 11.5))
+                                            .foregroundColor(AlignTheme.studioInkSecondary)
+                                            .multilineTextAlignment(.center)
                                         Button("Thử lại") {
                                             qrReloadID = UUID()
                                         }
-                                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                                        .foregroundColor(.white)
+                                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                        .foregroundColor(AlignTheme.studioInkPrimary)
                                         .padding(.horizontal, 14)
-                                        .padding(.vertical, 6)
-                                        .background(Color.white.opacity(0.18))
-                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        .padding(.vertical, 7)
+                                        .background(
+                                            Capsule()
+                                                .fill(AlignTheme.studioElevated)
+                                                .overlay(Capsule().stroke(AlignTheme.studioHairline, lineWidth: 0.65))
+                                        )
                                     }
                                     .frame(maxWidth: .infinity)
                                     .padding(20)
                                 default:
                                     ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        .progressViewStyle(CircularProgressViewStyle(tint: AlignTheme.studioAccent))
                                         .padding(24)
                                 }
                             }
@@ -2312,6 +2346,7 @@ public struct SupportDeveloperView: View {
             .padding(16)
         }
         .background(AlignTheme.studioCanvas.ignoresSafeArea())
+        .preferredColorScheme(.dark)
         .navigationTitle("Ủng hộ tác giả")
         .navigationBarTitleDisplayMode(.inline)
         .overlay(

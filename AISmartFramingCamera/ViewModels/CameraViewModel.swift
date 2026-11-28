@@ -1482,11 +1482,23 @@ public final class CameraViewModel: ObservableObject {
     }
     @Published public private(set) var recordingState: CameraRecordingState = .idle
     private var wantsVideoRecording = false
-    private var pendingCaptureMode: CameraCaptureMode?
-    private var pendingProPhotoAfterModeSwitch = false
+    @Published public private(set) var pendingCaptureMode: CameraCaptureMode?
+    @Published public private(set) var pendingProPhotoAfterModeSwitch = false
     private var modeTransitionGeneration: UInt64 = 0
-    private var isModeTransitionInFlight = false
+    @Published public private(set) var isModeTransitionInFlight = false
+    @Published public private(set) var isModeTransitionVeilVisible = false
+    private var modeTransitionVeilTask: Task<Void, Never>? = nil
     @Published private var isSwitchingCamera = false
+
+    /// Chế độ hiển thị lạc quan (0ms trên UI) để thanh trượt ẢNH/PRO/VIDEO, nút chụp và khung ngắm phản hồi ngay tức thì
+    /// trong lúc AVFoundation commit cấu hình phần cứng trong 1 giao dịch nguyên tử duy nhất.
+    public var visualCaptureMode: CameraCaptureMode {
+        pendingCaptureMode ?? captureMode
+    }
+
+    public var isVisualProPhotoSelected: Bool {
+        !visualCaptureMode.isVideo && (isProPhotoModeEnabled || pendingProPhotoAfterModeSwitch)
+    }
     @Published public var recordedVideoURL: URL? = nil
     private var pendingRecordedVideoURLs: [URL] = []
     private var pendingPhotoPreview = false
@@ -3814,7 +3826,14 @@ public final class CameraViewModel: ObservableObject {
         if mode.isVideo && countdownSecondsRemaining > 0 {
             cancelCountdownTimer()
         }
+        let crossesPhotoVideoBoundary = (mode.isVideo != captureMode.isVideo)
         isModeTransitionInFlight = true
+        if crossesPhotoVideoBoundary {
+            modeTransitionVeilTask?.cancel()
+            withAnimation(.easeOut(duration: 0.10)) {
+                isModeTransitionVeilVisible = true
+            }
+        }
         cameraService.updateCaptureMode(mode) { [weak self] success in
             Task { @MainActor [weak self] in
                 guard let self, self.modeTransitionGeneration == generation else { return }
@@ -3822,8 +3841,12 @@ public final class CameraViewModel: ObservableObject {
                 self.pendingCaptureMode = nil
                 if success {
                     self.captureMode = mode
-                    self.activeSunExposureBias = 0.0
-                    self.setExposure(0.0)
+                    if abs(self.activeSunExposureBias) > 0.001 {
+                        self.activeSunExposureBias = 0.0
+                        self.setExposure(0.0)
+                    } else {
+                        self.activeSunExposureBias = 0.0
+                    }
                     if mode == .photo && self.pendingProPhotoAfterModeSwitch {
                         self.pendingProPhotoAfterModeSwitch = false
                         self.isProPhotoModeEnabled = true
@@ -3831,6 +3854,20 @@ public final class CameraViewModel: ObservableObject {
                 } else {
                     self.pendingProPhotoAfterModeSwitch = false
                     self.saveErrorMessage = "Không thể chuyển chế độ camera. Vui lòng thử lại."
+                }
+                if crossesPhotoVideoBoundary {
+                    self.modeTransitionVeilTask?.cancel()
+                    self.modeTransitionVeilTask = Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: 110_000_000)
+                        guard let self, !Task.isCancelled, self.modeTransitionGeneration == generation else { return }
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            self.isModeTransitionVeilVisible = false
+                        }
+                    }
+                } else if self.isModeTransitionVeilVisible {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        self.isModeTransitionVeilVisible = false
+                    }
                 }
                 self.presentPendingMediaPreviewIfPossible()
             }

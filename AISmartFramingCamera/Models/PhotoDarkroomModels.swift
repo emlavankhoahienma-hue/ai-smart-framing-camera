@@ -1456,3 +1456,149 @@ public final class PhotoDarkroomRecipeStore: @unchecked Sendable {
         defaults.set(Array(set).sorted(), forKey: key)
     }
 }
+
+// MARK: - Pure Video Preview Metadata & Synchronized Aspect Geometry
+public struct VideoPreviewMetadata: Equatable, Sendable {
+    public let displaySize: CGSize
+    public let durationSeconds: Double
+    public let nominalFPS: Double
+    public let codecLabel: String
+    public let fileSizeBytes: Int64
+
+    public init(
+        displaySize: CGSize,
+        durationSeconds: Double,
+        nominalFPS: Double,
+        codecLabel: String,
+        fileSizeBytes: Int64
+    ) {
+        self.displaySize = displaySize
+        self.durationSeconds = durationSeconds
+        self.nominalFPS = nominalFPS
+        self.codecLabel = codecLabel
+        self.fileSizeBytes = fileSizeBytes
+    }
+
+    public static let placeholder = VideoPreviewMetadata(
+        displaySize: CGSize(width: 1080, height: 1920),
+        durationSeconds: 0,
+        nominalFPS: 0,
+        codecLabel: "VIDEO",
+        fileSizeBytes: 0
+    )
+
+    public var aspectRatio: CGFloat {
+        guard displaySize.width > 1, displaySize.height > 1 else { return 9.0 / 16.0 }
+        return displaySize.width / displaySize.height
+    }
+
+    public var resolutionTierLabel: String {
+        Self.resolutionTierLabel(width: Int(round(displaySize.width)), height: Int(round(displaySize.height)))
+    }
+
+    public var headerPrimaryLine: String {
+        let fpsText = nominalFPS >= 1.0 ? "\(Int(round(nominalFPS)))fps" : nil
+        if let fpsText {
+            return "\(resolutionTierLabel) · \(fpsText)"
+        }
+        return resolutionTierLabel
+    }
+
+    public var headerSecondaryLine: String {
+        var parts: [String] = []
+        if durationSeconds > 0.01 {
+            parts.append(Self.formatDuration(durationSeconds))
+        }
+        if fileSizeBytes > 0 {
+            parts.append(Self.formatFileSize(fileSizeBytes))
+        }
+        parts.append(codecLabel)
+        return parts.joined(separator: " · ")
+    }
+
+    public var aspectRatioLabel: String {
+        Self.aspectLabel(for: displaySize)
+    }
+
+    public static func orientedSize(naturalSize: CGSize, preferredTransform: CGAffineTransform) -> CGSize {
+        let transformed = naturalSize.applying(preferredTransform)
+        let w = abs(transformed.width)
+        let h = abs(transformed.height)
+        guard w.isFinite, h.isFinite, w > 1, h > 1 else {
+            return CGSize(width: 1080, height: 1920)
+        }
+        return CGSize(width: w, height: h)
+    }
+
+    public static func fittedViewportSize(videoSize: CGSize, in containerSize: CGSize) -> CGSize {
+        let maxW = max(1, containerSize.width)
+        let maxH = max(1, containerSize.height)
+        let aspect: CGFloat = (videoSize.width > 1 && videoSize.height > 1)
+            ? (videoSize.width / videoSize.height)
+            : (9.0 / 16.0)
+        let containerAspect = maxW / maxH
+        if aspect > containerAspect {
+            let w = maxW
+            return CGSize(width: w, height: max(1, w / aspect))
+        } else {
+            let h = maxH
+            return CGSize(width: max(1, h * aspect), height: h)
+        }
+    }
+
+    public static func resolutionTierLabel(width: Int, height: Int) -> String {
+        let longSide = max(width, height)
+        let shortSide = min(width, height)
+        if longSide >= 3800 || shortSide >= 2100 { return "4K" }
+        if longSide >= 1900 || shortSide >= 1050 { return "1080p" }
+        if longSide >= 1260 || shortSide >= 700 { return "720p" }
+        if longSide > 0 && shortSide > 0 { return "\(width)×\(height)" }
+        return "HD"
+    }
+
+    public static func formatDuration(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        let total = Int(round(seconds))
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        if h > 0 {
+            return String(format: "%d:%02d:%02d", h, m, s)
+        }
+        return String(format: "%d:%02d", m, s)
+    }
+
+    public static func formatFileSize(_ bytes: Int64) -> String {
+        guard bytes > 0 else { return "—" }
+        let kb = Double(bytes) / 1024.0
+        if kb < 1024.0 {
+            return String(format: "%.0f KB", kb)
+        }
+        let mb = kb / 1024.0
+        if mb < 1024.0 {
+            return String(format: "%.1f MB", mb)
+        }
+        return String(format: "%.2f GB", mb / 1024.0)
+    }
+
+    public static func aspectLabel(for size: CGSize) -> String {
+        guard size.width > 1, size.height > 1 else { return "9:16" }
+        let r = size.width / size.height
+        let known: [(CGFloat, String)] = [
+            (9.0 / 16.0, "9:16"),
+            (16.0 / 9.0, "16:9"),
+            (3.0 / 4.0, "3:4"),
+            (4.0 / 3.0, "4:3"),
+            (1.0, "1:1"),
+            (2.39, "2.39:1"),
+            (1.0 / 2.39, "1:2.39")
+        ]
+        if let best = known.min(by: { abs($0.0 - r) < abs($1.0 - r) }), abs(best.0 - r) < 0.045 {
+            return best.1
+        }
+        if r < 1.0 {
+            return String(format: "1:%.2f", 1.0 / r)
+        }
+        return String(format: "%.2f:1", r)
+    }
+}

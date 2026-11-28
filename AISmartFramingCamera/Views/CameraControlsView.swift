@@ -69,7 +69,7 @@ public struct CameraControlsView: View {
         .frame(maxWidth: .infinity)
         .background(
             Group {
-                if viewModel.captureMode.isVideo {
+                if viewModel.visualCaptureMode.isVideo {
                     Color.clear
                 } else {
                     AlignTheme.studioCanvas
@@ -135,8 +135,8 @@ struct CameraModeSegmentedSwitcher: View {
     }
 
     private var activeSwitcherMode: SwitcherMode {
-        if viewModel.captureMode.isVideo { return .video }
-        return viewModel.isProPhotoModeEnabled ? .proPhoto : .photo
+        if viewModel.visualCaptureMode.isVideo { return .video }
+        return viewModel.isVisualProPhotoSelected ? .proPhoto : .photo
     }
 
     var body: some View {
@@ -239,11 +239,14 @@ struct MainCaptureButton: View {
     @State private var isTouchingShutter: Bool = false
 
     var body: some View {
-        if viewModel.captureMode.isVideo {
-            videoRecordControl
-        } else {
-            photoCaptureControl
+        Group {
+            if viewModel.visualCaptureMode.isVideo {
+                videoRecordControl
+            } else {
+                photoCaptureControl
+            }
         }
+        .allowsHitTesting(!viewModel.isModeTransitionInFlight)
     }
 
     // MARK: - Photo Capture Control

@@ -390,6 +390,61 @@ struct PhotoDarkroomEngineRegression {
               "30-pass full GPU darkroom stress cycle completes cleanly with cache clear",
               detail: String(format: "total=%.1fms avg=%.1fms/frame", elapsedMs, elapsedMs / 30.0))
 
+        // 8. VideoPreviewMetadata Synced Orientation, Viewport Fit & Formatting
+        let portrait90 = VideoPreviewMetadata.orientedSize(
+            naturalSize: CGSize(width: 3840, height: 2160),
+            preferredTransform: CGAffineTransform(rotationAngle: .pi / 2)
+        )
+        check(abs(portrait90.width - 2160) < 1 && abs(portrait90.height - 3840) < 1,
+              "VideoPreviewMetadata orientedSize resolves 90deg portrait 4K track to 2160x3840",
+              detail: "\(Int(portrait90.width))x\(Int(portrait90.height))")
+
+        let landscape0 = VideoPreviewMetadata.orientedSize(
+            naturalSize: CGSize(width: 1920, height: 1080),
+            preferredTransform: .identity
+        )
+        check(abs(landscape0.width - 1920) < 1 && abs(landscape0.height - 1080) < 1,
+              "VideoPreviewMetadata orientedSize keeps identity landscape 1080p track")
+
+        let stageContainer = CGSize(width: 362, height: 520)
+        let fitPortrait = VideoPreviewMetadata.fittedViewportSize(videoSize: portrait90, in: stageContainer)
+        check(fitPortrait.width <= stageContainer.width + 0.5 &&
+              fitPortrait.height <= stageContainer.height + 0.5 &&
+              abs((fitPortrait.width / fitPortrait.height) - (9.0 / 16.0)) < 0.01,
+              "VideoPreviewMetadata fits 9:16 portrait video tightly inside stage without letterboxing",
+              detail: String(format: "%.1fx%.1f", fitPortrait.width, fitPortrait.height))
+
+        let masterTall = CGSize(width: 2160, height: 4320) // 9:16 + Master Frame footer
+        let fitMaster = VideoPreviewMetadata.fittedViewportSize(videoSize: masterTall, in: stageContainer)
+        check(fitMaster.width <= stageContainer.width + 0.5 &&
+              fitMaster.height <= stageContainer.height + 0.5 &&
+              abs((fitMaster.width / fitMaster.height) - 0.5) < 0.01,
+              "VideoPreviewMetadata dynamically re-fits Master Frame tall aspect cleanly",
+              detail: String(format: "%.1fx%.1f", fitMaster.width, fitMaster.height))
+
+        let fitCinema = VideoPreviewMetadata.fittedViewportSize(videoSize: CGSize(width: 2390, height: 1000), in: stageContainer)
+        check(abs(fitCinema.width - stageContainer.width) < 0.5 &&
+              abs((fitCinema.width / fitCinema.height) - 2.39) < 0.02,
+              "VideoPreviewMetadata fits wide 2.39:1 cinema crop cleanly edge-to-edge")
+
+        let meta4K = VideoPreviewMetadata(
+            displaySize: portrait90,
+            durationSeconds: 12.4,
+            nominalFPS: 59.94,
+            codecLabel: "HEVC",
+            fileSizeBytes: 29_779_558
+        )
+        check(meta4K.headerPrimaryLine == "4K · 60fps" &&
+              meta4K.headerSecondaryLine == "0:12 · 28.4 MB · HEVC" &&
+              meta4K.aspectRatioLabel == "9:16",
+              "VideoPreviewMetadata formats 4K 60fps header & metadata accurately",
+              detail: "\(meta4K.headerPrimaryLine) | \(meta4K.headerSecondaryLine)")
+
+        check(VideoPreviewMetadata.formatDuration(-3) == "0:00" &&
+              VideoPreviewMetadata.formatDuration(.nan) == "0:00" &&
+              VideoPreviewMetadata.formatDuration(3725) == "1:02:05",
+              "VideoPreviewMetadata duration formatter guards invalid values & hours")
+
         print("=== Summary: \(passedTests) passed, \(failedTests) failed ===")
         if failedTests > 0 {
             exit(1)
