@@ -3,6 +3,7 @@ import UIKit
 import CoreImage
 import UniformTypeIdentifiers
 import ImageIO
+import Vision
 
 // MARK: - Clean Minimalist Photo Detail & Non-Destructive Darkroom Studio
 public struct CapturedPhotoPreviewView: View {
@@ -65,6 +66,20 @@ public struct CapturedPhotoPreviewView: View {
     @State private var panOffset: CGSize = .zero
     @State private var lastPanOffset: CGSize = .zero
     @State private var dismissDragOffsetY: CGFloat = 0.0
+
+    // Still-Photo Long-Press QR Scanner States (Gallery & Post-Capture Viewer)
+    @State private var photoQRCodes: [DetectedQRCode] = []
+    @State private var activePhotoQR: DetectedQRCode? = nil
+    @State private var hasScannedCurrentImageForQR: Bool = false
+    @State private var isScanningPhotoQR: Bool = false
+    @State private var qrPressTouchPoint: CGPoint? = nil
+    @State private var isTrackingTouchDown: Bool = false
+    @State private var lastTouchDownLocation: CGPoint? = nil
+    @State private var photoQRDetailTarget: DetectedQRCode? = nil
+    @State private var isShowingPhotoQRMultiList: Bool = false
+    @State private var photoQRToastMessage: String? = nil
+    @State private var photoQRScanTask: Task<Void, Never>? = nil
+    @State private var photoQRToastTask: Task<Void, Never>? = nil
 
     public init(item: CapturedPhotoItem, viewModel: CameraViewModel? = nil) {
         self.item = item
@@ -281,6 +296,28 @@ public struct CapturedPhotoPreviewView: View {
                     CapturedPhotoActivityShareSheet(items: [url])
                 }
             }
+            .sheet(item: $photoQRDetailTarget) { qr in
+                QRCodeDetailSheetView(
+                    qrCode: qr,
+                    onCopy: { copyStillPhotoQR(qr) },
+                    onCopyCustom: { text, notice in copyCustomStillPhotoQRText(text, notice: notice) },
+                    onOpenURL: { url in UIApplication.shared.open(url) }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
+            .sheet(isPresented: $isShowingPhotoQRMultiList) {
+                QRCodeMultiListSheetView(
+                    codes: photoQRCodes,
+                    activeRawValue: activePhotoQR?.rawValue,
+                    onSelectFocus: { qr in selectStillPhotoQR(qr) },
+                    onCopy: { qr in copyStillPhotoQR(qr) },
+                    onCopyCustom: { text, notice in copyCustomStillPhotoQRText(text, notice: notice) },
+                    onOpenURL: { url in UIApplication.shared.open(url) }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
             .onAppear {
                 CameraLogger.lifecycle("VIEW_APPEAR", detail: "CapturedPhotoPreviewView \(item.processedImage.width)x\(item.processedImage.height)", category: .photoKit)
                 loadRecipeStoreState()
@@ -295,7 +332,14 @@ public struct CapturedPhotoPreviewView: View {
             }
             .onDisappear {
                 CameraLogger.lifecycle("VIEW_DISAPPEAR", detail: "CapturedPhotoPreviewView", category: .photoKit)
+                photoQRScanTask?.cancel()
+                photoQRToastTask?.cancel()
                 coordinator.teardown()
+            }
+            .onChangeCompatible(of: isEditDrawerOpen) { editing in
+                if editing {
+                    clearStillPhotoQROverlay(resetScanCache: false)
+                }
             }
             .onChangeCompatible(of: zoomScale > 2.2) { needsFullRes in
                 if needsFullRes {
@@ -553,8 +597,8 @@ public struct CapturedPhotoPreviewView: View {
                     .transition(.opacity)
                 }
 
-                // Bottom-Left Floating Active Look Pill (Exact Reference Ergonomics in AlignTheme Glass)
-                if item.saveFormat != .dng && zoomScale <= 1.05 && !isPeekingOriginal && !isActivelyCropping && !isSplitCompareMode {
+                // Bottom-Left Floating Active Look Pill (Hidden when QR Floating Pill is active so zero overlap)
+                if item.saveFormat != .dng && zoomScale <= 1.05 && !isPeekingOriginal && !isActivelyCropping && !isSplitCompareMode && activePhotoQR == nil && photoQRToastMessage == nil {
                     VStack {
                         Spacer()
                         HStack {
@@ -579,6 +623,62 @@ public struct CapturedPhotoPreviewView: View {
                         }
                     }
                     .transition(.opacity)
+                }
+
+                // Touch-Point Optical Scan Pulse while decoding long-pressed QR region
+                if isScanningPhotoQR, let pressPt = qrPressTouchPoint {
+                    StillPhotoQRTouchPulseView()
+                        .position(pressPt)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+
+                // Bottom Floating Studio QR Pill + Copy/Feedback Toast inside Photo Viewer
+                if !isEditDrawerOpen && !isActivelyCropping && !isSplitCompareMode {
+                    VStack(spacing: 8) {
+                        Spacer()
+
+                        if let toast = photoQRToastMessage {
+                            HStack(spacing: 6) {
+                                Image(systemName: "qrcode.viewfinder")
+                                    .font(.system(size: 11.5, weight: .semibold))
+                                    .foregroundColor(AlignTheme.studioAccent)
+                                Text(toast)
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                    .foregroundColor(AlignTheme.studioInkPrimary)
+                            }
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 7)
+                            .background(StudioGlassCapsule(tintOpacity: 0.80, borderOpacity: 0.18))
+                            .shadow(color: Color.black.opacity(0.42), radius: 10, y: 4)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+
+                        if let qr = activePhotoQR {
+                            let activeIdx = photoQRCodes.firstIndex(where: { $0.rawValue == qr.rawValue }) ?? 0
+                            QRCodeFloatingBannerPill(
+                                qrCode: qr,
+                                totalCount: photoQRCodes.count,
+                                activeIndex: activeIdx,
+                                maxWidth: min(geo.size.width - 24, 344),
+                                onPrimaryTap: { openStillPhotoQRPrimaryAction(qr) },
+                                onShowAllTap: {
+                                    viewModel?.haptics.triggerSelectionChange()
+                                    isShowingPhotoQRMultiList = true
+                                },
+                                onCopyTap: { copyStillPhotoQR(qr) },
+                                onDismissTap: {
+                                    withAnimation(.easeOut(duration: 0.18)) {
+                                        activePhotoQR = nil
+                                    }
+                                }
+                            )
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                    }
+                    .padding(.bottom, 12)
+                    .animation(.spring(response: 0.28, dampingFraction: 0.84), value: activePhotoQR?.rawValue)
+                    .animation(.easeInOut(duration: 0.20), value: photoQRToastMessage)
                 }
 
                 // Zoom Region Mini-Map + Reset Pill When Zoomed In
@@ -622,19 +722,69 @@ public struct CapturedPhotoPreviewView: View {
         let activeUIImage: UIImage = isPeekingOriginal
             ? cachedOriginalDisplayUIImage
             : (zoomScale > 2.3 ? cachedFullResUIImage : cachedDisplayUIImage)
+        let fittedRect = StillPhotoQRGeometry.fittedImageRect(imageSize: activeUIImage.size, in: size)
 
         ZStack {
             Color.clear
 
-            Image(uiImage: activeUIImage)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: size.width, height: size.height)
-                .scaleEffect(zoomScale)
-                .offset(
-                    x: panOffset.width,
-                    y: isZoomedIn ? panOffset.height : dismissDragOffsetY
-                )
+            ZStack {
+                Image(uiImage: activeUIImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: size.width, height: size.height)
+
+                // Pixel-locked QR Animated Running Border + Secondary Tappable QR Brackets (Scales & Pans 1:1 with Photo)
+                if !isEditDrawerOpen && !isPeekingOriginal && fittedRect.width > 1 && fittedRect.height > 1 {
+                    if let activeQR = activePhotoQR, !activeQR.normalizedBoundingBox.isEmpty {
+                        let qrRect = CGRect(
+                            x: fittedRect.minX + activeQR.normalizedBoundingBox.minX * fittedRect.width,
+                            y: fittedRect.minY + activeQR.normalizedBoundingBox.minY * fittedRect.height,
+                            width: activeQR.normalizedBoundingBox.width * fittedRect.width,
+                            height: activeQR.normalizedBoundingBox.height * fittedRect.height
+                        )
+                        StillPhotoQRAnimatedFrameView(
+                            rect: qrRect,
+                            zoomScale: zoomScale
+                        )
+                        .id(activeQR.rawValue)
+                        .allowsHitTesting(false)
+                        .transition(.scale(scale: 1.08).combined(with: .opacity))
+                    }
+
+                    if photoQRCodes.count > 1 && activePhotoQR != nil {
+                        ForEach(photoQRCodes) { qr in
+                            if qr.rawValue != activePhotoQR?.rawValue, !qr.normalizedBoundingBox.isEmpty {
+                                let secRect = CGRect(
+                                    x: fittedRect.minX + qr.normalizedBoundingBox.minX * fittedRect.width,
+                                    y: fittedRect.minY + qr.normalizedBoundingBox.minY * fittedRect.height,
+                                    width: qr.normalizedBoundingBox.width * fittedRect.width,
+                                    height: qr.normalizedBoundingBox.height * fittedRect.height
+                                )
+                                let w = max(28, secRect.width + 8)
+                                let h = max(28, secRect.height + 8)
+                                CornerBracketsShape(bracketLength: min(14, min(w, h) * 0.28))
+                                    .stroke(
+                                        Color.white.opacity(0.72),
+                                        style: StrokeStyle(lineWidth: max(1.1, 1.6 / sqrt(zoomScale)), lineCap: .round, lineJoin: .round)
+                                    )
+                                    .frame(width: w, height: h)
+                                    .position(x: secRect.midX, y: secRect.midY)
+                                    .shadow(color: Color.black.opacity(0.45), radius: 2, y: 0.5)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        selectStillPhotoQR(qr)
+                                    }
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(width: size.width, height: size.height)
+            .scaleEffect(zoomScale)
+            .offset(
+                x: panOffset.width,
+                y: isZoomedIn ? panOffset.height : dismissDragOffsetY
+            )
         }
         .frame(width: size.width, height: size.height)
         .coordinateSpace(name: "capturedPhotoHeroSpace")
@@ -666,6 +816,18 @@ public struct CapturedPhotoPreviewView: View {
                         panOffset = clampPanOffset(panOffset, in: size, scale: zoomScale)
                         lastPanOffset = panOffset
                     }
+                }
+        )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .named("capturedPhotoHeroSpace"))
+                .onChanged { val in
+                    if !isTrackingTouchDown {
+                        isTrackingTouchDown = true
+                        lastTouchDownLocation = val.startLocation
+                    }
+                }
+                .onEnded { _ in
+                    isTrackingTouchDown = false
                 }
         )
         .simultaneousGesture(
@@ -703,12 +865,23 @@ public struct CapturedPhotoPreviewView: View {
                     handleDoubleTap(at: event.location, in: size)
                 }
         )
-        .onLongPressGesture(minimumDuration: 0.28, pressing: { pressing in
-            guard item.saveFormat != .dng, zoomScale <= 1.05 else { return }
-            withAnimation(.easeInOut(duration: 0.14)) {
-                isPeekingOriginal = pressing
+        .onLongPressGesture(minimumDuration: 0.30, maximumDistance: 16, pressing: { pressing in
+            if isEditDrawerOpen {
+                guard item.saveFormat != .dng, zoomScale <= 1.05 else { return }
+                withAnimation(.easeInOut(duration: 0.14)) {
+                    isPeekingOriginal = pressing
+                }
+            } else if !pressing && isPeekingOriginal {
+                withAnimation(.easeInOut(duration: 0.14)) {
+                    isPeekingOriginal = false
+                }
             }
-        }, perform: {})
+        }, perform: {
+            if !isEditDrawerOpen {
+                let touchPoint = lastTouchDownLocation ?? CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+                handleLongPressQRScan(at: touchPoint, in: size, displayedImage: activeUIImage)
+            }
+        })
     }
 
     @ViewBuilder
@@ -940,6 +1113,7 @@ public struct CapturedPhotoPreviewView: View {
     }
 
     private func schedulePreviewRender() {
+        clearStillPhotoQROverlay(resetScanCache: true)
         var previewState = editState
         // While interactively dragging crop handles, show full oriented frame (rotation/flip/straighten active, rect uncropped)
         if isActivelyCropping {
@@ -1369,6 +1543,435 @@ public struct CapturedPhotoPreviewView: View {
         let bytesPerPx = (item.saveFormat == .dng) ? 1.8 : ((item.saveFormat == .jpeg) ? 0.42 : 0.24)
         let estMB = max(0.25, (pixels * bytesPerPx) / (1024.0 * 1024.0))
         return String(format: "~%.1f MB", estMB)
+    }
+
+    // MARK: - 6. Still-Photo Long-Press QR / Barcode Scanner Actions (Gallery & Photo Viewer Only)
+    private func handleLongPressQRScan(at viewportPoint: CGPoint, in viewportSize: CGSize, displayedImage: UIImage) {
+        let effectivePan = CGSize(
+            width: panOffset.width,
+            height: (zoomScale > 1.02) ? panOffset.height : dismissDragOffsetY
+        )
+        guard let normPoint = StillPhotoQRGeometry.normalizedImagePoint(
+            fromViewportLocation: viewportPoint,
+            viewportSize: viewportSize,
+            imageSize: displayedImage.size,
+            zoomScale: zoomScale,
+            panOffset: effectivePan
+        ) else {
+            return
+        }
+
+        // 0ms fast path if already scanned this exact photo and user long-pressed a detected QR region
+        if hasScannedCurrentImageForQR,
+           let cachedHit = StillPhotoQRGeometry.hitTest(normalizedPoint: normPoint, in: photoQRCodes) {
+            selectStillPhotoQR(cachedHit)
+            return
+        }
+
+        let scanSourceCG: CGImage = (fullResNeedsRefresh || hasModifiedSinceOpen)
+            ? (displayedImage.cgImage ?? currentFullResCGImage)
+            : currentFullResCGImage
+
+        photoQRScanTask?.cancel()
+        qrPressTouchPoint = viewportPoint
+        withAnimation(.easeInOut(duration: 0.16)) {
+            isScanningPhotoQR = true
+        }
+        viewModel?.haptics.triggerLight()
+
+        let existingCached = hasScannedCurrentImageForQR ? photoQRCodes : []
+        let canFallbackPeekOriginal = (item.saveFormat != .dng)
+            && (zoomScale <= 1.05)
+            && (hasModifiedSinceOpen || item.originalImage !== item.processedImage)
+
+        photoQRScanTask = Task {
+            let scanResult = await Task.detached(priority: .userInitiated) {
+                StillPhotoQRScanner.scan(
+                    cgImage: scanSourceCG,
+                    normalizedTouchPoint: normPoint,
+                    existingCodes: existingCached
+                )
+            }.value
+
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    isScanningPhotoQR = false
+                }
+                hasScannedCurrentImageForQR = true
+                photoQRCodes = scanResult.allCodes
+
+                if let hit = scanResult.hitCode {
+                    viewModel?.haptics.triggerSuccess()
+                    withAnimation(.spring(response: 0.30, dampingFraction: 0.80)) {
+                        activePhotoQR = hit
+                    }
+                } else if canFallbackPeekOriginal && isTrackingTouchDown {
+                    // Nếu nhấn giữ vùng trống trên ảnh đã chỉnh màu -> giữ hành vi xem nhanh ảnh gốc
+                    withAnimation(.easeInOut(duration: 0.14)) {
+                        isPeekingOriginal = true
+                    }
+                } else {
+                    if activePhotoQR != nil {
+                        withAnimation(.easeOut(duration: 0.18)) {
+                            activePhotoQR = nil
+                        }
+                    }
+                    let msg = scanResult.allCodes.isEmpty
+                        ? "Không tìm thấy mã QR trong ảnh này"
+                        : "Nhấn giữ trực tiếp lên mã QR để quét"
+                    showPhotoQRToast(msg)
+                }
+            }
+        }
+    }
+
+    private func selectStillPhotoQR(_ code: DetectedQRCode) {
+        viewModel?.haptics.triggerSuccess()
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+            activePhotoQR = code
+        }
+    }
+
+    private func openStillPhotoQRPrimaryAction(_ code: DetectedQRCode) {
+        viewModel?.haptics.triggerSelectionChange()
+        if let url = code.openableURL {
+            UIApplication.shared.open(url)
+        } else {
+            photoQRDetailTarget = code
+        }
+    }
+
+    private func copyStillPhotoQR(_ code: DetectedQRCode) {
+        UIPasteboard.general.string = code.copyableText
+        viewModel?.haptics.triggerSuccess()
+        showPhotoQRToast(code.copySuccessMessage)
+    }
+
+    private func copyCustomStillPhotoQRText(_ text: String, notice: String) {
+        UIPasteboard.general.string = text
+        viewModel?.haptics.triggerSuccess()
+        showPhotoQRToast(notice)
+    }
+
+    private func clearStillPhotoQROverlay(resetScanCache: Bool) {
+        photoQRScanTask?.cancel()
+        isScanningPhotoQR = false
+        activePhotoQR = nil
+        isShowingPhotoQRMultiList = false
+        if resetScanCache {
+            hasScannedCurrentImageForQR = false
+            photoQRCodes = []
+        }
+    }
+
+    private func showPhotoQRToast(_ message: String) {
+        photoQRToastTask?.cancel()
+        withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
+            photoQRToastMessage = message
+        }
+        photoQRToastTask = Task {
+            try? await Task.sleep(nanoseconds: 1_900_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeOut(duration: 0.20)) {
+                    if photoQRToastMessage == message {
+                        photoQRToastMessage = nil
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Standalone Still-Photo Apple Vision QR/Barcode Decoder (Does NOT modify live camera QR scanner)
+private enum StillPhotoQRScanner {
+    struct ScanOutcome: Sendable {
+        let allCodes: [DetectedQRCode]
+        let hitCode: DetectedQRCode?
+    }
+
+    static func scan(
+        cgImage: CGImage,
+        normalizedTouchPoint: CGPoint,
+        existingCodes: [DetectedQRCode]
+    ) -> ScanOutcome {
+        return autoreleasepool {
+            var collected = existingCodes
+
+            // Pass 1: Native full-image Apple Vision scan (10 symbologies, zero copy)
+            if collected.isEmpty {
+                let request = makeBarcodeRequest()
+                let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
+                if (try? handler.perform([request])) != nil {
+                    collected = makeDetectedCodes(
+                        from: request.results,
+                        subCropTopLeft: CGRect(x: 0, y: 0, width: 1, height: 1)
+                    )
+                }
+            }
+
+            if let directHit = StillPhotoQRGeometry.hitTest(normalizedPoint: normalizedTouchPoint, in: collected) {
+                return ScanOutcome(allCodes: deduplicateAndCap(collected), hitCode: directHit)
+            }
+
+            // Pass 2 & 3: Touch-centered zoomed high-contrast + inverted dark-mode pass for tiny/low-contrast QRs
+            let cropNorm = StillPhotoQRGeometry.normalizedTouchCropRect(around: normalizedTouchPoint, sideFraction: 0.42)
+            let imgW = CGFloat(cgImage.width)
+            let imgH = CGFloat(cgImage.height)
+            if imgW >= 120 && imgH >= 120 {
+                let pixelCrop = CGRect(
+                    x: floor(cropNorm.minX * imgW),
+                    y: floor(cropNorm.minY * imgH),
+                    width: max(32, floor(cropNorm.width * imgW)),
+                    height: max(32, floor(cropNorm.height * imgH))
+                ).intersection(CGRect(x: 0, y: 0, width: imgW, height: imgH))
+
+                if let croppedCG = cgImage.cropping(to: pixelCrop) {
+                    let ciContext = CIContext(options: [
+                        .useSoftwareRenderer: false,
+                        .cacheIntermediates: false,
+                        .priorityRequestLow: true
+                    ])
+                    let baseCI = CIImage(cgImage: croppedCG)
+
+                    // Pass 2: Zoomed monochrome high-contrast + sharpen
+                    let contrasted = baseCI
+                        .applyingFilter("CIColorControls", parameters: [
+                            kCIInputSaturationKey: 0.0,
+                            kCIInputContrastKey: 1.48
+                        ])
+                        .applyingFilter("CISharpenLuminance", parameters: [
+                            kCIInputSharpnessKey: 0.72
+                        ])
+                    let pass2Req = makeBarcodeRequest()
+                    let pass2Handler = VNImageRequestHandler(ciImage: contrasted, orientation: .up, options: [.ciContext: ciContext])
+                    if (try? pass2Handler.perform([pass2Req])) != nil {
+                        let pass2Codes = makeDetectedCodes(from: pass2Req.results, subCropTopLeft: cropNorm)
+                        collected.append(contentsOf: pass2Codes)
+                    }
+
+                    // Pass 3: Inverted dark-mode polarity if still no hit at touch point
+                    if StillPhotoQRGeometry.hitTest(normalizedPoint: normalizedTouchPoint, in: collected) == nil {
+                        let inverted = baseCI
+                            .applyingFilter("CIColorControls", parameters: [
+                                kCIInputSaturationKey: 0.0,
+                                kCIInputContrastKey: 1.35
+                            ])
+                            .applyingFilter("CIColorInvert")
+                        let pass3Req = makeBarcodeRequest()
+                        let pass3Handler = VNImageRequestHandler(ciImage: inverted, orientation: .up, options: [.ciContext: ciContext])
+                        if (try? pass3Handler.perform([pass3Req])) != nil {
+                            let pass3Codes = makeDetectedCodes(from: pass3Req.results, subCropTopLeft: cropNorm)
+                            collected.append(contentsOf: pass3Codes)
+                        }
+                    }
+
+                    ciContext.clearCaches()
+                }
+            }
+
+            let merged = deduplicateAndCap(collected)
+            let hit = StillPhotoQRGeometry.hitTest(normalizedPoint: normalizedTouchPoint, in: merged)
+            return ScanOutcome(allCodes: merged, hitCode: hit)
+        }
+    }
+
+    private static func makeBarcodeRequest() -> VNDetectBarcodesRequest {
+        let request = VNDetectBarcodesRequest()
+        let preferred: [VNBarcodeSymbology] = [
+            .qr, .microQR, .aztec, .dataMatrix, .pdf417,
+            .ean13, .ean8, .upce, .code128, .code39
+        ]
+        let supported = (try? request.supportedSymbologies()) ?? [.qr]
+        let resolved = preferred.filter { supported.contains($0) }
+        request.symbologies = resolved.isEmpty ? [.qr] : resolved
+        return request
+    }
+
+    private static func makeDetectedCodes(
+        from observations: [VNBarcodeObservation]?,
+        subCropTopLeft: CGRect
+    ) -> [DetectedQRCode] {
+        guard let observations, !observations.isEmpty else { return [] }
+        var results: [DetectedQRCode] = []
+        results.reserveCapacity(min(8, observations.count))
+        for obs in observations {
+            guard let raw = obs.payloadStringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty else { continue }
+            let box = QRCodePayloadParser.visionRectToFullFrameTopLeft(
+                obs.boundingBox,
+                subCropTopLeft: subCropTopLeft
+            )
+            let symLabel = symbologyLabel(for: obs.symbology)
+            results.append(
+                DetectedQRCode(
+                    rawValue: raw,
+                    kind: QRCodePayloadParser.parse(raw, symbologyLabel: symLabel),
+                    normalizedBoundingBox: box,
+                    symbologyLabel: symLabel,
+                    timestamp: 0
+                )
+            )
+        }
+        return results
+    }
+
+    private static func deduplicateAndCap(_ codes: [DetectedQRCode]) -> [DetectedQRCode] {
+        var selector = QRCodeMultiSelector()
+        return selector.select(from: codes).allCodes
+    }
+
+    private static func symbologyLabel(for symbology: VNBarcodeSymbology) -> String {
+        switch symbology {
+        case .qr: return "QR"
+        case .microQR: return "Micro QR"
+        case .aztec: return "Aztec"
+        case .dataMatrix: return "DataMatrix"
+        case .pdf417: return "PDF417"
+        case .ean13: return "EAN-13"
+        case .ean8: return "EAN-8"
+        case .upce: return "UPC-E"
+        case .code128: return "Code 128"
+        case .code39: return "Code 39"
+        default: return "QR"
+        }
+    }
+}
+
+// MARK: - Animated Luminous Light Trail Orbiting Around Scanned QR Code
+private struct StillPhotoQRAnimatedFrameView: View {
+    let rect: CGRect
+    let zoomScale: CGFloat
+
+    @State private var orbitAngle: Double = 0
+    @State private var scanBeamProgress: CGFloat = 0.0
+    @State private var scanBeamOpacity: Double = 0.95
+    @State private var bracketScale: CGFloat = 1.14
+    @State private var haloBreath: Bool = false
+
+    var body: some View {
+        let zoomComp = max(1.0, sqrt(zoomScale))
+        let pad: CGFloat = 8.0 / zoomComp
+        let w = max(32.0 / zoomComp, rect.width + pad * 2.0)
+        let h = max(32.0 / zoomComp, rect.height + pad * 2.0)
+        let cornerR = min(14.0 / zoomComp, min(w, h) * 0.20)
+        let borderW = max(1.1, 2.5 / zoomComp)
+        let bracketW = max(1.3, 2.7 / zoomComp)
+        let bracketLen = min(18.0 / zoomComp, min(w, h) * 0.28)
+        let spinnerDim = max(w, h) * 1.65
+
+        ZStack {
+            // 1. Soft breathing Warm Titanium ambient outer halo
+            RoundedRectangle(cornerRadius: cornerR, style: .continuous)
+                .stroke(AlignTheme.studioAccent.opacity(haloBreath ? 0.42 : 0.22), lineWidth: borderW * 2.4)
+                .blur(radius: 5.0 / zoomComp)
+                .frame(width: w, height: h)
+
+            // 2. Subtle darkroom contrast backing rim so bright trail pops even on pure white paper QRs
+            RoundedRectangle(cornerRadius: cornerR, style: .continuous)
+                .stroke(Color.black.opacity(0.42), lineWidth: borderW + 1.2 / zoomComp)
+                .frame(width: w, height: h)
+
+            // 3. Continuous Orbiting Luminous Light Trail (Dual-Comet AngularGradient masked cleanly to QR perimeter)
+            AngularGradient(
+                gradient: Gradient(stops: [
+                    .init(color: AlignTheme.studioAccent.opacity(0.16), location: 0.00),
+                    .init(color: AlignTheme.studioAccent.opacity(0.55), location: 0.14),
+                    .init(color: Color.white.opacity(0.98), location: 0.24),
+                    .init(color: AlignTheme.studioAccent.opacity(0.88), location: 0.30),
+                    .init(color: AlignTheme.studioAccent.opacity(0.14), location: 0.48),
+                    .init(color: AlignTheme.studioAccent.opacity(0.45), location: 0.64),
+                    .init(color: Color.white.opacity(0.86), location: 0.74),
+                    .init(color: AlignTheme.studioAccent.opacity(0.20), location: 0.86),
+                    .init(color: AlignTheme.studioAccent.opacity(0.16), location: 1.00)
+                ]),
+                center: .center
+            )
+            .frame(width: spinnerDim, height: spinnerDim)
+            .rotationEffect(.degrees(orbitAngle))
+            .frame(width: w, height: h)
+            .mask(
+                RoundedRectangle(cornerRadius: cornerR, style: .continuous)
+                    .stroke(style: StrokeStyle(lineWidth: borderW, lineCap: .round, lineJoin: .round))
+                    .frame(width: w, height: h)
+            )
+            .shadow(color: AlignTheme.studioAccent.opacity(0.65), radius: 5.0 / zoomComp)
+
+            // 4. One-shot optical laser scan line sweeping top-to-bottom across QR interior on lock
+            if scanBeamOpacity > 0.01 {
+                ZStack(alignment: .top) {
+                    LinearGradient(
+                        colors: [
+                            Color.clear,
+                            AlignTheme.studioAccent.opacity(0.24),
+                            Color.white.opacity(0.92)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(width: w, height: max(8.0 / zoomComp, h * 0.26))
+                    .offset(y: scanBeamProgress * max(0, h - max(8.0 / zoomComp, h * 0.26)))
+                }
+                .frame(width: w, height: h, alignment: .top)
+                .clipShape(RoundedRectangle(cornerRadius: cornerR, style: .continuous))
+                .opacity(scanBeamOpacity)
+            }
+
+            // 5. Crisp Spring-Locking Optical Corner Brackets
+            CornerBracketsShape(bracketLength: bracketLen)
+                .stroke(
+                    AlignTheme.studioAccent,
+                    style: StrokeStyle(lineWidth: bracketW, lineCap: .round, lineJoin: .round)
+                )
+                .frame(width: w + 4.0 / zoomComp, height: h + 4.0 / zoomComp)
+                .scaleEffect(bracketScale)
+                .shadow(color: Color.black.opacity(0.55), radius: 2.0 / zoomComp, y: 0.5 / zoomComp)
+        }
+        .frame(width: w + 12.0 / zoomComp, height: h + 12.0 / zoomComp)
+        .position(x: rect.midX, y: rect.midY)
+        .onAppear {
+            withAnimation(.linear(duration: 2.2).repeatForever(autoreverses: false)) {
+                orbitAngle = 360.0
+            }
+            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) {
+                haloBreath = true
+            }
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.70)) {
+                bracketScale = 1.0
+            }
+            withAnimation(.easeInOut(duration: 0.68)) {
+                scanBeamProgress = 1.0
+            }
+            withAnimation(.easeOut(duration: 0.32).delay(0.56)) {
+                scanBeamOpacity = 0.0
+            }
+        }
+    }
+}
+
+// MARK: - Touch-Point Concentric Optical Scan Pulse While Decoding
+private struct StillPhotoQRTouchPulseView: View {
+    @State private var expand: Bool = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(AlignTheme.studioAccent.opacity(expand ? 0.0 : 0.72), lineWidth: 1.6)
+                .frame(width: 44, height: 44)
+                .scaleEffect(expand ? 2.1 : 0.75)
+
+            Circle()
+                .fill(AlignTheme.studioAccent.opacity(0.18))
+                .frame(width: 28, height: 28)
+                .overlay(Circle().stroke(AlignTheme.studioAccent.opacity(0.85), lineWidth: 1.2))
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.85).repeatForever(autoreverses: false)) {
+                expand = true
+            }
+        }
     }
 }
 

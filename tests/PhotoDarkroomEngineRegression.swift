@@ -809,6 +809,64 @@ struct PhotoDarkroomEngineRegression {
         check(!returningPartial.shouldPresentPermissionGate && returningPartial.canEnterCamera,
               "AppPermissionSnapshot lets returning users with Camera granted bypass gate cleanly")
 
+        // 14. Still-Photo Gallery Long-Press QR Geometry & Hit-Testing Verification
+        let vpSize = CGSize(width: 400, height: 600)
+        let landscapeImg = CGSize(width: 4000, height: 3000) // fits to 400x300 centered at y=150..450
+        let fitRect = StillPhotoQRGeometry.fittedImageRect(imageSize: landscapeImg, in: vpSize)
+        check(abs(fitRect.minX - 0) < 0.5 && abs(fitRect.minY - 150) < 0.5 &&
+              abs(fitRect.width - 400) < 0.5 && abs(fitRect.height - 300) < 0.5,
+              "StillPhotoQRGeometry computes exact aspectFit rect inside photo viewport",
+              detail: String(format: "(%.0f,%.0f,%.0f,%.0f)", fitRect.minX, fitRect.minY, fitRect.width, fitRect.height))
+
+        let normCenter = StillPhotoQRGeometry.normalizedImagePoint(
+            fromViewportLocation: CGPoint(x: 200, y: 300),
+            viewportSize: vpSize,
+            imageSize: landscapeImg,
+            zoomScale: 1.0,
+            panOffset: .zero
+        )
+        check(normCenter != nil && abs(normCenter!.x - 0.5) < 1e-4 && abs(normCenter!.y - 0.5) < 1e-4,
+              "StillPhotoQRGeometry maps unzoomed center touch to (0.5, 0.5)")
+
+        // Touch in black top letterbox bar (y = 40 < 150) returns nil
+        let letterboxMiss = StillPhotoQRGeometry.normalizedImagePoint(
+            fromViewportLocation: CGPoint(x: 200, y: 40),
+            viewportSize: vpSize,
+            imageSize: landscapeImg,
+            zoomScale: 1.0,
+            panOffset: .zero
+        )
+        check(letterboxMiss == nil, "StillPhotoQRGeometry ignores touches outside photo letterbox bars")
+
+        // Exact inverse under 2.5x zoom + panOffset (50, -30):
+        // Suppose normalized target = (0.75, 0.25) -> unzoomed = (300, 225)
+        // Forward screen pt = (200 + (300-200)*2.5 + 50, 300 + (225-300)*2.5 - 30) = (500, 82.5)
+        let zoomedNorm = StillPhotoQRGeometry.normalizedImagePoint(
+            fromViewportLocation: CGPoint(x: 500, y: 82.5),
+            viewportSize: vpSize,
+            imageSize: landscapeImg,
+            zoomScale: 2.5,
+            panOffset: CGSize(width: 50, height: -30)
+        )
+        check(zoomedNorm != nil && abs(zoomedNorm!.x - 0.75) < 1e-4 && abs(zoomedNorm!.y - 0.25) < 1e-4,
+              "StillPhotoQRGeometry inverts 2.5x zoom + pan offset accurately to exact photo point",
+              detail: zoomedNorm.map { String(format: "(%.3f,%.3f)", $0.x, $0.y) } ?? "nil")
+
+        let edgeCrop = StillPhotoQRGeometry.normalizedTouchCropRect(around: CGPoint(x: 0.96, y: 0.04), sideFraction: 0.42)
+        check(edgeCrop.minX >= 0 && edgeCrop.minY >= 0 && edgeCrop.maxX <= 1.0001 && edgeCrop.maxY <= 1.0001 &&
+              abs(edgeCrop.width - 0.42) < 1e-4 && edgeCrop.contains(CGPoint(x: 0.96, y: 0.04)),
+              "StillPhotoQRGeometry clamps corner touch crop rect cleanly within [0, 1]")
+
+        let qrTopLeft = makeQR("https://left.vn", cx: 0.20, cy: 0.25, w: 0.12)
+        let qrBotRight = makeQR("https://right.vn", cx: 0.80, cy: 0.78, w: 0.12)
+        let hitDirect = StillPhotoQRGeometry.hitTest(normalizedPoint: CGPoint(x: 0.21, y: 0.24), in: [qrTopLeft, qrBotRight])
+        let hitNearEdge = StillPhotoQRGeometry.hitTest(normalizedPoint: CGPoint(x: 0.89, y: 0.78), in: [qrTopLeft, qrBotRight], padding: 0.075)
+        let hitEmptySky = StillPhotoQRGeometry.hitTest(normalizedPoint: CGPoint(x: 0.50, y: 0.50), in: [qrTopLeft, qrBotRight], padding: 0.075)
+        check(hitDirect?.rawValue == "https://left.vn" &&
+              hitNearEdge?.rawValue == "https://right.vn" &&
+              hitEmptySky == nil,
+              "StillPhotoQRGeometry hits direct & thumb-padded QR boxes while rejecting empty photo regions")
+
         print("=== Summary: \(passedTests) passed, \(failedTests) failed ===")
         if failedTests > 0 {
             exit(1)

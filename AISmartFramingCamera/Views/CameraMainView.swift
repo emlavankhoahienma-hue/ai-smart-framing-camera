@@ -2804,7 +2804,7 @@ struct CameraFunctionDrawerView: View {
 }
 
 // MARK: - Single Compact Floating QR Link Pill (Zero Form Deformation Even With 8 Simultaneous QRs)
-private struct QRCodeFloatingBannerPill: View {
+struct QRCodeFloatingBannerPill: View {
     let qrCode: DetectedQRCode
     let totalCount: Int
     let activeIndex: Int
@@ -2899,7 +2899,7 @@ private struct QRCodeFloatingBannerPill: View {
 }
 
 // MARK: - Multi-QR Picker Sheet (Shown When 2+ Codes Are In Frame)
-private struct QRCodeMultiListSheetView: View {
+struct QRCodeMultiListSheetView: View {
     let codes: [DetectedQRCode]
     let activeRawValue: String?
     let onSelectFocus: (DetectedQRCode) -> Void
@@ -3089,7 +3089,7 @@ private struct QRCodeMultiListSheetView: View {
 }
 
 // MARK: - Studio QR Detail Sheet (Wi-Fi / VietQR / CCCD / Geo / Calendar / 2FA / Contact / Barcode / Text)
-private struct QRCodeDetailSheetView: View {
+struct QRCodeDetailSheetView: View {
     let qrCode: DetectedQRCode
     let onCopy: () -> Void
     let onCopyCustom: (String, String) -> Void

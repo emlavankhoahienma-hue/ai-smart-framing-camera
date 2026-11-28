@@ -2555,3 +2555,90 @@ public struct AppPermissionSnapshot: Equatable, Sendable {
         return "Cấp quyền từng bước để mở khóa khung ngắm AI, lưu ảnh chất lượng cao và thu âm Stereo."
     }
 }
+
+// MARK: - Still-Photo Gallery QR Coordinate Mapping & Touch Hit-Testing (Pure Foundation — Unit Tested on CI)
+public enum StillPhotoQRGeometry {
+    /// Computes the exact `.aspectRatio(contentMode: .fit)` rectangle of an image inside a viewport container.
+    public static func fittedImageRect(imageSize: CGSize, in containerSize: CGSize) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0,
+              containerSize.width > 0, containerSize.height > 0 else {
+            return .zero
+        }
+        let scale = min(containerSize.width / imageSize.width, containerSize.height / imageSize.height)
+        let fitW = imageSize.width * scale
+        let fitH = imageSize.height * scale
+        return CGRect(
+            x: (containerSize.width - fitW) * 0.5,
+            y: (containerSize.height - fitH) * 0.5,
+            width: fitW,
+            height: fitH
+        )
+    }
+
+    /// Converts a touch point in viewport space (after centered `.scaleEffect(zoomScale)` + `.offset(panOffset)`)
+    /// into normalized top-left `[0, 1] x [0, 1]` photo coordinates. Returns `nil` if the touch is outside the photo.
+    public static func normalizedImagePoint(
+        fromViewportLocation point: CGPoint,
+        viewportSize: CGSize,
+        imageSize: CGSize,
+        zoomScale: CGFloat,
+        panOffset: CGSize
+    ) -> CGPoint? {
+        let fitted = fittedImageRect(imageSize: imageSize, in: viewportSize)
+        guard fitted.width > 0, fitted.height > 0 else { return nil }
+        let safeZoom = max(0.01, zoomScale)
+        let cx = viewportSize.width * 0.5
+        let cy = viewportSize.height * 0.5
+        let unzoomedX = cx + (point.x - panOffset.width - cx) / safeZoom
+        let unzoomedY = cy + (point.y - panOffset.height - cy) / safeZoom
+        let nx = (unzoomedX - fitted.minX) / fitted.width
+        let ny = (unzoomedY - fitted.minY) / fitted.height
+        guard nx >= -0.02, nx <= 1.02, ny >= -0.02, ny <= 1.02 else { return nil }
+        return CGPoint(x: max(0.0, min(1.0, nx)), y: max(0.0, min(1.0, ny)))
+    }
+
+    /// Computes a clamped normalized top-left crop box centered on the user's touch for focused tiny-QR decoding.
+    public static func normalizedTouchCropRect(around point: CGPoint, sideFraction: CGFloat = 0.42) -> CGRect {
+        let side = max(0.18, min(0.85, sideFraction))
+        let half = side * 0.5
+        let clampedX = max(0.0, min(1.0 - side, point.x - half))
+        let clampedY = max(0.0, min(1.0 - side, point.y - half))
+        return CGRect(x: clampedX, y: clampedY, width: side, height: side)
+    }
+
+    /// Finds the QR/barcode at or near a pressed normalized photo point.
+    /// 1) Direct containment wins (smallest box wins if nested).
+    /// 2) Otherwise matches within an ergonomic thumb margin (`padding`), preferring nearest perimeter distance.
+    public static func hitTest(
+        normalizedPoint: CGPoint,
+        in codes: [DetectedQRCode],
+        padding: CGFloat = 0.075
+    ) -> DetectedQRCode? {
+        guard !codes.isEmpty else { return nil }
+
+        let directHits = codes.filter { $0.normalizedBoundingBox.contains(normalizedPoint) }
+        if !directHits.isEmpty {
+            return directHits.min { a, b in
+                let areaA = a.normalizedBoundingBox.width * a.normalizedBoundingBox.height
+                let areaB = b.normalizedBoundingBox.width * b.normalizedBoundingBox.height
+                if abs(areaA - areaB) > 1e-5 { return areaA < areaB }
+                return a.rawValue < b.rawValue
+            }
+        }
+
+        var bestCode: DetectedQRCode? = nil
+        var bestDist: CGFloat = .greatestFiniteMagnitude
+        for code in codes {
+            let expanded = code.normalizedBoundingBox.insetBy(dx: -padding, dy: -padding)
+            guard expanded.contains(normalizedPoint) else { continue }
+            let dx = max(code.normalizedBoundingBox.minX - normalizedPoint.x, 0, normalizedPoint.x - code.normalizedBoundingBox.maxX)
+            let dy = max(code.normalizedBoundingBox.minY - normalizedPoint.y, 0, normalizedPoint.y - code.normalizedBoundingBox.maxY)
+            let edgeDist = hypot(dx, dy)
+            if edgeDist < bestDist {
+                bestDist = edgeDist
+                bestCode = code
+            }
+        }
+        return bestCode
+    }
+}
