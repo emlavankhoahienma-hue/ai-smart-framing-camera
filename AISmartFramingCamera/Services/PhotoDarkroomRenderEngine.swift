@@ -1522,7 +1522,7 @@ public final class PhotoDarkroomSessionCoordinator: @unchecked Sendable {
     public func prepareProxies(
         from originalCG: CGImage,
         predecodedDisplay: UIImage?,
-        completion: @escaping @Sendable () -> Void
+        completion: @escaping @MainActor @Sendable () -> Void
     ) {
         renderQueue.async { [weak self] in
             guard let self, !self.checkTornDown() else { return }
@@ -1541,7 +1541,7 @@ public final class PhotoDarkroomSessionCoordinator: @unchecked Sendable {
                 self.thumbnailBaseCG = thumbCG
                 self.tokenLock.unlock()
             }
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 completion()
             }
         }
@@ -1555,7 +1555,7 @@ public final class PhotoDarkroomSessionCoordinator: @unchecked Sendable {
         aiColorParams: AIColorParameters?,
         customWatermarkLogo: UIImage?,
         applyCropGeometry: Bool,
-        onComplete: @escaping @Sendable (UIImage, UIImage, PhotoDarkroomHistogram) -> Void
+        onComplete: @escaping @MainActor @Sendable (UIImage, UIImage, PhotoDarkroomHistogram) -> Void
     ) {
         tokenLock.lock()
         guard !isTornDown else {
@@ -1602,7 +1602,7 @@ public final class PhotoDarkroomSessionCoordinator: @unchecked Sendable {
                 let hist = PhotoDarkroomHistogram.compute(from: miniCG, binCount: 48, maxSampleSide: 120)
 
                 guard self.isLatest(token: myToken) else { return }
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     onComplete(displayUI, miniUI, hist)
                 }
             }
@@ -1614,17 +1614,17 @@ public final class PhotoDarkroomSessionCoordinator: @unchecked Sendable {
         cacheKey: String,
         fallbackOriginal: CGImage,
         state: PhotoDarkroomEditState,
-        completion: @escaping @Sendable (UIImage) -> Void
+        completion: @escaping @MainActor @Sendable (UIImage) -> Void
     ) {
         let nsKey = cacheKey as NSString
         if let hit = thumbCache.object(forKey: nsKey) {
-            completion(hit)
+            Task { @MainActor in completion(hit) }
             return
         }
         thumbQueue.async { [weak self] in
             guard let self, !self.checkTornDown() else { return }
             if let hit = self.thumbCache.object(forKey: nsKey) {
-                DispatchQueue.main.async { completion(hit) }
+                Task { @MainActor in completion(hit) }
                 return
             }
             autoreleasepool {
@@ -1649,7 +1649,7 @@ public final class PhotoDarkroomSessionCoordinator: @unchecked Sendable {
                 let ui = UIImage(cgImage: rendered).preparingForDisplay() ?? UIImage(cgImage: rendered)
                 let cost = rendered.width * rendered.height * 4
                 self.thumbCache.setObject(ui, forKey: nsKey, cost: cost)
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     completion(ui)
                 }
             }
@@ -1663,7 +1663,7 @@ public final class PhotoDarkroomSessionCoordinator: @unchecked Sendable {
         metadata: PhotoDarkroomRenderMetadata,
         aiColorParams: AIColorParameters?,
         customWatermarkLogo: UIImage?,
-        completion: @escaping @Sendable (CGImage) -> Void
+        completion: @escaping @MainActor @Sendable (CGImage) -> Void
     ) {
         DispatchQueue.global(qos: .userInitiated).async {
             let fullCG = autoreleasepool {
@@ -1679,7 +1679,7 @@ public final class PhotoDarkroomSessionCoordinator: @unchecked Sendable {
                 )
             }
             PhotoDarkroomRenderEngine.shared.ciContext.clearCaches()
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 completion(fullCG)
             }
         }
